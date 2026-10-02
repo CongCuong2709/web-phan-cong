@@ -1,0 +1,8 @@
+{
+  "name": "Tiến độ 4 Tầng - Việc Nhóm",
+  "description": "Khung điều hành và quản lý tiến độ 4 tầng cộng dồn tự động (Auto-Rollup), điều phối công việc nhóm và không gian làm việc nhân viên.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
