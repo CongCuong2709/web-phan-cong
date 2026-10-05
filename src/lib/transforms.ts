@@ -14,6 +14,10 @@ import type {
   TeamLeadTask,
   EmployeeTask,
   QuickHelpRequest,
+  TeamMember,
+  SubTask,
+  DailyLog,
+  HistoryEntry,
 } from '../types';
 
 // ─────────────────────────────────────────────────────────────────────
@@ -153,5 +157,90 @@ export function apiToHelpRequest(api: any): QuickHelpRequest {
     reason: String(api.reason || ''),
     message: String(api.message || ''),
     status: (api.status as QuickHelpRequest['status']) || 'pending',
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Team member (derived từ users + tier items ở backend)
+// ─────────────────────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function apiToTeamMember(api: any): TeamMember {
+  return {
+    id: String(api.id || `mem-${api.username}`),
+    name: String(api.name || api.username || ''),
+    role: String(api.role || ''),
+    avatar: String(api.avatar || ''),
+    activeTasks: Number(api.activeTasks ?? 0),
+    onTimeRate: String(api.onTimeRate ?? ''),
+    statusText: String(api.statusText ?? ''),
+    statusType: (api.statusType as TeamMember['statusType']) || 'idle',
+    workloadPercent: Number(api.workloadPercent ?? 0),
+    needHelp: Boolean(api.needHelp),
+    department: api.department || undefined,
+    username: String(api.username || ''),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// SubTask (T4.5)
+// ─────────────────────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function apiToSubtask(api: any): SubTask {
+  return {
+    id: String(api.id),
+    taskId: String(api.tier_item_id),
+    name: String(api.name || ''),
+    description: api.description ?? undefined,
+    assigneeUsername: api.assignee_username_str ?? undefined,
+    assigneeName: api.assignee_fullname ?? undefined,
+    assigneeRole: undefined,
+    assigneeAvatar: undefined,
+    startDate: String(api.start_date || ''),
+    endDate: String(api.end_date || ''),
+    progress: Number(api.progress ?? 0),
+    status: (api.status as SubTask['status']) || 'not_started',
+    priority: (api.priority as SubTask['priority']) || 'medium',
+    results: api.results ?? undefined,
+    notes: api.notes ?? undefined,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// DailyLog
+// ─────────────────────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function apiToDailyLog(api: any): DailyLog {
+  return {
+    id: String(api.id),
+    subtaskId: String(api.subtask_id),
+    logDate: String(api.log_date || ''),
+    description: String(api.description || ''),
+    result: api.result ?? undefined,
+    obstacle: api.obstacle ?? undefined,
+    progress: Number(api.progress ?? 0),
+    username: String(api.user_username_str || ''),
+    userName: String(api.user_fullname || ''),
+    userRole: undefined,
+    userAvatar: undefined,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// HistoryEntry (audit log)
+// ─────────────────────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function apiToHistoryEntry(api: any): HistoryEntry {
+  return {
+    id: String(api.id),
+    entityType: (api.entity_type as HistoryEntry['entityType']) || 'task',
+    entityId: String(api.entity_id || ''),
+    action: String(api.action || ''),
+    username: String(api.author_username || ''),
+    userName: String(api.author_fullname || api.author_username || ''),
+    createdAt: String(api.created_at || ''),
   };
 }

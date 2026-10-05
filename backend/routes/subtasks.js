@@ -27,6 +27,26 @@ router.get('/tier-items/:tierId/subtasks', (req, res) => {
   return res.json({ items });
 });
 
+/** GET /api/subtasks — List tất cả subtasks (cho frontend khởi tạo). */
+router.get('/subtasks', (req, res) => {
+  const items = stmt.listAllSubtasks.all();
+  return res.json({ items });
+});
+
+/** GET /api/subtasks/:id/logs — List daily logs. */
+router.get('/subtasks/:id(\\d+)/logs', (req, res) => {
+  const subtask = stmt.getSubtask.get(Number(req.params.id));
+  if (!subtask) return res.status(404).json({ error: 'not_found' });
+  const items = stmt.listDailyLogsBySub.all(subtask.id);
+  return res.json({ items });
+});
+
+/** GET /api/daily-logs — List tất cả daily logs (bulk fetch). */
+router.get('/daily-logs', (_req, res) => {
+  const items = stmt.listAllDailyLogs.all();
+  return res.json({ items });
+});
+
 /** POST /api/tier-items/:tierId/subtasks — Tạo subtask. */
 router.post('/tier-items/:tierId/subtasks', (req, res) => {
   const tierItem = stmt.getTierItem.get(Number(req.params.tierId));

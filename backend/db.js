@@ -133,9 +133,19 @@ export const stmt = {
   getSubtasksByTier: db.prepare(
     'SELECT * FROM subtasks WHERE tier_item_id = ? ORDER BY id'
   ),
+  listAllSubtasks: db.prepare(`
+    SELECT s.*, u.username AS assignee_username_str, u.fullname AS assignee_fullname
+    FROM subtasks s LEFT JOIN users u ON u.id = s.assignee_user_id
+    ORDER BY s.id
+  `),
   listDailyLogsBySub: db.prepare(
     'SELECT * FROM daily_logs WHERE subtask_id = ? ORDER BY log_date DESC, id DESC'
   ),
+  listAllDailyLogs: db.prepare(`
+    SELECT l.*, u.username AS user_username_str, u.fullname AS user_fullname
+    FROM daily_logs l LEFT JOIN users u ON u.id = l.author_user_id
+    ORDER BY l.log_date DESC, l.id DESC
+  `),
   insertDailyLog: db.prepare(`
     INSERT INTO daily_logs (subtask_id, log_date, description, result, obstacle,
       progress, author_user_id) VALUES (?, ?, ?, ?, ?, ?, ?)

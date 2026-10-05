@@ -26,6 +26,7 @@ import teamLeadTaskRoutes from './routes/teamLeadTasks.js';
 import employeeTaskRoutes from './routes/employeeTasks.js';
 import helpRequestRoutes from './routes/helpRequests.js';
 import historyRoutes from './routes/history.js';
+import teamMemberRoutes from './routes/teamMembers.js';
 
 const PORT = Number(process.env.PORT) || 3001;
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:3000';
@@ -58,6 +59,7 @@ app.use('/api/tier-items', tierItemRoutes);
 app.use('/api', deliverableRoutes);   // /tier-items/:id/deliverables, /deliverables/:id/*
 app.use('/api', subtaskRoutes);       // /tier-items/:id/subtasks, /subtasks/:id/*, /subtasks/:id/logs
 app.use('/api/team-tasks', teamLeadTaskRoutes);
+app.use('/api/team-members', teamMemberRoutes);
 app.use('/api/employee-tasks', employeeTaskRoutes);
 app.use('/api/help-requests', helpRequestRoutes);
 app.use('/api/history', historyRoutes);

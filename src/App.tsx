@@ -12,17 +12,6 @@ import {
   DailyLog,
   HistoryEntry,
 } from './types';
-import {
-  INITIAL_TIER_ITEMS,
-  INITIAL_TEAM_MEMBERS,
-  INITIAL_TEAM_LEAD_TASKS,
-  INITIAL_EMPLOYEE_TASKS,
-} from './data/initialData';
-import {
-  CONSTRUCTION_SUBTASKS,
-  CONSTRUCTION_DAILY_LOGS,
-  CONSTRUCTION_HISTORY,
-} from './data/constructionData';
 import { AuthProvider, useAuth } from './auth/AuthContext';
 import { canAddDailyLog, canEditSubtask, findManagerOf, uid } from './auth/permissions';
 import { api, fireAndForget } from './lib/apiClient';
@@ -31,6 +20,9 @@ import {
   apiToTeamLeadTask,
   apiToEmployeeTask,
   apiToHelpRequest,
+  apiToSubtask,
+  apiToDailyLog,
+  apiToTeamMember,
 } from './lib/transforms';
 import { SEED_USERS } from './data/users';
 import { Header } from './components/Header';
@@ -77,32 +69,17 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   });
 
   // Core state — full data store, filtered per render below.
-  // Initial state: ưu tiên localStorage cache (offline-first).
+  // Phase 1+: backend là source of truth duy nhất. Initial state = empty.
   // Sau khi user login, fetch fresh data từ API xuống (xem useEffect bên dưới).
-  const [tierItems, setTierItems] = useState<TierItem[]>(() => {
-    const saved = localStorage.getItem('tier_items_v2');
-    return saved ? JSON.parse(saved) : INITIAL_TIER_ITEMS;
-  });
+  const [tierItems, setTierItems] = useState<TierItem[]>([]);
 
-  const [teamMembers, setTeamMembers] = useState<TeamMember[]>(() => {
-    const saved = localStorage.getItem('team_members_v2');
-    return saved ? JSON.parse(saved) : INITIAL_TEAM_MEMBERS;
-  });
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
 
-  const [teamTasks, setTeamTasks] = useState<TeamLeadTask[]>(() => {
-    const saved = localStorage.getItem('team_tasks_v2');
-    return saved ? JSON.parse(saved) : INITIAL_TEAM_LEAD_TASKS;
-  });
+  const [teamTasks, setTeamTasks] = useState<TeamLeadTask[]>([]);
 
-  const [employeeTasks, setEmployeeTasks] = useState<EmployeeTask[]>(() => {
-    const saved = localStorage.getItem('employee_tasks_v2');
-    return saved ? JSON.parse(saved) : INITIAL_EMPLOYEE_TASKS;
-  });
+  const [employeeTasks, setEmployeeTasks] = useState<EmployeeTask[]>([]);
 
-  const [helpRequests, setHelpRequests] = useState<QuickHelpRequest[]>(() => {
-    const saved = localStorage.getItem('help_requests_v2');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [helpRequests, setHelpRequests] = useState<QuickHelpRequest[]>([]);
 
   /**
    * Phase 1 dual-write: SAU KHI user login, fetch fresh data từ API
@@ -117,8 +94,13 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       // Tier items
       const tierRes = await api.listTierItems();
       if (!cancelled && tierRes.ok) {
-        // Backend trả schema rút gọn → transform sang TierItem đầy đủ.
         setTierItems(tierRes.data.items.map(apiToTierItem));
+      }
+
+      // Team members (derive từ backend users + tier items)
+      const memRes = await api.listTeamMembers();
+      if (!cancelled && memRes.ok) {
+        setTeamMembers(memRes.data.members.map(apiToTeamMember));
       }
 
       // Team tasks
@@ -133,27 +115,36 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
         setEmployeeTasks(empRes.data.tasks.map(apiToEmployeeTask));
       }
 
-      // Help requests (optional — không block UI)
+      // Help requests
       const helpRes = await api.listHelpRequests();
       if (!cancelled && helpRes.ok) {
         setHelpRequests(helpRes.data.requests.map(apiToHelpRequest));
+      }
+
+      // Subtasks + Daily logs (cho DetailsDrawer)
+      const subRes = await api.listSubtasks();
+      if (!cancelled && subRes.ok) {
+        setSubtasks(subRes.data.items.map(apiToSubtask));
+      }
+      const logRes = await api.listDailyLogs();
+      if (!cancelled && logRes.ok) {
+        setDailyLogs(logRes.data.items.map(apiToDailyLog));
+      }
+
+      // History (global recent)
+      const histRes = await api.listHistory(50);
+      if (!cancelled && histRes.ok) {
+        setHistory(histRes.data.items.map(apiToHistoryEntry));
       }
     })();
     return () => { cancelled = true; };
   }, [user.id]);
 
   // Sub-tasks + nhật ký thi công + history (cho DetailsDrawer)
-  const [subtasks, setSubtasks] = useState<SubTask[]>(() => {
-    const saved = localStorage.getItem('construction_subtasks_v1');
-    return saved ? JSON.parse(saved) : CONSTRUCTION_SUBTASKS;
-  });
-
-  const [dailyLogs, setDailyLogs] = useState<DailyLog[]>(() => {
-    const saved = localStorage.getItem('construction_daily_logs_v1');
-    return saved ? JSON.parse(saved) : CONSTRUCTION_DAILY_LOGS;
-  });
-
-  const [history, setHistory] = useState<HistoryEntry[]>(CONSTRUCTION_HISTORY);
+  // Phase 1+: fetch từ API sau login; không dùng hardcoded fallback nữa.
+  const [subtasks, setSubtasks] = useState<SubTask[]>([]);
+  const [dailyLogs, setDailyLogs] = useState<DailyLog[]>([]);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
 
   // C9 fix: helper ghi HistoryEntry kèm entityType/entityId phù hợp.
   // Được gọi từ các handler chính (handleUpdateTierItem, handleAddTierItem,
@@ -177,42 +168,8 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     ]);
   };
 
-  // Save changes to localStorage
-  useEffect(() => {
-    localStorage.setItem('tier_items_v2', JSON.stringify(tierItems));
-  }, [tierItems]);
-
-  useEffect(() => {
-    localStorage.setItem('team_members_v2', JSON.stringify(teamMembers));
-  }, [teamMembers]);
-
-  useEffect(() => {
-    localStorage.setItem('team_tasks_v2', JSON.stringify(teamTasks));
-  }, [teamTasks]);
-
-  useEffect(() => {
-    localStorage.setItem('employee_tasks_v2', JSON.stringify(employeeTasks));
-  }, [employeeTasks]);
-
-  useEffect(() => {
-    localStorage.setItem('help_requests_v2', JSON.stringify(helpRequests));
-  }, [helpRequests]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('construction_subtasks_v1', JSON.stringify(subtasks));
-    } catch {
-      /* ignore */
-    }
-  }, [subtasks]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('construction_daily_logs_v1', JSON.stringify(dailyLogs));
-    } catch {
-      /* ignore */
-    }
-  }, [dailyLogs]);
+  // Phase 1+: KHÔNG lưu localStorage nữa — backend là source of truth.
+// Cache cũ sẽ được clear trong AuthContext khi login thành công.
 
   // ---------------- Role-based data slicing ----------------
   const visibleTierItems = useMemo<TierItem[]>(() => {

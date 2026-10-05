@@ -23,6 +23,25 @@ import { api } from '../lib/apiClient';
 const USERS_KEY = 'mvp_users_v1';
 const SESSION_KEY = 'mvp_session_v1';
 
+/**
+ * Clear toàn bộ app cache để buộc fetch fresh từ backend.
+ * Phase 1+: tránh hiển thị data cũ (mock/hardcoded) sau khi login.
+ */
+function clearAppCache(): void {
+  const cacheKeys = [
+    'tier_items_v2',
+    'team_members_v2',
+    'team_tasks_v2',
+    'employee_tasks_v2',
+    'help_requests_v2',
+    'construction_subtasks_v1',
+    'construction_daily_logs_v1',
+  ];
+  for (const key of cacheKeys) {
+    try { localStorage.removeItem(key); } catch { /* ignore */ }
+  }
+}
+
 const loadUsers = (): User[] => {
   try {
     const raw = localStorage.getItem(USERS_KEY);
@@ -102,6 +121,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (apiResult.ok) {
         const backendUser = apiResult.data.user;
         const backendId = String(backendUser.id);
+
+        // Clear app cache cũ để buộc fetch fresh từ backend.
+        clearAppCache();
 
         // Merge backend user vào local users array (giữ local data: dept, avatar, etc.)
         const existing = users.find((u) => u.id === backendId || u.username === backendUser.username);

@@ -233,6 +233,24 @@ export const api = {
   async listHelpRequests() {
     return request<{ requests: unknown[] }>('GET', '/api/help-requests');
   },
+
+  // --- Team members (derived) ---
+  async listTeamMembers() {
+    return request<{ members: unknown[] }>('GET', '/api/team-members');
+  },
+
+  // --- Subtasks + Daily logs ---
+  async listSubtasks() {
+    return request<{ items: unknown[] }>('GET', '/api/subtasks');
+  },
+  async listDailyLogs() {
+    return request<{ items: unknown[] }>('GET', '/api/daily-logs');
+  },
+
+  // --- History ---
+  async listHistory(limit = 50) {
+    return request<{ items: unknown[] }>('GET', `/api/history?limit=${limit}`);
+  },
 };
 
 /**
