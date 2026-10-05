@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { TierItem, TierLevel, User } from '../types';
 
 interface NewItemModalProps {
@@ -40,6 +40,22 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
   const [deadline, setDeadline] = useState('31/10/2026');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<TierItem['priority']>('Trung bình');
+
+  // A11 fix: reset toàn bộ form state mỗi khi modal đóng/mở.
+  // Trước đây modal đóng → state giữ nguyên → lần mở sau hiển thị tier cũ,
+  // dễ chọn nhầm tier (vd: BGĐ từng tạo T1, mở lại modal mà quên chọn lại).
+  useEffect(() => {
+    if (isOpen) {
+      setTier(defaultTier);
+      setTitle('');
+      setParentId('');
+      setOwnerUsername(currentUser.username);
+      setDeadline('31/10/2026');
+      setDescription('');
+      setPriority('Trung bình');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   if (!isOpen) return null;
 

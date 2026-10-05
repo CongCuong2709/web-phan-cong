@@ -1057,10 +1057,20 @@ const teamMembers: TeamMember[] = (['khanh', 'nam', 'hung', 'hong', 'cuong', 'ng
   });
 
 // Team lead tasks (cho view "Giao việc Nhóm"): mỗi task in_progress / pending_approval / need_help
-const teamLeadTasks: TeamLeadTask[] = tierItems
-  .filter((t) => t.tier === 4 && (t.progress < 100))
-  .slice(0, 12)
-  .map((t) => {
+// D1 fix: tăng slice từ 12 → 20 để đảm bảo mọi phòng ban (đặc biệt TC) đều có
+// task hiển thị trong view Trưởng phòng. Sắp xếp theo department để mỗi phòng
+// ban được ưu tiên round-robin thay vì bị bỏ sót cuối danh sách.
+const teamLeadTasks: TeamLeadTask[] = (() => {
+  const candidates = tierItems
+    .filter((t) => t.tier === 4 && (t.progress < 100))
+    .sort((a, b) => {
+      // Ưu tiên round-robin theo department để TC/KTTC/QLDA đều có mặt.
+      const order = (d?: string) =>
+        d === 'TC' ? 0 : d === 'KTTC' ? 1 : d === 'QLDA' ? 2 : 3;
+      return order(a.department) - order(b.department);
+    })
+    .slice(0, 20);
+  return candidates.map((t) => {
     const status: TeamLeadTask['status'] =
       t.status === 'Đang nghẽn' || t.status === 'Điểm nghẽn'
         ? 'need_help'
@@ -1084,11 +1094,13 @@ const teamLeadTasks: TeamLeadTask[] = tierItems
       progressText: `${t.progress}%`,
     } satisfies TeamLeadTask;
   });
+})();
 
 // Employee tasks: các task giao cho NV (hong, nguyet, hang, tu, ngoc)
+// D1 fix: tăng slice từ 10 → 16 để đảm bảo nhân viên TC (ngoc) có task hiển thị.
 const employeeTasks: EmployeeTask[] = tierItems
   .filter((t) => t.tier === 4 && t.ownerUsername && ['hong', 'nguyet', 'hang', 'tu', 'ngoc'].includes(t.ownerUsername))
-  .slice(0, 10)
+  .slice(0, 16)
   .map((t) => ({
     id: `emp-${t.id}`,
     code: t.code,

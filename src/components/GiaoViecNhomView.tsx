@@ -28,7 +28,14 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
 
   // Filtered task list
   const filteredTasks = tasks.filter((t) => {
-    if (memberFilter && t.ownerName !== memberFilter) return false;
+    // C10 fix: filter theo ownerUsername (key ổn định) thay vì ownerName (string display).
+    // Trước đây so sánh tên → nếu 2 người trùng tên hiển thị thì filter sai.
+    // Fallback so sánh tên nếu seed data chưa có username.
+    if (
+      memberFilter &&
+      t.ownerUsername !== memberFilter &&
+      t.ownerName !== memberFilter
+    ) return false;
 
     if (filter === 'all') return true;
     if (filter === 'pending') return t.status === 'pending_approval';
@@ -243,7 +250,7 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
               </button>
             ) : (
               <span className="px-2.5 py-1 bg-[#eff4ff] text-[#434655] text-[11px] font-medium rounded-lg">
-                5 thành viên sẵn sàng
+                {teamMembers.length} thành viên sẵn sàng
               </span>
             )}
           </div>
@@ -251,7 +258,7 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
           {/* Members Grid Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3.5">
             {teamMembers.map((member) => {
-              const isSelected = memberFilter === member.name;
+              const isSelected = memberFilter === (member.username ?? member.name);
               const isWarning = member.needHelp;
 
               return (
@@ -328,7 +335,7 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                     <button
                       onClick={() => {
                         setFilter('need_help');
-                        setMemberFilter(member.name);
+                        setMemberFilter(member.username ?? member.name);
                       }}
                       className="w-full py-1.5 px-3 bg-[#ba1a1a] hover:bg-red-700 text-white rounded-lg text-[12px] font-bold text-center transition-all shadow-sm flex items-center justify-center gap-1"
                       type="button"
@@ -341,7 +348,7 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                   ) : (
                     <button
                       onClick={() =>
-                        setMemberFilter(isSelected ? null : member.name)
+                        setMemberFilter(isSelected ? null : (member.username ?? member.name))
                       }
                       className="w-full py-1.5 px-3 bg-white text-[#0b1c30] hover:bg-[#dce9ff] rounded-lg text-[12px] font-semibold text-center transition-all shadow-sm border border-[#e5eeff]"
                       type="button"

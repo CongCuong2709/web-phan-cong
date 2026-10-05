@@ -24,7 +24,7 @@ import {
   CONSTRUCTION_HISTORY,
 } from './data/constructionData';
 import { AuthProvider, useAuth } from './auth/AuthContext';
-import { canAddDailyLog, canEditSubtask, uid } from './auth/permissions';
+import { canAddDailyLog, canEditSubtask, findManagerOf, uid } from './auth/permissions';
 import { SEED_USERS } from './data/users';
 import { Header } from './components/Header';
 import { Gantt4TangView } from './components/Gantt4TangView';
@@ -106,7 +106,29 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     return saved ? JSON.parse(saved) : CONSTRUCTION_DAILY_LOGS;
   });
 
-  const [history] = useState<HistoryEntry[]>(CONSTRUCTION_HISTORY);
+  const [history, setHistory] = useState<HistoryEntry[]>(CONSTRUCTION_HISTORY);
+
+  // C9 fix: helper ghi HistoryEntry kèm entityType/entityId phù hợp.
+  // Được gọi từ các handler chính (handleUpdateTierItem, handleAddTierItem,
+  // handleAddDailyLog, handleApproveTeamTask, handleResolveHelp, ...).
+  const logHistory = (
+    entityType: HistoryEntry['entityType'],
+    entityId: string,
+    action: string
+  ) => {
+    setHistory((prev) => [
+      ...prev,
+      {
+        id: uid('hist'),
+        entityType,
+        entityId,
+        action,
+        username: user.username,
+        userName: user.fullname,
+        createdAt: new Date().toISOString().slice(0, 16).replace('T', ' '),
+      },
+    ]);
+  };
 
   // Save changes to localStorage
   useEffect(() => {
@@ -267,6 +289,8 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     const recalculated = recalculateRollup(newItems);
     setTierItems(recalculated);
     setSelectedItemForDrawer(updated);
+    // C9 fix: ghi lịch sử thao tác.
+    logHistory('task', updated.id, `Cập nhật tiến độ ${updated.code} → ${updated.progress}%`);
     showToast(`Đã cập nhật tiến độ ${updated.code} lên ${updated.progress}% (Tự động cộng dồn)`);
   };
 
@@ -307,6 +331,11 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     const newItems = [...tierItems, newItem];
     const recalculated = recalculateRollup(newItems);
     setTierItems(recalculated);
+    logHistory(
+      newItem.tier === 1 ? 'project' : newItem.tier === 2 ? 'phase' : newItem.tier === 3 ? 'bundle' : 'task',
+      newItem.id,
+      `Tạo mới ${newItem.code}: ${newItem.title}`,
+    );
     showToast(`Đã thêm thành công: ${newItem.title}`);
   };
 
@@ -315,6 +344,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     setTeamTasks((prev) =>
       prev.map((t) => (t.id === taskId ? { ...t, status: 'done' as const } : t))
     );
+    logHistory('task', taskId, 'Nghiệm thu & duyệt hoàn thành');
     showToast('Đã phê duyệt nghiệm thu công việc!');
   };
 
@@ -324,6 +354,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     setTeamTasks((prev) =>
       prev.map((t) => (t.id === taskId ? { ...t, status: 'in_progress' as const } : t))
     );
+    logHistory('task', taskId, 'Xử lý yêu cầu hỗ trợ từ nhân viên');
     // Update the team member who owns this task (by ownerName matching member.name)
     if (task) {
       setTeamMembers((prev) =>
@@ -422,6 +453,8 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
 
   // Add personal task (uses current user info)
   const handleAddPersonalTask = (title: string, deadline: string, notes: string) => {
+    // C4 fix: tìm đúng Trưởng phòng phụ trách thay vì gán chính employee.
+    const manager = findManagerOf(user, SEED_USERS);
     const newTask: EmployeeTask = {
       id: `emp-task-${Date.now()}`,
       code: `NV-${Math.floor(100 + Math.random() * 900)}`,
@@ -436,15 +469,18 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       ownerUsername: user.username,
       department: user.departments[0],
       manager: {
-        name: user.fullname,
-        role: `${ROLE_HELLO[user.role]} · ${user.departments[0] ?? ''}`,
-        avatar: user.avatar ?? '',
+        name: manager?.fullname ?? user.fullname, // fallback cho director/admin
+        role: manager
+          ? `${ROLE_HELLO[manager.role]} · ${manager.departments[0] ?? ''}`
+          : `${ROLE_HELLO[user.role]} · ${user.departments[0] ?? ''}`,
+        avatar: manager?.avatar ?? user.avatar ?? '',
       },
       notesCount: notes ? 1 : 0,
       notes: notes ? [notes] : [],
     };
 
     setEmployeeTasks((prev) => [newTask, ...prev]);
+    logHistory('task', newTask.id, `Tạo việc cá nhân: "${title}"`);
     showToast(`Đã thêm việc cá nhân: "${title}"`);
   };
 
@@ -551,6 +587,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
           setSubtasks((prev) =>
             prev.map((s) => (s.id === subId ? { ...s, progress } : s))
           );
+          logHistory('subtask', subId, `Cập nhật nhanh SubTask → ${progress}%`);
         }}
         onAddDailyLog={(subtaskId, desc, result, obstacle, progress) => {
           const finalProgress = progress ?? 0;
@@ -580,6 +617,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
               s.id === subtaskId ? { ...s, progress: Math.max(s.progress, finalProgress) } : s
             )
           );
+          logHistory('subtask', subtaskId, `Ghi nhật ký thi công (+${finalProgress}%)`);
           showToast('Đã ghi nhật ký thi công mới.');
         }}
       />
