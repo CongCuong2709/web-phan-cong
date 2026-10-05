@@ -72,7 +72,7 @@ tx(() => {
 // ============================================================================
 // Manual transaction wrapper (node:sqlite không có built-in)
 // ============================================================================
-function tx(fn) {
+function tx(fn: () => unknown): unknown {
   db.exec('BEGIN');
   try {
     const r = fn();
@@ -358,8 +358,9 @@ console.log('━━━━━━━━━━━━━━━━━━━━━━�
 console.log('✅ Seed complete!');
 console.log('');
 
-function count(sql) {
-  return db.prepare(sql).get().c;
+function count(sql: string): number {
+  const row = db.prepare(sql).get() as { c: number } | undefined;
+  return row?.c ?? 0;
 }
 
 console.log(`   users                  ${count('SELECT COUNT(*) AS c FROM users')}`);

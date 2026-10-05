@@ -25,6 +25,7 @@ import {
 } from './data/constructionData';
 import { AuthProvider, useAuth } from './auth/AuthContext';
 import { canAddDailyLog, canEditSubtask, findManagerOf, uid } from './auth/permissions';
+import { api, fireAndForget } from './lib/apiClient';
 import { SEED_USERS } from './data/users';
 import { Header } from './components/Header';
 import { Gantt4TangView } from './components/Gantt4TangView';
@@ -291,7 +292,28 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     setSelectedItemForDrawer(updated);
     // C9 fix: ghi lịch sử thao tác.
     logHistory('task', updated.id, `Cập nhật tiến độ ${updated.code} → ${updated.progress}%`);
-    showToast(`Đã cập nhật tiến độ ${updated.code} lên ${updated.progress}% (Tự động cộng dồn)`);
+    // Dual-write: sync lên backend (fire-and-forget).
+    // TierItem.id ở frontend là 'tier_item-XYZ' nhưng backend dùng INTEGER; nếu
+    // id là số thì sync được, nếu là string seed → skip (Phase 2 sẽ migrate ID).
+    if (typeof updated.id === 'number' || /^\d+$/.test(String(updated.id))) {
+      fireAndForget(
+        api.updateTierItem(Number(updated.id), {
+          title: updated.title,
+            progress: updated.progress,
+            status: updated.status,
+            priority: updated.priority,
+            deadline: updated.deadline,
+            description: updated.description,
+            management_notes: updated.managementNotes,
+            start_week: updated.gantt.startWeek,
+            end_week: updated.gantt.endWeek,
+            gantt_label: updated.gantt.label,
+            gantt_bar_color: updated.gantt.barColor,
+          }),
+          `updateTierItem#${updated.id}`,
+      );
+    }
+    showToast(`Đã cập nhật tiến độ ${updated.code} lên ${updated.progress}% (Tự động cộng đồn)`);
   };
 
   // Add new item into 4-Tier tree
@@ -336,6 +358,30 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       newItem.id,
       `Tạo mới ${newItem.code}: ${newItem.title}`,
     );
+    // Dual-write: sync TierItem mới lên backend.
+    fireAndForget(
+      api.createTierItem({
+        code: newItem.code,
+        tier: newItem.tier,
+        title: newItem.title,
+        parent_id: newItem.parentId
+          ? Number(tierItems.find((t) => t.code === newItem.parentId)?.id) || undefined
+          : undefined,
+        department_code: newItem.department,
+        owner_user_id: undefined, // backend sẽ default = current user
+        progress: newItem.progress,
+        status: newItem.status,
+        priority: newItem.priority,
+        description: newItem.description,
+        management_notes: newItem.managementNotes,
+        deadline: newItem.deadline,
+        start_week: newItem.gantt.startWeek,
+        end_week: newItem.gantt.endWeek,
+        gantt_label: newItem.gantt.label,
+        gantt_bar_color: newItem.gantt.barColor,
+      }),
+      `createTierItem#${newItem.code}`,
+    );
     showToast(`Đã thêm thành công: ${newItem.title}`);
   };
 
@@ -345,6 +391,10 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       prev.map((t) => (t.id === taskId ? { ...t, status: 'done' as const } : t))
     );
     logHistory('task', taskId, 'Nghiệm thu & duyệt hoàn thành');
+    // Dual-write: sync lên backend (nếu id là số).
+    if (typeof taskId === 'number' || /^\d+$/.test(String(taskId))) {
+      fireAndForget(api.approveTask(Number(taskId)), `approveTask#${taskId}`);
+    }
     showToast('Đã phê duyệt nghiệm thu công việc!');
   };
 
@@ -355,6 +405,9 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       prev.map((t) => (t.id === taskId ? { ...t, status: 'in_progress' as const } : t))
     );
     logHistory('task', taskId, 'Xử lý yêu cầu hỗ trợ từ nhân viên');
+    if (typeof taskId === 'number' || /^\d+$/.test(String(taskId))) {
+      fireAndForget(api.resolveHelp(Number(taskId)), `resolveHelp#${taskId}`);
+    }
     // Update the team member who owns this task (by ownerName matching member.name)
     if (task) {
       setTeamMembers((prev) =>
@@ -481,6 +534,15 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
 
     setEmployeeTasks((prev) => [newTask, ...prev]);
     logHistory('task', newTask.id, `Tạo việc cá nhân: "${title}"`);
+    // Dual-write: sync việc cá nhân lên backend.
+    fireAndForget(
+      api.createEmployeeTask({
+        title,
+        description: notes || newTask.description,
+        deadline,
+      }),
+      `createEmployeeTask#${newTask.code}`,
+    );
     showToast(`Đã thêm việc cá nhân: "${title}"`);
   };
 
@@ -618,6 +680,19 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
             )
           );
           logHistory('subtask', subtaskId, `Ghi nhật ký thi công (+${finalProgress}%)`);
+          // Dual-write: sync daily log mới lên backend.
+          if (typeof subtaskId === 'number' || /^\d+$/.test(String(subtaskId))) {
+            fireAndForget(
+              api.addDailyLog({
+                subtaskId: Number(subtaskId),
+                description: desc,
+                result,
+                obstacle,
+                progress: finalProgress,
+              }),
+              `addDailyLog#${subtaskId}`,
+            );
+          }
           showToast('Đã ghi nhật ký thi công mới.');
         }}
       />
