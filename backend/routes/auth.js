@@ -7,7 +7,7 @@
  */
 
 import { Router } from 'express';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { db, stmt } from '../db.js';
 import { signToken, requireAuth } from '../middleware/auth.js';
 import { uid } from '../utils/permissions.js';
