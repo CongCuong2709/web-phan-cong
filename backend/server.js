@@ -20,6 +20,12 @@ import './db.js'; // Trigger DB bootstrap (side-effect import)
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
 import tierItemRoutes from './routes/tierItems.js';
+import deliverableRoutes from './routes/deliverables.js';
+import subtaskRoutes from './routes/subtasks.js';
+import teamLeadTaskRoutes from './routes/teamLeadTasks.js';
+import employeeTaskRoutes from './routes/employeeTasks.js';
+import helpRequestRoutes from './routes/helpRequests.js';
+import historyRoutes from './routes/history.js';
 
 const PORT = Number(process.env.PORT) || 3001;
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:3000';
@@ -49,6 +55,12 @@ app.get('/api/health', (_req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/tier-items', tierItemRoutes);
+app.use('/api', deliverableRoutes);   // /tier-items/:id/deliverables, /deliverables/:id/*
+app.use('/api', subtaskRoutes);       // /tier-items/:id/subtasks, /subtasks/:id/*, /subtasks/:id/logs
+app.use('/api/team-tasks', teamLeadTaskRoutes);
+app.use('/api/employee-tasks', employeeTaskRoutes);
+app.use('/api/help-requests', helpRequestRoutes);
+app.use('/api/history', historyRoutes);
 
 // --- 404 ---
 app.use('/api/*', (_req, res) => {

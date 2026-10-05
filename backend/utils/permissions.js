@@ -54,6 +54,42 @@ export function canEditTierItem(user, item) {
 /** Tương tự edit cho deliverable. */
 export const canEditDeliverable = canEditTierItem;
 
+/** Quyền edit SubTask. Manager cần parent item trong phòng ban. */
+export function canEditSubtask(user, subtask, parentItem) {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  if (user.role === 'director') return false;
+  if (user.role === 'manager') {
+    if (!parentItem) return false;
+    return inDepartment(user, parentItem.department_code);
+  }
+  return subtask.assignee_user_id === user.id;
+}
+
+/** Quyền ghi nhật ký thi công (DailyLog). */
+export function canAddDailyLog(user, subtask, parentItem) {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  if (user.role === 'director') return false;
+  if (user.role === 'manager') {
+    if (!parentItem) return false;
+    return inDepartment(user, parentItem.department_code);
+  }
+  return subtask.assignee_user_id === user.id;
+}
+
+/** Quyền duyệt nghiệm thu team task. */
+export function canApproveTask(user, task) {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  if (user.role === 'director') return false;
+  if (user.role === 'manager') {
+    if (!task) return true;
+    return inDepartment(user, task.department_code);
+  }
+  return false;
+}
+
 /** Tạo ID unique. Crypto-randomUUID nếu có, fallback timestamp+random. */
 export function uid(prefix = 'id') {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
