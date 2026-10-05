@@ -71,6 +71,8 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   });
 
   // Core state — full data store, filtered per render below.
+  // Initial state: ưu tiên localStorage cache (offline-first).
+  // Sau khi user login, fetch fresh data từ API xuống (xem useEffect bên dưới).
   const [tierItems, setTierItems] = useState<TierItem[]>(() => {
     const saved = localStorage.getItem('tier_items_v2');
     return saved ? JSON.parse(saved) : INITIAL_TIER_ITEMS;
@@ -95,6 +97,45 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     const saved = localStorage.getItem('help_requests_v2');
     return saved ? JSON.parse(saved) : [];
   });
+
+  /**
+   * Phase 1 dual-write: SAU KHI user login, fetch fresh data từ API
+   * xuống để thay thế data cũ trong localStorage. Nếu backend offline
+   * thì giữ nguyên localStorage (graceful degradation).
+   *
+   * Lưu ý: chỉ chạy khi user.id thay đổi (login/logout), không phải mỗi render.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      // Tier items
+      const tierRes = await api.listTierItems();
+      if (!cancelled && tierRes.ok) {
+        // Backend trả schema rút gọn; ép kiểu để tương thích với frontend TierItem.
+        // Các field phong phú (tierName, deliverables, ...) sẽ undefined → render bình thường.
+        setTierItems(tierRes.data.items as unknown as TierItem[]);
+      }
+
+      // Team tasks
+      const teamRes = await api.listTeamTasks();
+      if (!cancelled && teamRes.ok) {
+        setTeamTasks(teamRes.data.tasks as unknown as TeamLeadTask[]);
+      }
+
+      // Employee tasks
+      const empRes = await api.listEmployeeTasks();
+      if (!cancelled && empRes.ok) {
+        setEmployeeTasks(empRes.data.tasks as unknown as EmployeeTask[]);
+      }
+
+      // Help requests (optional — không block UI)
+      const helpRes = await api.listHelpRequests();
+      if (!cancelled && helpRes.ok) {
+        setHelpRequests(helpRes.data.requests as unknown as QuickHelpRequest[]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user.id]);
 
   // Sub-tasks + nhật ký thi công + history (cho DetailsDrawer)
   const [subtasks, setSubtasks] = useState<SubTask[]>(() => {

@@ -22,23 +22,24 @@ const LoginPage: React.FC = () => {
     return byRole;
   }, []);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     if (!username.trim() || !password) {
       setError('Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu.');
       return;
     }
-    const result = login(username, password);
+    const result = await login(username, password);
     if (!result.ok) setError(result.reason);
   };
 
-  const handleQuickLogin = (acc: (typeof DEMO_ACCOUNTS)[number]) => {
+  const handleQuickLogin = async (acc: (typeof DEMO_ACCOUNTS)[number]) => {
     setUsername(acc.username);
     setPassword(acc.password);
     setError(null);
-    // One-click: log them straight in.
-    loginAs(acc.username);
+    // One-click: log them straight in (async — đợi backend verify).
+    const result = await login(acc.username, acc.password);
+    if (!result.ok) setError(result.reason);
   };
 
   return (

@@ -1,12 +1,11 @@
 /**
- * AuthContext — single source of truth for "who is logged in" plus the small
- * helper predicates the views use to decide what a user is allowed to see.
+ * AuthContext — single source of truth cho "ai đang đăng nhập".
  *
- * Storage strategy (MVP):
- *  - users persist under `mvp_users_v1` (allows future profile edits without
- *    re-seeding).
- *  - current session under `mvp_session_v1` (only `userId` is stored so the
- *    displayed name reflects the latest staff value).
+ * Phase 1 (dual-write): login ưu tiên gọi backend API (bcrypt verify).
+ * Nếu backend offline → fallback dùng local SEED_USERS (plaintext).
+ *
+ * Lưu ý: mọi mutation trên users (setUsers) vẫn persist localStorage
+ * để dùng khi backend down.
  */
 
 import React, {
@@ -19,6 +18,7 @@ import React, {
 } from 'react';
 import { Department, User } from '../types';
 import { SEED_USERS } from '../data/users';
+import { api } from '../lib/apiClient';
 
 const USERS_KEY = 'mvp_users_v1';
 const SESSION_KEY = 'mvp_session_v1';
@@ -45,17 +45,17 @@ const loadSessionUserId = (): string | null => {
 export interface AuthContextValue {
   user: User | null;
   users: User[];
-  login: (username: string, password: string) => { ok: true } | { ok: false; reason: string };
+  login: (username: string, password: string) => Promise<{ ok: true } | { ok: false; reason: string }>;
   logout: () => void;
-  /** Demo-only quick-login (e.g. from the "Tài khoản demo" list). */
+  /** Demo-only quick-login (e.g. từ "Tài khoản demo" list). */
   loginAs: (username: string) => void;
-  /** Refresh users (e.g. after admin edits a profile). */
+  /** Refresh users (e.g. sau khi admin edit profile). */
   setUsers: (next: User[]) => void;
-  /** True if current user can see items belonging to `department`. */
+  /** True nếu current user thấy items thuộc `department`. */
   canSeeDepartment: (dept?: Department) => boolean;
-  /** True if current user can see "Việc của tôi" items belonging to `username`. */
+  /** True nếu current user thấy "Việc của tôi" của `username`. */
   canSeeOwner: (ownerUsername?: string) => boolean;
-  /** Resolve a user by username (handy for sender/manager lookups). */
+  /** Resolve 1 user by username. */
   findUser: (username?: string) => User | undefined;
 }
 
@@ -65,7 +65,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [users, setUsersState] = useState<User[]>(() => loadUsers());
   const [currentUserId, setCurrentUserId] = useState<string | null>(() => loadSessionUserId());
 
-  // Persist users whenever they change.
   useEffect(() => {
     try {
       localStorage.setItem(USERS_KEY, JSON.stringify(users));
@@ -74,7 +73,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [users]);
 
-  // Persist the active session id.
   useEffect(() => {
     try {
       if (currentUserId) localStorage.setItem(SESSION_KEY, currentUserId);
@@ -89,36 +87,81 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [users, currentUserId]
   );
 
+  /**
+   * Login: ưu tiên gọi backend API.
+   * - Success → save token, update users từ backend, set session.
+   * - Network error → fallback local SEED_USERS check.
+   * - 401 → trả message lỗi từ backend.
+   */
   const login = useCallback(
-    (username: string, password: string) => {
-      const trimmed = username.trim().toLowerCase();
-      const match = users.find((u) => u.username.toLowerCase() === trimmed);
-      if (!match) return { ok: false as const, reason: 'Không tìm thấy tài khoản.' };
-      if (match.password !== password) {
-        return { ok: false as const, reason: 'Mật khẩu không đúng.' };
+    async (username: string, password: string) => {
+      const trimmed = username.trim();
+
+      // 1. Try backend API
+      const apiResult = await api.login(trimmed, password);
+      if (apiResult.ok) {
+        const backendUser = apiResult.data.user;
+        const backendId = String(backendUser.id);
+
+        // Merge backend user vào local users array (giữ local data: dept, avatar, etc.)
+        const existing = users.find((u) => u.id === backendId || u.username === backendUser.username);
+        const merged: User = {
+          id: backendId,
+          username: backendUser.username,
+          fullname: backendUser.fullname,
+          email: backendUser.email ?? existing?.email,
+          role: backendUser.role,
+          departments: existing?.departments ?? [],
+          avatar: backendUser.avatar_url ?? existing?.avatar,
+          initial: backendUser.initial ?? existing?.initial ?? backendUser.fullname.charAt(0),
+          password: '', // never store plaintext after backend login
+        };
+        setUsersState((prev) => {
+          const without = prev.filter((u) => u.id !== backendId);
+          return [...without, merged];
+        });
+        setCurrentUserId(backendId);
+        return { ok: true as const };
       }
-      setCurrentUserId(match.id);
-      return { ok: true as const };
+
+      // 2. Network error → fallback local SEED_USERS check
+      if (apiResult.networkError) {
+        const match = users.find((u) => u.username.toLowerCase() === trimmed.toLowerCase());
+        if (match && match.password === password) {
+          setCurrentUserId(match.id);
+          return { ok: true as const };
+        }
+        return { ok: false as const, reason: 'Sai tài khoản/mật khẩu (backend offline).' };
+      }
+
+      // 3. 401 từ backend → trả message gốc
+      return { ok: false as const, reason: apiResult.error.message ?? 'Sai tài khoản hoặc mật khẩu.' };
     },
     [users]
   );
 
   const loginAs = useCallback(
     (username: string) => {
-      const match = users.find((u) => u.username.toLowerCase() === username.toLowerCase());
-      if (match) setCurrentUserId(match.id);
+      // Demo quick-login: dùng password plaintext từ SEED_USERS.
+      // Nếu backend up sẽ verify qua API; nếu offline thì dùng local.
+      const seed = SEED_USERS.find((u) => u.username.toLowerCase() === username.toLowerCase());
+      if (!seed) return;
+      login(seed.username, seed.password).catch(() => { /* swallow */ });
     },
-    [users]
+    [login]
   );
 
-  const logout = useCallback(() => setCurrentUserId(null), []);
+  const logout = useCallback(() => {
+    setCurrentUserId(null);
+    api.logout().catch(() => { /* swallow */ });
+  }, []);
 
   const setUsers = useCallback((next: User[]) => setUsersState(next), []);
 
   const canSeeDepartment = useCallback(
     (dept?: Department) => {
       if (!user) return false;
-      if (!user.departments.length) return true; // admin sentinel: no departments = unrestricted
+      if (!user.departments.length) return true; // admin sentinel
       if (!dept) return true; // untagged items are visible to anyone
       return user.departments.includes(dept);
     },
@@ -128,16 +171,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const canSeeOwner = useCallback(
     (ownerUsername?: string) => {
       if (!user) return false;
-      // Admin / ĐH director can see everything.
       if (user.role === 'admin' || user.role === 'director') return true;
-      // Manager: see emails in their department (we resolve through the user list).
       if (user.role === 'manager') {
-        if (!ownerUsername) return true; // untagged tasks default to "team" visibility
+        if (!ownerUsername) return true;
         const owner = users.find((u) => u.username === ownerUsername);
-        if (!owner) return true; // legacy data — keep visible to managers
+        if (!owner) return true;
         return owner.departments.some((d) => user.departments.includes(d));
       }
-      // Employee: only their own.
       return ownerUsername === user.username;
     },
     [user, users]

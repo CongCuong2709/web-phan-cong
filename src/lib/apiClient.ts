@@ -183,6 +183,9 @@ export const api = {
   },
 
   // --- Tier items ---
+  async listTierItems() {
+    return request<{ items: TierItemDto[] }>('GET', '/api/tier-items');
+  },
   async createTierItem(item: TierItemDto) {
     return request('POST', '/api/tier-items', item);
   },
@@ -204,6 +207,9 @@ export const api = {
   },
 
   // --- Team tasks ---
+  async listTeamTasks() {
+    return request<{ tasks: unknown[] }>('GET', '/api/team-tasks');
+  },
   async approveTask(id: number) {
     return request('POST', `/api/team-tasks/${id}/approve`);
   },
@@ -212,12 +218,20 @@ export const api = {
   },
 
   // --- Employee tasks ---
+  async listEmployeeTasks() {
+    return request<{ tasks: unknown[] }>('GET', '/api/employee-tasks');
+  },
   async createEmployeeTask(task: {
     title: string;
     description: string;
     deadline: string;
   }) {
     return request('POST', '/api/employee-tasks', task);
+  },
+
+  // --- Help requests ---
+  async listHelpRequests() {
+    return request<{ requests: unknown[] }>('GET', '/api/help-requests');
   },
 };
 
