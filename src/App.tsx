@@ -24,6 +24,8 @@ import {
   CONSTRUCTION_HISTORY,
 } from './data/constructionData';
 import { AuthProvider, useAuth } from './auth/AuthContext';
+import { canAddDailyLog, canEditSubtask, uid } from './auth/permissions';
+import { SEED_USERS } from './data/users';
 import { Header } from './components/Header';
 import { Gantt4TangView } from './components/Gantt4TangView';
 import { GiaoViecNhomView } from './components/GiaoViecNhomView';
@@ -318,22 +320,26 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
 
   // Resolve Help Request
   const handleResolveHelp = (taskId: string) => {
+    const task = teamTasks.find((t) => t.id === taskId);
     setTeamTasks((prev) =>
       prev.map((t) => (t.id === taskId ? { ...t, status: 'in_progress' as const } : t))
     );
-    setTeamMembers((prev) =>
-      prev.map((m) =>
-        m.name === 'Bảo Anh'
-          ? {
-              ...m,
-              needHelp: false,
-              urgentNote: undefined,
-              statusText: '2 việc đang làm',
-              onTimeRate: '100% đúng hạn',
-            }
-          : m
-      )
-    );
+    // Update the team member who owns this task (by ownerName matching member.name)
+    if (task) {
+      setTeamMembers((prev) =>
+        prev.map((m) =>
+          m.name === task.ownerName
+            ? {
+                ...m,
+                needHelp: false,
+                urgentNote: undefined,
+                statusText: '2 việc đang làm',
+                onTimeRate: '100% đúng hạn',
+              }
+            : m
+        )
+      );
+    }
     showToast('Đã ghi nhận hỗ trợ! Trạng thái chuyển sang: Đang làm bình thường');
   };
 
@@ -389,8 +395,8 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
 
     setTeamTasks((prev) => [
       {
-        id: `task-urgent-${Date.now()}`,
-        code: 'NV-CANDAY',
+        id: uid('task-urgent'),
+        code: `NV-CANDAY-${Date.now().toString(36).toUpperCase()}`,
         title: `Yêu cầu hỗ trợ từ ${req.sender}: ${req.reason}`,
         category: 'Hỗ trợ khẩn',
         deliverableType: 'text',
@@ -531,15 +537,33 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
         subtasks={subtasks}
         dailyLogs={dailyLogs}
         history={history}
+        currentUser={user}
         onUpdateSubtaskProgress={(subId, progress) => {
+          const subtask = subtasks.find((s) => s.id === subId);
+          if (!subtask) return;
+          // A8 guard: kiểm tra quyền sửa SubTask. Manager cần biết parent item
+          // để xác định department; tìm qua subtask.taskId.
+          const parentItem = tierItems.find((t) => t.id === subtask.taskId);
+          if (!canEditSubtask(user, subtask, parentItem)) {
+            showToast('Bạn không có quyền cập nhật SubTask này.');
+            return;
+          }
           setSubtasks((prev) =>
             prev.map((s) => (s.id === subId ? { ...s, progress } : s))
           );
         }}
         onAddDailyLog={(subtaskId, desc, result, obstacle, progress) => {
           const finalProgress = progress ?? 0;
+          const subtask = subtasks.find((s) => s.id === subtaskId);
+          if (!subtask) return;
+          // A7 guard: chỉ assignee SubTask hoặc manager trong phòng ban được ghi nhật ký.
+          const parentItem = tierItems.find((t) => t.id === subtask.taskId);
+          if (!canAddDailyLog(user, subtask, parentItem)) {
+            showToast('Bạn không có quyền ghi nhật ký cho SubTask này.');
+            return;
+          }
           const newLog: DailyLog = {
-            id: `log-${Date.now()}`,
+            id: uid('log'),
             subtaskId,
             logDate: new Date().toISOString().slice(0, 10),
             description: desc,
@@ -567,6 +591,9 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
         onAddItem={handleAddTierItem}
         parents={tierItems.map((i) => ({ id: i.id, title: i.title, tier: i.tier }))}
         currentUser={user}
+        deptUsers={SEED_USERS
+          .filter((u) => u.departments.some((d) => user.departments.includes(d)))
+          .map((u) => ({ username: u.username, fullname: u.fullname }))}
       />
 
       {/* Deliverable Evidence Preview Modal */}

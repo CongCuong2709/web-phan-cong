@@ -18,6 +18,31 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
   const inProgressTierItems = tierItems.filter((i) => i.progress > 0 && i.progress < 100).length;
   const blockedItems = tierItems.filter((i) => i.status === 'Đang nghẽn' || i.status === 'Điểm nghẽn');
 
+  // --- Dynamic KPI calculations (replacing all hardcoded values) ---
+  const tier1Items = tierItems.filter((i) => i.tier === 1);
+  const tier2Items = tierItems.filter((i) => i.tier === 2);
+  const tier3Items = tierItems.filter((i) => i.tier === 3);
+
+  const avgProgress = (items: typeof tierItems) =>
+    items.length === 0 ? 0 : Math.round(items.reduce((s, i) => s + i.progress, 0) / items.length);
+
+  const kpiT1 = avgProgress(tier1Items);
+  const kpiT2 = avgProgress(tier2Items);
+  const kpiT3 = avgProgress(tier3Items);
+
+  // Tier-2 sub-labels: list each phase's progress
+  const tier2SubLabel = tier2Items
+    .map((i) => `${i.code}: ${i.progress}%`)
+    .join(' • ') || 'Chưa có giai đoạn';
+
+  // Tier-3 on-time rate: items not blocked & deadline-wise OK
+  const tier3OnTime = tier3Items.filter((i) => i.status !== 'Đang nghẽn' && i.status !== 'Điểm nghẽn').length;
+  const tier3OnTimePct = tier3Items.length === 0 ? 0 : Math.round((tier3OnTime / tier3Items.length) * 100);
+
+  // Bottleneck summary
+  const blockedCount = blockedItems.length;
+  const firstBlocker = blockedItems[0];
+
   return (
     <div className="flex flex-col w-full">
       <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 flex flex-col gap-6">
@@ -55,20 +80,20 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
           </div>
         </div>
 
-        {/* Executive Rollup 4-Tier Matrix */}
+        {/* Executive Rollup 4-Tier Matrix — tính động từ tierItems */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="bg-white p-5 rounded-xl border border-[#e5eeff] shadow-sm">
             <span className="text-[11px] font-bold text-[#565e74] uppercase tracking-wider block mb-1">
               Tầng 1: Dự án chiến lược
             </span>
             <div className="text-[28px] font-bold text-[#0b1c30] tabular-nums">
-              68%
+              {kpiT1}%
             </div>
             <div className="w-full h-2 bg-[#eff4ff] rounded-full overflow-hidden my-2">
-              <div className="h-full bg-[#0F172A] rounded-full" style={{ width: '68%' }}></div>
+              <div className="h-full bg-[#0F172A] rounded-full" style={{ width: `${kpiT1}%` }}></div>
             </div>
             <span className="text-[12px] text-[#565e74]">
-              1 Dự án trọng điểm đang kích hoạt
+              {tier1Items.length} Dự án trọng điểm đang kích hoạt
             </span>
           </div>
 
@@ -77,13 +102,13 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
               Tầng 2: Giai đoạn triển khai
             </span>
             <div className="text-[28px] font-bold text-[#004ac6] tabular-nums">
-              73.5%
+              {kpiT2}%
             </div>
             <div className="w-full h-2 bg-[#eff4ff] rounded-full overflow-hidden my-2">
-              <div className="h-full bg-[#004ac6] rounded-full" style={{ width: '73.5%' }}></div>
+              <div className="h-full bg-[#004ac6] rounded-full" style={{ width: `${kpiT2}%` }}></div>
             </div>
             <span className="text-[12px] text-[#565e74]">
-              GD 1: 95% • GD 2: 52%
+              {tier2SubLabel}
             </span>
           </div>
 
@@ -92,28 +117,47 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
               Tầng 3: Gói việc giao
             </span>
             <div className="text-[28px] font-bold text-[#006243] tabular-nums">
-              85%
+              {kpiT3}%
             </div>
             <div className="w-full h-2 bg-[#eff4ff] rounded-full overflow-hidden my-2">
-              <div className="h-full bg-[#006243] rounded-full" style={{ width: '85%' }}></div>
+              <div className="h-full bg-[#006243] rounded-full" style={{ width: `${kpiT3}%` }}></div>
             </div>
             <span className="text-[12px] text-[#565e74]">
-              24 hạng mục giao đúng hạn
+              {tier3OnTime}/{tier3Items.length} hạng mục đúng hạn ({tier3OnTimePct}%)
             </span>
           </div>
 
           <div className="bg-white p-5 rounded-xl border border-[#e5eeff] shadow-sm">
-            <span className="text-[11px] font-bold text-[#ba1a1a] uppercase tracking-wider block mb-1">
+            <span
+              className={`text-[11px] font-bold uppercase tracking-wider block mb-1 ${
+                blockedCount > 0 ? 'text-[#ba1a1a]' : 'text-[#006243]'
+              }`}
+            >
               Điểm nghẽn Critical Path
             </span>
-            <div className="text-[28px] font-bold text-[#ba1a1a] tabular-nums">
-              1 Điểm
+            <div
+              className={`text-[28px] font-bold tabular-nums ${
+                blockedCount > 0 ? 'text-[#ba1a1a]' : 'text-[#006243]'
+              }`}
+            >
+              {blockedCount > 0 ? `${blockedCount} Điểm` : 'Thông suốt'}
             </div>
             <div className="w-full h-2 bg-[#eff4ff] rounded-full overflow-hidden my-2">
-              <div className="h-full bg-[#ba1a1a] rounded-full" style={{ width: '25%' }}></div>
+              <div
+                className={`h-full rounded-full ${
+                  blockedCount > 0 ? 'bg-[#ba1a1a]' : 'bg-[#006243]'
+                }`}
+                style={{ width: blockedCount > 0 ? `${Math.min(blockedCount * 25, 100)}%` : '100%' }}
+              ></div>
             </div>
-            <span className="text-[12px] text-[#ba1a1a] font-semibold">
-              Chờ token Staging ngân hàng
+            <span
+              className={`text-[12px] font-semibold ${
+                blockedCount > 0 ? 'text-[#ba1a1a]' : 'text-[#006243]'
+              }`}
+            >
+              {blockedCount > 0
+                ? (firstBlocker?.blockerAlert || firstBlocker?.title || 'Xem chi tiết bên dưới')
+                : 'Không có điểm nghẽn'}
             </span>
           </div>
         </div>

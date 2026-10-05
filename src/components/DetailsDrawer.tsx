@@ -6,7 +6,13 @@ import {
   DailyLog,
   HistoryEntry,
   TaskStatus,
+  User,
 } from '../types';
+import {
+  canEditTierItem,
+  canEditSubtask,
+  canAddDailyLog,
+} from '../auth/permissions';
 
 interface DetailsDrawerProps {
   item: TierItem | null;
@@ -24,6 +30,8 @@ interface DetailsDrawerProps {
     obstacle?: string,
     progress?: number
   ) => void;
+  /** Người đang đăng nhập — dùng để kiểm tra quyền edit */
+  currentUser?: User;
 }
 
 const SUBTASK_STATUS_LABEL: Record<TaskStatus, string> = {
@@ -52,9 +60,18 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
   history = [],
   onUpdateSubtaskProgress,
   onAddDailyLog,
+  currentUser,
 }) => {
   const [formData, setFormData] = useState<TierItem | null>(null);
   const [isEditing, setIsEditing] = useState(false);
+
+  // Determine if this user can edit this item.
+  // Logic đã được centralize trong auth/permissions.ts (A4 fix gốc).
+  const canEdit = useMemo(
+    () => canEditTierItem(currentUser, formData),
+    [currentUser, formData]
+  );
+
   const [expandedSubtask, setExpandedSubtask] = useState<string | null>(null);
   const [newLogDraft, setNewLogDraft] = useState<{
     subtaskId: string;
@@ -103,6 +120,9 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
 
   const handleToggleDeliverable = (delId: string) => {
     if (!formData) return;
+    // Guard A5: chỉ user có quyền edit mới toggle được deliverables (ẩn UI đã làm,
+    // nhưng phòng trường hợp gọi trực tiếp từ devtools / future handler khác).
+    if (!canEdit) return;
     const newDeliverables = formData.deliverables.map((d: Deliverable) =>
       d.id === delId ? { ...d, completed: !d.completed } : d
     );
@@ -234,16 +254,22 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
             </div>
             <div className="flex items-center gap-2 mt-2">
               <span className="text-[11px] text-[#737686]">Chỉnh tiến độ:</span>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={formData.progress}
-                onChange={(e) =>
-                  setFormData({ ...formData, progress: Number(e.target.value) })
-                }
-                className="flex-1 accent-[#004ac6] cursor-pointer"
-              />
+              {canEdit ? (
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={formData.progress}
+                  onChange={(e) =>
+                    setFormData({ ...formData, progress: Number(e.target.value) })
+                  }
+                  className="flex-1 accent-[#004ac6] cursor-pointer"
+                />
+              ) : (
+                <div className="flex-1 h-2 bg-[#eff4ff] rounded-full overflow-hidden">
+                  <div className="h-full bg-[#004ac6]/40 rounded-full" style={{ width: `${formData.progress}%` }} />
+                </div>
+              )}
             </div>
           </div>
 
@@ -323,7 +349,12 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
                 <div
                   key={del.id}
                   onClick={() => handleToggleDeliverable(del.id)}
-                  className="flex items-start gap-2.5 p-2 rounded hover:bg-[#eff4ff] cursor-pointer transition-colors border border-transparent hover:border-[#dce9ff]"
+                  className={`flex items-start gap-2.5 p-2 rounded border border-transparent transition-colors ${
+                    canEdit
+                      ? 'hover:bg-[#eff4ff] cursor-pointer hover:border-[#dce9ff]'
+                      : 'cursor-not-allowed opacity-80'
+                  }`}
+                  title={canEdit ? 'Bấm để đánh dấu hoàn thành' : 'Bạn không có quyền chỉnh sửa'}
                 >
                   <span
                     className={`material-symbols-outlined text-[18px] shrink-0 mt-0.5 ${
@@ -464,7 +495,7 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
                               <span className="text-[11px] font-bold text-[#565e74] uppercase tracking-wider">
                                 Nhật ký thi công ({logs.length})
                               </span>
-                              {onAddDailyLog && (
+                              {onAddDailyLog && canAddDailyLog(currentUser, sub, formData) && (
                                 <button
                                   onClick={() =>
                                     setNewLogDraft({
@@ -621,7 +652,7 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
                             )}
 
                             {/* Quick progress slider for the subtask */}
-                            {onUpdateSubtaskProgress && (
+                            {onUpdateSubtaskProgress && canEditSubtask(currentUser, sub, formData) && (
                               <div className="flex items-center gap-2 pt-1 border-t border-[#e5eeff]">
                                 <span className="text-[11px] text-[#565e74] shrink-0">
                                   Cập nhật nhanh:
@@ -692,7 +723,11 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
             Đóng lại
           </button>
           <div className="flex items-center gap-2">
-            {isEditing ? (
+            {!canEdit ? (
+              <span className="text-[11px] text-[#737686] italic px-3">
+                {currentUser?.role === 'director' ? 'Đang xem (Chế độ read-only)' : 'Không có quyền chỉnh sửa'}
+              </span>
+            ) : isEditing ? (
               <button
                 onClick={handleSave}
                 type="button"

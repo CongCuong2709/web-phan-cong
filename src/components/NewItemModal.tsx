@@ -7,6 +7,8 @@ interface NewItemModalProps {
   onAddItem: (item: Partial<TierItem>) => void;
   parents: { id: string; title: string; tier: TierLevel }[];
   currentUser: User;
+  /** Danh sách users cùng phòng ban (dùng cho dropdown owner) */
+  deptUsers?: { username: string; fullname: string }[];
 }
 
 export const NewItemModal: React.FC<NewItemModalProps> = ({
@@ -15,11 +17,26 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
   onAddItem,
   parents,
   currentUser,
+  deptUsers = [],
 }) => {
-  const [tier, setTier] = useState<TierLevel>(4);
+  // Xác định tầng được phép tạo theo nghiệp vụ:
+  // Admin = tất cả | Director (BGĐ) = T1 Dự án + T2 Giai đoạn
+  // Manager (TP) = T3 Hạng mục + T4 Đầu việc | Employee = T4 đầu việc
+  const allowedTiers: TierLevel[] =
+    currentUser.role === 'admin'
+      ? [1, 2, 3, 4]
+      : currentUser.role === 'director'
+      ? [1, 2]
+      : currentUser.role === 'manager'
+      ? [3, 4]
+      : [4];
+
+  const defaultTier = allowedTiers[allowedTiers.length - 1]; // lowest allowed
+
+  const [tier, setTier] = useState<TierLevel>(defaultTier);
   const [title, setTitle] = useState('');
   const [parentId, setParentId] = useState('');
-  const [ownerName, setOwnerName] = useState(currentUser.fullname);
+  const [ownerUsername, setOwnerUsername] = useState(currentUser.username);
   const [deadline, setDeadline] = useState('31/10/2026');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<TierItem['priority']>('Trung bình');
@@ -30,32 +47,27 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
     e.preventDefault();
     if (!title.trim()) return;
 
+    // Resolve owner from selected username
+    const ownerUser = deptUsers.find((u) => u.username === ownerUsername) ??
+      { username: currentUser.username, fullname: currentUser.fullname };
+
     const tierName =
-      tier === 1
-        ? 'Tầng 1: Dự án'
-        : tier === 2
-        ? 'Tầng 2: Giai đoạn'
-        : tier === 3
-        ? 'Tầng 3: Hạng mục giao'
-        : 'Tầng 4: Đầu việc';
+      tier === 1 ? 'Tầng 1: Dự án'
+      : tier === 2 ? 'Tầng 2: Giai đoạn'
+      : tier === 3 ? 'Tầng 3: Hạng mục giao'
+      : 'Tầng 4: Đầu việc';
 
     const tierBadge =
-      tier === 1
-        ? 'DỰ ÁN T1'
-        : tier === 2
-        ? 'GIAI ĐOẠN T2'
-        : tier === 3
-        ? 'HẠNG MỤC T3'
-        : 'VIỆC T4';
+      tier === 1 ? 'DỰ ÁN T1'
+      : tier === 2 ? 'GIAI ĐOẠN T2'
+      : tier === 3 ? 'HẠNG MỤC T3'
+      : 'VIỆC T4';
 
     const code =
-      tier === 1
-        ? `DA-${Math.floor(100 + Math.random() * 900)}`
-        : tier === 2
-        ? `GD-${Math.floor(10 + Math.random() * 90)}`
-        : tier === 3
-        ? `GOI-${Math.floor(10 + Math.random() * 90)}`
-        : `NV-${Math.floor(100 + Math.random() * 900)}`;
+      tier === 1 ? `DA-${Math.floor(100 + Math.random() * 900)}`
+      : tier === 2 ? `GD-${Math.floor(10 + Math.random() * 90)}`
+      : tier === 3 ? `GOI-${Math.floor(10 + Math.random() * 90)}`
+      : `NV-${Math.floor(100 + Math.random() * 900)}`;
 
     onAddItem({
       code,
@@ -65,11 +77,11 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
       title,
       parentId: tier > 1 ? parentId : undefined,
       owner: {
-        name: ownerName,
+        name: ownerUser.fullname,
         role: 'Phụ trách thực thi',
-        initial: ownerName.charAt(0),
+        initial: ownerUser.fullname.charAt(0),
       },
-      ownerUsername: currentUser.username,
+      ownerUsername: ownerUser.username,
       department: currentUser.departments[0],
       deadline,
       progress: 0,
@@ -109,18 +121,18 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="p-5 flex flex-col gap-4">
-          {/* Tier Selection */}
+          {/* Tier Selection — filtered by role */}
           <div className="flex flex-col gap-1.5">
             <label className="text-[12px] font-bold text-[#0b1c30]">
               Chọn cấp tầng quản lý *
             </label>
-            <div className="grid grid-cols-4 gap-1.5 p-1 bg-[#eff4ff] rounded-lg">
+            <div className={`grid gap-1.5 p-1 bg-[#eff4ff] rounded-lg grid-cols-${allowedTiers.length}`}>
               {([
                 { lvl: 1 as TierLevel, label: 'Dự án', code: 'T1' },
                 { lvl: 2 as TierLevel, label: 'Giai đoạn', code: 'T2' },
                 { lvl: 3 as TierLevel, label: 'Hạng mục', code: 'T3' },
                 { lvl: 4 as TierLevel, label: 'Đầu việc', code: 'T4' },
-              ]).map((opt) => (
+              ]).filter((opt) => allowedTiers.includes(opt.lvl)).map((opt) => (
                 <button
                   key={opt.lvl}
                   type="button"
@@ -137,6 +149,16 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
                 </button>
               ))}
             </div>
+            {currentUser.role === 'manager' && (
+              <p className="text-[11px] text-[#565e74] italic">
+                Trưởng phòng chỉ được tạo Hạng mục (T3) và Đầu việc (T4).
+              </p>
+            )}
+            {currentUser.role === 'director' && (
+              <p className="text-[11px] text-[#565e74] italic">
+                BGĐ chỉ được tạo Dự án (T1) và Giai đoạn (T2).
+              </p>
+            )}
           </div>
 
           {/* Title */}
@@ -183,13 +205,24 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
               <label className="text-[12px] font-bold text-[#0b1c30]">
                 Người phụ trách
               </label>
-              <input
-                type="text"
-                value={ownerName}
-                onChange={(e) => setOwnerName(e.target.value)}
-                className="w-full h-10 px-3 rounded-lg bg-[#eff4ff] text-[#0b1c30] text-[13px] border border-[#dce9ff] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#004ac6]"
-                placeholder={currentUser.fullname}
-              />
+              {deptUsers.length > 1 ? (
+                <select
+                  value={ownerUsername}
+                  onChange={(e) => setOwnerUsername(e.target.value)}
+                  className="w-full h-10 px-3 rounded-lg bg-[#eff4ff] text-[#0b1c30] text-[13px] border border-[#dce9ff] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#004ac6]"
+                >
+                  {deptUsers.map((u) => (
+                    <option key={u.username} value={u.username}>{u.fullname}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={currentUser.fullname}
+                  readOnly
+                  className="w-full h-10 px-3 rounded-lg bg-[#f0f0f0] text-[#565e74] text-[13px] border border-[#dce9ff] cursor-not-allowed"
+                />
+              )}
             </div>
 
             <div className="flex flex-col gap-1.5">

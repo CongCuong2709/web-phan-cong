@@ -58,14 +58,21 @@ export const DeliverablePreviewModal: React.FC<DeliverablePreviewModalProps> = (
             </div>
           </div>
 
-          {/* Document Content Box */}
+          {/* Deliverable content box */}
           <div className="bg-white rounded-xl p-5 border border-[#e5eeff] shadow-sm space-y-3 font-sans">
             <div className="flex items-center justify-between border-b border-[#eff4ff] pb-3">
               <span className="font-mono text-[13px] font-bold text-[#004ac6]">
-                {task.fileName || 'tai-lieu-ban-giao.pdf'}
+                {task.fileName ||
+                  `ban-giao-${task.code.toLowerCase()}.${
+                    task.deliverableType === 'pdf'
+                      ? 'pdf'
+                      : task.deliverableType === 'spreadsheet'
+                      ? 'xlsx'
+                      : 'txt'
+                  }`}
               </span>
-              <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-emerald-50 text-[#006243] border border-emerald-200">
-                Đã kiểm tra tính toàn vẹn
+              <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-[#eff4ff] text-[#004ac6] border border-[#dce9ff]">
+                Chờ nghiệm thu
               </span>
             </div>
 
@@ -73,17 +80,30 @@ export const DeliverablePreviewModal: React.FC<DeliverablePreviewModalProps> = (
               {task.deliverableText}
             </p>
 
-            {/* Simulated document visual preview */}
-            <div className="p-4 bg-[#eff4ff] rounded-lg border border-dashed border-[#c3c6d7] space-y-2 text-[12px] text-[#565e74]">
-              <div className="flex items-center justify-between font-bold text-[#0b1c30]">
-                <span>TÓM TẮT XÁC THỰC THỰC TẾ:</span>
-                <span className="text-[#006243]">HỢP LỆ VÀ ĐẦY ĐỦ</span>
-              </div>
-              <ul className="list-disc pl-5 space-y-1">
-                <li>Chữ ký người có thẩm quyền: Đã có chữ ký 2 bên.</li>
-                <li>Phụ lục hợp đồng đính kèm: Đầy đủ các điều khoản điện nước và hạ tầng.</li>
-                <li>Thời gian hiệu lực: Bắt đầu từ 15/10/2026 đến 15/10/2028.</li>
-              </ul>
+            {/* Deliverable type info — thật, không fake */}
+            <div className="p-3 bg-[#eff4ff] rounded-lg border border-dashed border-[#c3c6d7] flex items-center gap-2 text-[12px] text-[#565e74]">
+              <span className="material-symbols-outlined text-[18px] text-[#004ac6]">
+                {task.deliverableType === 'pdf'
+                  ? 'picture_as_pdf'
+                  : task.deliverableType === 'spreadsheet'
+                  ? 'table_chart'
+                  : task.deliverableType === 'photo'
+                  ? 'image'
+                  : 'description'}
+              </span>
+              <span>
+                Loại bàn giao:{' '}
+                <strong className="text-[#0b1c30]">
+                  {task.deliverableType === 'pdf'
+                    ? 'Tài liệu PDF'
+                    : task.deliverableType === 'spreadsheet'
+                    ? 'Bảng tính Excel'
+                    : task.deliverableType === 'photo'
+                    ? 'Ảnh/Hình ảnh thực tế'
+                    : 'Báo cáo văn bản'}
+                </strong>
+                {' '}— Kiểm tra nội dung trước khi duyệt.
+              </span>
             </div>
           </div>
         </div>

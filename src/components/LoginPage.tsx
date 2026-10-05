@@ -87,7 +87,7 @@ const LoginPage: React.FC = () => {
                 autoComplete="username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="vd: hung, hong, admin..."
+                placeholder="Tên đăng nhập"
                 className="px-4 py-2.5 rounded-lg bg-[#eff4ff] border border-[#dce9ff] focus:border-[#004ac6] focus:outline-none focus:bg-white text-[14px] text-[#0b1c30] placeholder:text-[#737686]"
               />
             </div>
@@ -199,13 +199,13 @@ const LoginPage: React.FC = () => {
                             </span>
                           ))}
                         </div>
-                        <div className="text-[11px] text-[#565e74] flex items-center gap-1 mt-0.5">
+                        <div className="text-[11px] text-[#737686] flex items-center gap-1 mt-0.5 group/pw">
                           <span className="material-symbols-outlined text-[13px]">
-                            lock_open
+                            lock
                           </span>
-                          <span>
+                          <span className="select-none">
                             Mật khẩu:{' '}
-                            <span className="font-mono font-bold text-[#0b1c30]">
+                            <span className="font-mono font-bold text-[#0b1c30] blur-[3px] group-hover/pw:blur-none transition-all duration-200 cursor-pointer" title="Hover để xem mật khẩu demo">
                               {acc.password}
                             </span>
                           </span>
@@ -218,13 +218,7 @@ const LoginPage: React.FC = () => {
             </div>
 
           <div className="border-t border-[#e5eeff] pt-4 text-[12px] text-[#565e74] leading-relaxed">
-            <span className="font-semibold text-[#0b1c30]">Mẹo:</span> tài khoản{' '}
-            <span className="font-mono font-semibold text-[#004ac6]">admin / admin123</span>{' '}
-            xem được tất cả phòng ban. Trưởng phòng{' '}
-            <span className="font-mono font-semibold text-[#004ac6]">hung / 123456</span>{' '}
-            chỉ thấy dữ liệu QLDA. Nhân viên{' '}
-            <span className="font-mono font-semibold text-[#004ac6]">hong / 123456</span>{' '}
-            chỉ thấy <em>Việc của tôi</em>.
+            <span className="font-semibold text-[#0b1c30]">Mẹo:</span> Hover vào mật khẩu để xem. Bấm một tài khoản để đăng nhập nhanh và trải nghiệm phân quyền tương ứng.
           </div>
         </div>
       </div>

@@ -57,6 +57,27 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
   const t3Count = tierItems.filter((i) => i.tier === 3).length;
   const t4Count = tierItems.filter((i) => i.tier === 4).length;
 
+  // --- Dynamic KPI calculations ---
+  const avgAll =
+    tierItems.length === 0
+      ? 0
+      : Math.round(tierItems.reduce((s, i) => s + i.progress, 0) / tierItems.length);
+
+  const blockedItems = tierItems.filter(
+    (i) => i.status === 'Đang nghẽn' || i.status === 'Điểm nghẽn' || i.blockerAlert
+  );
+
+  // On-time rate for T3: non-blocked items
+  const t3Items = tierItems.filter((i) => i.tier === 3);
+  const t3OnTime = t3Items.filter(
+    (i) => i.status !== 'Đang nghẽn' && i.status !== 'Điểm nghẽn'
+  ).length;
+  const t3OnTimePct =
+    t3Items.length === 0 ? 0 : Math.round((t3OnTime / t3Items.length) * 100);
+
+  // Segmented bar helpers
+  const filledSegs = (pct: number) => Math.round(pct / 10);
+
   return (
     <div className="flex flex-col w-full">
       {/* Top Minimalist Sub-Header */}
@@ -148,10 +169,10 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
         </div>
       </div>
 
-      {/* Segmented KPI Strip */}
+      {/* Segmented KPI Strip — tính động từ tierItems */}
       <div className="w-full px-4 sm:px-6 py-4 bg-[#f8f9ff]">
         <div className="max-w-[1720px] mx-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* KPI 1 */}
+          {/* KPI 1: Tổng tiến độ */}
           <div className="bg-white p-4 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-[#565e74] uppercase tracking-wider">
@@ -163,26 +184,22 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
             </div>
             <div className="my-2 flex items-baseline gap-2">
               <span className="text-[32px] font-bold text-[#0b1c30] tabular-nums tracking-tight">
-                68%
-              </span>
-              <span className="text-[12px] text-[#006243] font-semibold">
-                ↑ +4.2% so với tuần trước
+                {avgAll}%
               </span>
             </div>
-            {/* 10-segmented bar */}
             <div className="flex items-center gap-[3px] pt-1">
               {[...Array(10)].map((_, i) => (
                 <div
                   key={i}
                   className={`h-2 flex-1 rounded-sm ${
-                    i < 7 ? 'bg-[#004ac6]' : 'bg-[#e5eeff]'
+                    i < filledSegs(avgAll) ? 'bg-[#004ac6]' : 'bg-[#e5eeff]'
                   }`}
                 />
               ))}
             </div>
           </div>
 
-          {/* KPI 2 */}
+          {/* KPI 2: Dự án Tầng 1 */}
           <div className="bg-white p-4 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-[#565e74] uppercase tracking-wider">
@@ -194,7 +211,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
             </div>
             <div className="my-2 flex items-baseline gap-2">
               <span className="text-[32px] font-bold text-[#0b1c30] tabular-nums tracking-tight">
-                3
+                {t1Count}
               </span>
               <span className="text-[12px] text-[#565e74]">
                 dự án đang kích hoạt
@@ -205,26 +222,26 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                 <div
                   key={i}
                   className={`h-2 flex-1 rounded-sm ${
-                    i < 3 ? 'bg-[#004ac6]' : 'bg-[#e5eeff]'
+                    i < Math.min(t1Count, 10) ? 'bg-[#004ac6]' : 'bg-[#e5eeff]'
                   }`}
                 />
               ))}
             </div>
           </div>
 
-          {/* KPI 3 */}
+          {/* KPI 3: Hạng mục T3 */}
           <div className="bg-white p-4 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-[#565e74] uppercase tracking-wider">
-                Hạng mục giao & Gói việc
+                Hạng mục giao &amp; Gói việc
               </span>
               <span className="text-[11px] font-semibold text-[#006243]">
-                85% đúng hạn
+                {t3OnTimePct}% đúng hạn
               </span>
             </div>
             <div className="my-2 flex items-baseline gap-2">
               <span className="text-[32px] font-bold text-[#0b1c30] tabular-nums tracking-tight">
-                24
+                {t3Count}
               </span>
               <span className="text-[12px] text-[#565e74]">
                 hạng mục (Tầng 3)
@@ -235,14 +252,14 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                 <div
                   key={i}
                   className={`h-2 flex-1 rounded-sm ${
-                    i < 8 ? 'bg-[#007d57]' : 'bg-[#e5eeff]'
+                    i < filledSegs(t3OnTimePct) ? 'bg-[#007d57]' : 'bg-[#e5eeff]'
                   }`}
                 />
               ))}
             </div>
           </div>
 
-          {/* KPI 4 */}
+          {/* KPI 4: Điểm nghẽn */}
           <div className="bg-white p-4 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-[#565e74] uppercase tracking-wider">
@@ -253,11 +270,15 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
               </span>
             </div>
             <div className="my-2 flex items-baseline gap-2">
-              <span className="text-[32px] font-bold text-[#ba1a1a] tabular-nums tracking-tight">
-                1
+              <span
+                className={`text-[32px] font-bold tabular-nums tracking-tight ${
+                  blockedItems.length > 0 ? 'text-[#ba1a1a]' : 'text-[#006243]'
+                }`}
+              >
+                {blockedItems.length}
               </span>
               <span className="text-[12px] text-[#565e74]">
-                điểm nghẽn phụ thuộc
+                {blockedItems.length > 0 ? 'điểm nghẽn phụ thuộc' : 'không có vướng mắc'}
               </span>
             </div>
             <div className="flex items-center gap-[3px] pt-1">
@@ -265,7 +286,11 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                 <div
                   key={i}
                   className={`h-2 flex-1 rounded-sm ${
-                    i === 0 ? 'bg-[#ba1a1a]' : 'bg-[#e5eeff]'
+                    blockedItems.length > 0 && i < Math.min(blockedItems.length, 10)
+                      ? 'bg-[#ba1a1a]'
+                      : blockedItems.length === 0 && i < 10
+                      ? 'bg-[#006243]'
+                      : 'bg-[#e5eeff]'
                   }`}
                 />
               ))}
@@ -552,72 +577,47 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                           <div></div>
                         </div>
 
-                        {/* Dynamic Gantt Bar */}
-                        {item.tier === 1 && (
-                          <div className="relative w-full h-5 rounded bg-[#0F172A] flex items-center px-2 shadow-sm text-white justify-between">
-                            <span className="text-[10px] text-slate-300 truncate">
-                              {item.gantt.label || 'Tổng thể giai đoạn Q4 (01/10 - 31/10)'}
-                            </span>
-                            <span className="font-mono text-[11px] font-bold text-white shrink-0">
-                              {item.progress}%
-                            </span>
-                          </div>
-                        )}
-
-                        {item.tier === 2 && (
-                          <div
-                            className={`relative h-4 rounded shadow-sm text-white flex items-center px-2 ${
-                              item.code === 'GD-01'
-                                ? 'w-[38%] bg-[#004ac6]'
-                                : 'ml-[28%] w-[60%] bg-[#004ac6]/85'
-                            }`}
-                          >
-                            <span className="font-mono text-[10px] truncate text-white">
-                              {item.gantt.label || item.deadline}
-                            </span>
-                          </div>
-                        )}
-
-                        {item.tier === 3 && (
-                          <div
-                            className={`relative h-3.5 rounded shadow-sm text-white flex items-center justify-between px-2 ${
-                              item.code === 'GOI-01'
-                                ? 'w-[25%] bg-[#006243]'
-                                : item.code === 'GOI-02'
-                                ? 'ml-[30%] w-[32%] bg-amber-500'
-                                : 'ml-[60%] w-[38%] bg-slate-300 !text-slate-800'
-                            }`}
-                          >
-                            <span className="font-mono text-[9px] truncate">
-                              {item.gantt.label || item.title}
-                            </span>
-                            {item.progress !== 100 && (
-                              <span className="font-mono text-[9px] font-bold ml-1">
-                                {item.progress}%
-                              </span>
-                            )}
-                          </div>
-                        )}
-
-                        {item.tier === 4 && (
-                          <div
-                            className={`relative h-2 rounded shadow-sm ${
-                              item.code === 'NV-101'
-                                ? 'w-[18%] bg-[#006243]'
-                                : item.code === 'NV-102'
-                                ? 'ml-[15%] w-[10%] bg-[#006243]'
-                                : item.code === 'NV-201'
-                                ? 'ml-[30%] w-[18%] bg-[#ba1a1a] flex items-center'
-                                : item.code === 'NV-202'
-                                ? 'ml-[38%] w-[20%] bg-[#004ac6]'
-                                : 'ml-[65%] w-[25%] bg-slate-300'
-                            }`}
-                          >
-                            {item.code === 'NV-201' && (
-                              <div className="w-1.5 h-1.5 rounded-full bg-white ml-0.5 animate-ping"></div>
-                            )}
-                          </div>
-                        )}
+                        {/* Dynamic Gantt Bar — tính từ item.gantt.startWeek / endWeek (1–4 tuần) */}
+                        {(() => {
+                          const WEEKS = 4; // tổng số cột tuần
+                          const sw = Math.max(1, Math.min(WEEKS, item.gantt.startWeek ?? 1));
+                          const ew = Math.max(sw + 0.1, Math.min(WEEKS, item.gantt.endWeek ?? sw + 0.5));
+                          const leftPct = ((sw - 1) / WEEKS) * 100;
+                          const widthPct = ((ew - sw) / WEEKS) * 100;
+                          const barColor = item.gantt.barColor || (
+                            item.tier === 1 ? '#0F172A'
+                            : item.tier === 2 ? '#004ac6'
+                            : item.tier === 3 ? '#0284c7'
+                            : item.status === 'Đang nghẽn' || item.status === 'Điểm nghẽn'
+                            ? '#ba1a1a' : '#006243'
+                          );
+                          const height = item.tier === 1 ? 'h-5' : item.tier === 2 ? 'h-4' : item.tier === 3 ? 'h-3.5' : 'h-2';
+                          const isBlocked = item.status === 'Đang nghẽn' || item.status === 'Điểm nghẽn';
+                          return (
+                            <div
+                              className={`absolute ${height} rounded shadow-sm flex items-center overflow-hidden`}
+                              style={{
+                                left: `${leftPct}%`,
+                                width: `${Math.max(widthPct, 3)}%`,
+                                backgroundColor: barColor,
+                              }}
+                            >
+                              {item.tier <= 3 && (
+                                <span className="font-mono text-[9px] px-1.5 text-white truncate">
+                                  {item.gantt.label || `${item.progress}%`}
+                                </span>
+                              )}
+                              {item.tier === 1 && (
+                                <span className="font-mono text-[11px] font-bold text-white shrink-0 ml-auto mr-1.5">
+                                  {item.progress}%
+                                </span>
+                              )}
+                              {isBlocked && (
+                                <div className="w-1.5 h-1.5 rounded-full bg-white ml-0.5 animate-ping shrink-0" />
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   );

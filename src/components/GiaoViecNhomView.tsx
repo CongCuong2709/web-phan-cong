@@ -41,6 +41,19 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
   const helpCount = tasks.filter((t) => t.status === 'need_help').length;
   const doneCount = tasks.filter((t) => t.status === 'done').length;
 
+  // --- Dynamic summary cards (replacing all hardcoded values) ---
+  // "Đang làm tốt": tasks that are in_progress (not blocked, not done, not need_help)
+  const inProgressCount = tasks.filter(
+    (t) => t.status !== 'need_help' && t.status !== 'done' && t.status !== 'pending_approval'
+  ).length;
+  // First member who needs help
+  const helpMember = teamMembers.find((m) => m.needHelp);
+  const helpMemberNote = helpMember?.urgentNote
+    ? `${helpMember.name}: ${helpMember.urgentNote}`
+    : helpMember
+    ? `${helpMember.name} đang cần hỗ trợ`
+    : 'Không có ai cần hỗ trợ';
+
   return (
     <div className="flex flex-col w-full">
       <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 flex flex-col gap-6">
@@ -87,7 +100,7 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
           </div>
         </div>
 
-        {/* 4 Summary Metric Cards */}
+        {/* 4 Summary Metric Cards — tính động từ props */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Card 1 */}
           <div className="bg-white p-4 sm:p-5 rounded-xl border border-[#e5eeff] shadow-sm flex flex-col justify-between">
@@ -103,10 +116,10 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
             </div>
             <div className="mt-3">
               <div className="text-[32px] font-bold text-[#0b1c30] leading-none tabular-nums">
-                16
+                {tasks.length}
               </div>
               <p className="text-[11px] text-[#565e74] mt-1.5">
-                Đang chia cho 5 thành viên
+                Chia cho {teamMembers.length} thành viên
               </p>
             </div>
           </div>
@@ -125,7 +138,7 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
             </div>
             <div className="mt-3">
               <div className="text-[32px] font-bold text-[#006243] leading-none tabular-nums">
-                11
+                {inProgressCount}
               </div>
               <p className="text-[11px] text-[#565e74] mt-1.5">
                 Tiến độ đều đặn, đúng kế hoạch
@@ -147,7 +160,7 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
             </div>
             <div className="mt-3">
               <div className="text-[32px] font-bold text-[#0b1c30] leading-none tabular-nums">
-                4
+                {doneCount}
               </div>
               <p className="text-[11px] text-[#565e74] mt-1.5">
                 Đã duyệt nghiệm thu hoàn tất
@@ -156,24 +169,48 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
           </div>
 
           {/* Card 4 - Urgent Blocker Card */}
-          <div className="bg-[#ffdad6]/40 p-4 sm:p-5 rounded-xl border border-[#ffdad6] shadow-sm flex flex-col justify-between">
+          <div
+            className={`p-4 sm:p-5 rounded-xl border shadow-sm flex flex-col justify-between ${
+              helpCount > 0
+                ? 'bg-[#ffdad6]/40 border-[#ffdad6]'
+                : 'bg-emerald-50/50 border-emerald-200'
+            }`}
+          >
             <div className="flex items-center justify-between">
-              <span className="text-[12px] font-bold text-[#ba1a1a] flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-[#ba1a1a] animate-pulse"></span>
-                Cần Trưởng phòng hỗ trợ
+              <span
+                className={`text-[12px] font-bold flex items-center gap-1.5 ${
+                  helpCount > 0 ? 'text-[#ba1a1a]' : 'text-[#006243]'
+                }`}
+              >
+                {helpCount > 0 && (
+                  <span className="w-2 h-2 rounded-full bg-[#ba1a1a] animate-pulse"></span>
+                )}
+                {helpCount > 0 ? 'Cần Trưởng phòng hỗ trợ' : 'Nhóm ổn định'}
               </span>
-              <div className="w-8 h-8 rounded-lg bg-[#ba1a1a] text-white flex items-center justify-center">
+              <div
+                className={`w-8 h-8 rounded-lg text-white flex items-center justify-center ${
+                  helpCount > 0 ? 'bg-[#ba1a1a]' : 'bg-[#006243]'
+                }`}
+              >
                 <span className="material-symbols-outlined text-[19px]">
-                  support
+                  {helpCount > 0 ? 'support' : 'check_circle'}
                 </span>
               </div>
             </div>
             <div className="mt-3">
-              <div className="text-[32px] font-bold text-[#ba1a1a] leading-none tabular-nums">
-                1
+              <div
+                className={`text-[32px] font-bold leading-none tabular-nums ${
+                  helpCount > 0 ? 'text-[#ba1a1a]' : 'text-[#006243]'
+                }`}
+              >
+                {helpCount}
               </div>
-              <p className="text-[11px] text-[#93000a] mt-1.5 font-semibold">
-                Bảo Anh đang cần gỡ vướng xưởng in
+              <p
+                className={`text-[11px] mt-1.5 font-semibold ${
+                  helpCount > 0 ? 'text-[#93000a]' : 'text-[#006243]'
+                }`}
+              >
+                {helpMemberNote}
               </p>
             </div>
           </div>

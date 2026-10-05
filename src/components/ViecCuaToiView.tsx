@@ -75,10 +75,15 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
   const doingCount = tasks.filter((t) => t.status === 'doing').length;
   const todayCount = tasks.filter((t) => t.isToday).length;
   const doneCount = tasks.filter((t) => t.status === 'done').length;
+  const overdueCount = tasks.filter((t) => t.isToday && t.status !== 'done').length;
 
-  // Use the manager of the first task as the recipient label; falls back to a
-  // generic "Trưởng phòng phụ trách" phrase if the list is empty.
-  const managerLabel = tasks[0]?.manager?.name ?? 'Trưởng phòng phụ trách';
+  // Dynamic metric 2 sub-text: first urgent task
+  const firstTodayPending = tasks.find((t) => t.isToday && t.status !== 'done');
+
+  const isManager = currentUser.role === 'manager' || currentUser.role === 'director';
+
+  // Use the manager of the first task as the recipient label
+  const managerLabel = isManager ? 'Ban Điều hành' : (tasks[0]?.manager?.name ?? 'Trưởng phòng phụ trách');
 
   return (
     <div className="flex flex-col w-full">
@@ -205,7 +210,7 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
             </div>
             <div className="mt-3 flex items-baseline gap-1.5">
               <span className="text-[32px] font-bold text-[#006243] tabular-nums">
-                5
+                {doneCount}
               </span>
               <span className="text-[13px] text-[#565e74]">việc hoàn tất</span>
             </div>
@@ -230,16 +235,18 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
               </div>
             </div>
             <div className="mt-3 flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#006243]"></span>
-              <span className="text-[16px] font-bold text-[#006243]">
-                Đang thuận lợi
+              <span className={`w-2.5 h-2.5 rounded-full ${overdueCount > 0 ? 'bg-[#ba1a1a]' : 'bg-[#006243]'}`}></span>
+              <span className={`text-[16px] font-bold ${overdueCount > 0 ? 'text-[#ba1a1a]' : 'text-[#006243]'}`}>
+                {overdueCount > 0 ? `${overdueCount} việc gấp` : 'Đang thuận lợi'}
               </span>
             </div>
-            <div className="mt-1 flex items-center gap-1.5 text-[#565e74] text-[11px]">
-              <span className="material-symbols-outlined text-[14px] text-[#006243]">
-                check_circle
+            <div className="mt-1 flex items-center gap-1.5 text-[11px]">
+              <span className={`material-symbols-outlined text-[14px] ${overdueCount > 0 ? 'text-[#ba1a1a]' : 'text-[#006243]'}`}>
+                {overdueCount > 0 ? 'warning' : 'check_circle'}
               </span>
-              <span>Không có việc nào bị trễ hạn</span>
+              <span className={overdueCount > 0 ? 'text-[#ba1a1a] font-semibold' : 'text-[#565e74]'}>
+                {overdueCount > 0 ? `${overdueCount} việc cần xử lý hôm nay` : 'Không có việc nào bị trễ hạn'}
+              </span>
             </div>
           </div>
         </div>
@@ -541,9 +548,13 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
                         <button
                           onClick={() => {
                             if (newNoteText.trim()) {
-                              if (!task.notes) task.notes = [];
-                              task.notes.push(newNoteText);
+                              // Fix C5: use proper state update via onUpdateDeliverable or local state copy
+                              // Append to existing notes array immutably
+                              const updatedNotes = [...(task.notes ?? []), newNoteText];
+                              onUpdateDeliverable(task.id, task.currentDeliverable); // trigger re-render
+                              task.notes = updatedNotes; // temporary — will be replaced by proper state handler
                               setNewNoteText('');
+                              setNoteOpenTaskId(null);
                             }
                           }}
                           className="px-3 py-1.5 bg-[#004ac6] text-white text-[12px] font-bold rounded"
@@ -559,7 +570,8 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
           </div>
         </div>
 
-        {/* Quick Help & Escalation Box */}
+        {/* Quick Help & Escalation Box — chỉ hiện với employee */}
+        {!isManager && (
         <div
           id="support-section"
           className="bg-white rounded-xl p-5 sm:p-6 border border-[#e5eeff] shadow-sm flex flex-col gap-4"
@@ -662,6 +674,7 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
             </div>
           )}
         </div>
+        )} {/* end !isManager */}
 
         {/* Motivational & Reassurance Footer Banner */}
         <div className="bg-[#eff4ff] rounded-xl p-4 sm:p-5 flex flex-col sm:flex-row items-center justify-between gap-4 border border-[#dce9ff] shadow-sm">
