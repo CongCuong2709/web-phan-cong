@@ -26,6 +26,12 @@ import {
 import { AuthProvider, useAuth } from './auth/AuthContext';
 import { canAddDailyLog, canEditSubtask, findManagerOf, uid } from './auth/permissions';
 import { api, fireAndForget } from './lib/apiClient';
+import {
+  apiToTierItem,
+  apiToTeamLeadTask,
+  apiToEmployeeTask,
+  apiToHelpRequest,
+} from './lib/transforms';
 import { SEED_USERS } from './data/users';
 import { Header } from './components/Header';
 import { Gantt4TangView } from './components/Gantt4TangView';
@@ -111,27 +117,26 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       // Tier items
       const tierRes = await api.listTierItems();
       if (!cancelled && tierRes.ok) {
-        // Backend trả schema rút gọn; ép kiểu để tương thích với frontend TierItem.
-        // Các field phong phú (tierName, deliverables, ...) sẽ undefined → render bình thường.
-        setTierItems(tierRes.data.items as unknown as TierItem[]);
+        // Backend trả schema rút gọn → transform sang TierItem đầy đủ.
+        setTierItems(tierRes.data.items.map(apiToTierItem));
       }
 
       // Team tasks
       const teamRes = await api.listTeamTasks();
       if (!cancelled && teamRes.ok) {
-        setTeamTasks(teamRes.data.tasks as unknown as TeamLeadTask[]);
+        setTeamTasks(teamRes.data.tasks.map(apiToTeamLeadTask));
       }
 
       // Employee tasks
       const empRes = await api.listEmployeeTasks();
       if (!cancelled && empRes.ok) {
-        setEmployeeTasks(empRes.data.tasks as unknown as EmployeeTask[]);
+        setEmployeeTasks(empRes.data.tasks.map(apiToEmployeeTask));
       }
 
       // Help requests (optional — không block UI)
       const helpRes = await api.listHelpRequests();
       if (!cancelled && helpRes.ok) {
-        setHelpRequests(helpRes.data.requests as unknown as QuickHelpRequest[]);
+        setHelpRequests(helpRes.data.requests.map(apiToHelpRequest));
       }
     })();
     return () => { cancelled = true; };
