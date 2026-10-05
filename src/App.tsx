@@ -23,6 +23,7 @@ import {
   apiToSubtask,
   apiToDailyLog,
   apiToTeamMember,
+  apiToHistoryEntry,
 } from './lib/transforms';
 import { SEED_USERS } from './data/users';
 import { Header } from './components/Header';
