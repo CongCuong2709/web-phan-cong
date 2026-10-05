@@ -1,0 +1,72 @@
+/**
+ * server.js — Express entry point.
+ *
+ * Khi chạy `node backend/server.js`:
+ *   1. Bootstrap DB (tạo file + apply schema nếu mới)
+ *   2. Mount routes (/api/auth, /api/users, /api/tier-items)
+ *   3. CORS cho Vite dev server (localhost:3000)
+ *   4. Listen trên PORT (mặc định 3001)
+ *
+ * Sau khi backend chạy, frontend cần:
+ *   - Set VITE_API_URL=http://localhost:3001 trong .env.local
+ *   - src/lib/apiClient.ts sẽ gọi tới /api/*
+ */
+
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import './db.js'; // Trigger DB bootstrap (side-effect import)
+
+import authRoutes from './routes/auth.js';
+import userRoutes from './routes/users.js';
+import tierItemRoutes from './routes/tierItems.js';
+
+const PORT = Number(process.env.PORT) || 3001;
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:3000';
+
+const app = express();
+
+// --- Middleware ---
+app.use(cors({
+  origin: FRONTEND_ORIGIN,
+  credentials: true,
+}));
+app.use(express.json({ limit: '2mb' }));
+
+// Simple request logger
+app.use((req, _res, next) => {
+  const ts = new Date().toISOString().slice(11, 19);
+  console.log(`[${ts}] ${req.method} ${req.path}`);
+  next();
+});
+
+// --- Health check ---
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, time: new Date().toISOString() });
+});
+
+// --- Routes ---
+app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/tier-items', tierItemRoutes);
+
+// --- 404 ---
+app.use('/api/*', (_req, res) => {
+  res.status(404).json({ error: 'not_found', message: 'Endpoint không tồn tại.' });
+});
+
+// --- Error handler (cuối cùng) ---
+app.use((err, _req, res, _next) => {
+  console.error('[server] Unhandled error:', err);
+  res.status(500).json({ error: 'internal', message: 'Lỗi server không mong đợi.' });
+});
+
+app.listen(PORT, () => {
+  console.log('');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log(`✅ Backend ready: http://localhost:${PORT}`);
+  console.log(`   Health:  GET  http://localhost:${PORT}/api/health`);
+  console.log(`   Login:   POST http://localhost:${PORT}/api/auth/login`);
+  console.log(`   CORS:    ${FRONTEND_ORIGIN}`);
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+});
