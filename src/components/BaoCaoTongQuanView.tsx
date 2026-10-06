@@ -23,6 +23,11 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
   const tier2Items = tierItems.filter((i) => i.tier === 2);
   const tier3Items = tierItems.filter((i) => i.tier === 3);
 
+  // MI-07: header phụ thuộc ngày thực + số thành viên thực (Fix hardcode cũ).
+  const now = new Date();
+  const currentQuarter = Math.floor(now.getMonth() / 3) + 1;
+  const currentYear = now.getFullYear();
+
   const avgProgress = (items: typeof tierItems) =>
     items.length === 0 ? 0 : Math.round(items.reduce((s, i) => s + i.progress, 0) / items.length);
 
@@ -55,10 +60,10 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
               <span className="text-[#004ac6] font-bold">Tổng quan tiến độ 4 tầng</span>
             </div>
             <h1 className="text-[22px] sm:text-[26px] font-bold text-[#0b1c30] tracking-tight">
-              Báo cáo & Phân tích Đa Tầng Q4/2026
+              Báo cáo & Phân tích Đa Tầng Q{currentQuarter}/{currentYear}
             </h1>
             <p className="text-[13px] text-[#434655]">
-              Cộng dồn tự động (Auto-Rollup) dữ liệu từ 5 thành viên và 4 tầng quản trị chiến lược.
+              Cộng dồn tự động (Auto-Rollup) dữ liệu từ {teamMembers.length} thành viên và 4 tầng quản trị chiến lược.
             </p>
           </div>
 

@@ -98,3 +98,12 @@ body {
 .tabular-nums {
   font-variant-numeric: tabular-nums;
 }
+
+/* MI-01 fix: slideUp animation cho Toast (đã được class `animate-slideUp` reference). */
+@keyframes slideUp {
+  from { transform: translateY(8px); opacity: 0; }
+  to   { transform: translateY(0);   opacity: 1; }
+}
+.animate-slideUp {
+  animation: slideUp 0.22s ease-out;
+}

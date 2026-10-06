@@ -1,11 +1,12 @@
 /**
  * AuthContext — single source of truth cho "ai đang đăng nhập".
  *
- * Phase 1 (dual-write): login ưu tiên gọi backend API (bcrypt verify).
- * Nếu backend offline → fallback dùng local SEED_USERS (plaintext).
+ * localStorage chỉ còn 2 mục đích hợp lệ:
+ *   1. `mvp_token`      — JWT bearer token (đọc bởi apiClient để gắn vào mọi request)
+ *   2. `mvp_session_v1` — user ID hiện tại, để restore session sau khi F5/reload trang
  *
- * Lưu ý: mọi mutation trên users (setUsers) vẫn persist localStorage
- * để dùng khi backend down.
+ * Tất cả data nghiệp vụ (tier items, tasks, members…) đến từ backend API sau login.
+ * Offline fallback: nếu backend down → dùng plaintext password từ SEED_USERS.
  */
 
 import React, {
@@ -20,38 +21,8 @@ import { Department, User } from '../types';
 import { SEED_USERS } from '../data/users';
 import { api } from '../lib/apiClient';
 
-const USERS_KEY = 'mvp_users_v1';
+/** Chỉ giữ session ID để restore "ai đang login" sau khi reload trang. */
 const SESSION_KEY = 'mvp_session_v1';
-
-/**
- * Clear toàn bộ app cache để buộc fetch fresh từ backend.
- * Phase 1+: tránh hiển thị data cũ (mock/hardcoded) sau khi login.
- */
-function clearAppCache(): void {
-  const cacheKeys = [
-    'tier_items_v2',
-    'team_members_v2',
-    'team_tasks_v2',
-    'employee_tasks_v2',
-    'help_requests_v2',
-    'construction_subtasks_v1',
-    'construction_daily_logs_v1',
-  ];
-  for (const key of cacheKeys) {
-    try { localStorage.removeItem(key); } catch { /* ignore */ }
-  }
-}
-
-const loadUsers = (): User[] => {
-  try {
-    const raw = localStorage.getItem(USERS_KEY);
-    if (raw) return JSON.parse(raw) as User[];
-  } catch {
-    /* ignore corrupt storage */
-  }
-  localStorage.setItem(USERS_KEY, JSON.stringify(SEED_USERS));
-  return SEED_USERS;
-};
 
 const loadSessionUserId = (): string | null => {
   try {
@@ -81,17 +52,15 @@ export interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [users, setUsersState] = useState<User[]>(() => loadUsers());
+  /**
+   * `users` — danh sách users đang biết phía frontend.
+   * Khởi tạo bằng SEED_USERS (cho offline fallback).
+   * Sau khi login thành công sẽ được merge với user thật từ backend.
+   */
+  const [users, setUsersState] = useState<User[]>(SEED_USERS);
   const [currentUserId, setCurrentUserId] = useState<string | null>(() => loadSessionUserId());
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(USERS_KEY, JSON.stringify(users));
-    } catch {
-      /* ignore quota errors */
-    }
-  }, [users]);
-
+  /** Persist session ID để restore sau reload — KHÔNG persist users list. */
   useEffect(() => {
     try {
       if (currentUserId) localStorage.setItem(SESSION_KEY, currentUserId);
@@ -108,8 +77,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   /**
    * Login: ưu tiên gọi backend API.
-   * - Success → save token, update users từ backend, set session.
-   * - Network error → fallback local SEED_USERS check.
+   * - Success → save token (apiClient), merge user từ backend vào state, set session.
+   * - Network error → fallback local SEED_USERS (plaintext check).
    * - 401 → trả message lỗi từ backend.
    */
   const login = useCallback(
@@ -122,50 +91,62 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const backendUser = apiResult.data.user;
         const backendId = String(backendUser.id);
 
-        // Clear app cache cũ để buộc fetch fresh từ backend.
-        clearAppCache();
+        // Ưu tiên departments từ backend response (fetch từ user_departments table).
+        // Fallback sang string CSV hoặc existing user nếu backend chưa trả departments.
+        const existing = users.find((u) => u.id === backendId || u.username.toLowerCase() === backendUser.username.toLowerCase());
+        const rawDepts = backendUser.departments;
+        const backendDepts: Department[] =
+          Array.isArray(rawDepts) && rawDepts.length > 0
+            ? (rawDepts as Department[])
+            : typeof rawDepts === 'string' && rawDepts.trim()
+            ? (rawDepts.split(',').map((d) => d.trim()) as Department[])
+            : (existing?.departments ?? []);
 
-        // Merge backend user vào local users array (giữ local data: dept, avatar, etc.)
-        const existing = users.find((u) => u.id === backendId || u.username === backendUser.username);
         const merged: User = {
           id: backendId,
           username: backendUser.username,
           fullname: backendUser.fullname,
           email: backendUser.email ?? existing?.email,
           role: backendUser.role,
-          departments: existing?.departments ?? [],
+          departments: backendDepts,
           avatar: backendUser.avatar_url ?? existing?.avatar,
           initial: backendUser.initial ?? existing?.initial ?? backendUser.fullname.charAt(0),
-          password: '', // never store plaintext after backend login
+          password: '', // không bao giờ lưu plaintext sau khi backend login
         };
+
         setUsersState((prev) => {
-          const without = prev.filter((u) => u.id !== backendId);
+          const without = prev.filter((u) => u.id !== backendId && u.username.toLowerCase() !== backendUser.username.toLowerCase());
           return [...without, merged];
         });
         setCurrentUserId(backendId);
         return { ok: true as const };
       }
 
-      // 2. Network error → fallback local SEED_USERS check
-      if (apiResult.networkError) {
-        const match = users.find((u) => u.username.toLowerCase() === trimmed.toLowerCase());
-        if (match && match.password === password) {
-          setCurrentUserId(match.id);
-          return { ok: true as const };
+      // 2. Failure branch (check network error or backend error)
+      if (!apiResult.ok) {
+        if (apiResult.networkError) {
+          const match = SEED_USERS.find((u) => u.username.toLowerCase() === trimmed.toLowerCase());
+          if (match && match.password === password) {
+            // Đảm bảo user có trong state khi offline
+            setUsersState((prev) =>
+              prev.some((u) => u.id === match.id) ? prev : [...prev, match]
+            );
+            setCurrentUserId(match.id);
+            return { ok: true as const };
+          }
+          return { ok: false as const, reason: 'Sai tài khoản/mật khẩu (backend offline).' };
         }
-        return { ok: false as const, reason: 'Sai tài khoản/mật khẩu (backend offline).' };
-      }
 
-      // 3. 401 từ backend → trả message gốc
-      return { ok: false as const, reason: apiResult.error.message ?? 'Sai tài khoản hoặc mật khẩu.' };
+        // 3. 401 từ backend → trả message gốc
+        return { ok: false as const, reason: apiResult.error.message ?? 'Sai tài khoản hoặc mật khẩu.' };
+      }
     },
     [users]
   );
 
   const loginAs = useCallback(
     (username: string) => {
-      // Demo quick-login: dùng password plaintext từ SEED_USERS.
-      // Nếu backend up sẽ verify qua API; nếu offline thì dùng local.
+      // Demo quick-login: tìm trong SEED_USERS, gọi login() bình thường.
       const seed = SEED_USERS.find((u) => u.username.toLowerCase() === username.toLowerCase());
       if (!seed) return;
       login(seed.username, seed.password).catch(() => { /* swallow */ });
@@ -183,9 +164,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const canSeeDepartment = useCallback(
     (dept?: Department) => {
       if (!user) return false;
-      if (!user.departments.length) return true; // admin sentinel
-      if (!dept) return true; // untagged items are visible to anyone
-      return user.departments.includes(dept);
+      const userDepts = user.departments ?? [];
+      if (!userDepts.length) return true; // admin sentinel (departments rỗng = all-access)
+      if (!dept) return true; // item không tag department → mọi người thấy
+      return userDepts.includes(dept);
     },
     [user]
   );
@@ -196,11 +178,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (user.role === 'admin' || user.role === 'director') return true;
       if (user.role === 'manager') {
         if (!ownerUsername) return true;
-        const owner = users.find((u) => u.username === ownerUsername);
+        const owner = users.find((u) => u.username.toLowerCase() === ownerUsername.toLowerCase());
         if (!owner) return true;
-        return owner.departments.some((d) => user.departments.includes(d));
+        const userDepts = user.departments ?? [];
+        const ownerDepts = owner.departments ?? [];
+        return ownerDepts.some((d) => userDepts.includes(d));
       }
-      return ownerUsername === user.username;
+      return ownerUsername?.toLowerCase() === user.username.toLowerCase();
     },
     [user, users]
   );

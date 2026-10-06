@@ -54,12 +54,11 @@ function AppShell() {
     return <LoginPage />;
   }
 
-  return <AuthenticatedApp key={user.id} user={user} onLogout={logout} />;
+  return <AuthenticatedApp key={user.id} user={user} />;
 }
 
 interface AuthenticatedAppProps {
   user: User;
-  onLogout: () => void;
 }
 
 function AuthenticatedApp({ user }: AuthenticatedAppProps) {
@@ -82,13 +81,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
 
   const [helpRequests, setHelpRequests] = useState<QuickHelpRequest[]>([]);
 
-  /**
-   * Phase 1 dual-write: SAU KHI user login, fetch fresh data từ API
-   * xuống để thay thế data cũ trong localStorage. Nếu backend offline
-   * thì giữ nguyên localStorage (graceful degradation).
-   *
-   * Lưu ý: chỉ chạy khi user.id thay đổi (login/logout), không phải mỗi render.
-   */
+  /** Fetch toàn bộ data từ backend sau khi user login. Chạy lại khi user.id thay đổi. */
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -169,14 +162,12 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     ]);
   };
 
-  // Phase 1+: KHÔNG lưu localStorage nữa — backend là source of truth.
-// Cache cũ sẽ được clear trong AuthContext khi login thành công.
-
   // ---------------- Role-based data slicing ----------------
   const visibleTierItems = useMemo<TierItem[]>(() => {
     if (user.role === 'admin' || user.role === 'director') return tierItems;
     if (user.role === 'manager') {
-      return tierItems.filter((t) => !t.department || user.departments.includes(t.department));
+      const depts = user.departments ?? [];
+      return tierItems.filter((t) => !t.department || depts.includes(t.department));
     }
     return []; // employees don't see the 4-tier tree
   }, [tierItems, user]);
@@ -184,8 +175,9 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   const visibleTeamMembers = useMemo<TeamMember[]>(() => {
     if (user.role === 'admin') return teamMembers;
     if (user.role === 'manager') {
+      const depts = user.departments ?? [];
       return teamMembers.filter(
-        (m) => !m.department || user.departments.includes(m.department)
+        (m) => !m.department || depts.includes(m.department)
       );
     }
     // Director & Employee: không truy cập tab giao việc nhóm
@@ -195,8 +187,9 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   const visibleTeamTasks = useMemo<TeamLeadTask[]>(() => {
     if (user.role === 'admin') return teamTasks;
     if (user.role === 'manager') {
+      const depts = user.departments ?? [];
       return teamTasks.filter(
-        (t) => !t.department || user.departments.includes(t.department)
+        (t) => !t.department || depts.includes(t.department)
       );
     }
     // Director & Employee: không truy cập tab giao việc nhóm
@@ -211,14 +204,16 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     if (user.role === 'director') {
       // BGĐ không có tab Việc của tôi nên trả về rỗng — tránh leak dữ liệu nhân viên
       return [];
-  }
+    }
     if (user.role === 'manager') {
+      const depts = user.departments ?? [];
       return employeeTasks.filter(
-        (t) => !t.department || user.departments.includes(t.department)
+        (t) => !t.department || depts.includes(t.department)
       );
     }
-    // Employees only see their own.
-    return employeeTasks.filter((t) => t.ownerUsername === user.username);
+    // Employees only see their own tasks (case-insensitive username check).
+    const usernameLower = user.username.toLowerCase();
+    return employeeTasks.filter((t) => t.ownerUsername?.toLowerCase() === usernameLower);
   }, [employeeTasks, user]);
 
   // ---------------- Modals & Drawers state ----------------
@@ -328,7 +323,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
           `updateTierItem#${updated.id}`,
       );
     }
-    showToast(`Đã cập nhật tiến độ ${updated.code} lên ${updated.progress}% (Tự động cộng đồn)`);
+    showToast(`Đã cập nhật tiến độ ${updated.code} lên ${updated.progress}% (Tự động cộng dồn)`);
   };
 
   // Add new item into 4-Tier tree
@@ -438,7 +433,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
             : h
         )
       );
-    } else if (!result.ok) {
+    } else {
       console.warn(`[handleAddTierItem] Backend lưu thất bại: ${result.error?.message || 'unknown'}`);
       // Fix Bổ sung-5: báo lỗi API rõ ràng (toast error) để user biết dữ liệu chỉ
       // tồn tại local. Trước đây silent → user tưởng backend OK.
@@ -789,7 +784,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
         parents={tierItems.map((i) => ({ id: i.id, title: i.title, tier: i.tier }))}
         currentUser={user}
         deptUsers={SEED_USERS
-          .filter((u) => u.departments.some((d) => user.departments.includes(d)))
+          .filter((u) => u.departments?.some((d) => (user.departments ?? []).includes(d)))
           .map((u) => ({ username: u.username, fullname: u.fullname }))}
       />
 

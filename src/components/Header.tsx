@@ -71,11 +71,11 @@ export const Header: React.FC<HeaderProps> = ({
             alt="Brand logo"
             className="h-8 w-auto object-contain cursor-pointer transition-transform hover:scale-105"
             src={BRAND_LOGO_URL}
-            onClick={() => setActiveTab('cay-gantt-4-tang')}
+            onClick={() => setActiveTab(tabs[0] ?? 'viec-cua-toi')}
           />
           <div className="flex items-center gap-2">
             <span
-              onClick={() => setActiveTab('cay-gantt-4-tang')}
+              onClick={() => setActiveTab(tabs[0] ?? 'viec-cua-toi')}
               className="font-semibold text-[15px] sm:text-[16px] text-[#0b1c30] tracking-tight cursor-pointer hover:text-[#004ac6] transition-colors"
             >
               Tiến độ 4 Tầng

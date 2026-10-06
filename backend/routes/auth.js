@@ -41,9 +41,14 @@ router.post('/login', (req, res) => {
       (req.headers['user-agent'] || '').slice(0, 255),
     );
     const token = signToken(user, jti);
-    // Strip password_hash before returning
+    // Strip password_hash trước khi trả về.
+    // BUG FIX: Fetch departments từ user_departments để AuthContext có field departments đầy đủ.
+    // getUserByUsername chỉ SELECT từ bảng users (không JOIN user_departments) → thiếu departments
+    // → AuthContext fallback về [] → mọi task bị filter out với manager/employee.
+    const deptRows = stmt.getUserDepartments.all(user.id);
+    const departments = deptRows.map((d) => d.department_code);
     const { password_hash: _ph, ...safeUser } = user;
-    return res.json({ token, user: safeUser });
+    return res.json({ token, user: { ...safeUser, departments } });
   }).catch((err) => {
     console.error('[auth/login] bcrypt error:', err);
     return res.status(500).json({ error: 'internal', message: 'Lỗi server.' });

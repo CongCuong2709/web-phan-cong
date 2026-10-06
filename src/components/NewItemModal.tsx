@@ -37,7 +37,12 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
   const [title, setTitle] = useState('');
   const [parentId, setParentId] = useState('');
   const [ownerUsername, setOwnerUsername] = useState(currentUser.username);
-  const [deadline, setDeadline] = useState('31/10/2026');
+  // MI-03: default 30 ngày tới, format ISO YYYY-MM-DD để native date picker hoạt động.
+  const [deadline, setDeadline] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 30);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<TierItem['priority']>('Trung bình');
 
@@ -50,7 +55,11 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
       setTitle('');
       setParentId('');
       setOwnerUsername(currentUser.username);
-      setDeadline('31/10/2026');
+      setDeadline(() => {
+        const d = new Date();
+        d.setDate(d.getDate() + 30);
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      });
       setDescription('');
       setPriority('Trung bình');
     }
@@ -246,7 +255,7 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
                 Hạn hoàn thành
               </label>
               <input
-                type="text"
+                type="date"
                 value={deadline}
                 onChange={(e) => setDeadline(e.target.value)}
                 className="w-full h-10 px-3 rounded-lg bg-[#eff4ff] text-[#0b1c30] text-[13px] border border-[#dce9ff] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#004ac6]"

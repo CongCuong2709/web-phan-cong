@@ -31,6 +31,9 @@ function visibleTasks(user, allTasks) {
 // Fix TD-03: JOIN với users 2 lần (manager + owner) để trả về fullname + avatar.
 // Trước đây chỉ SELECT * → frontend transforms.ts:135-139 fill bằng chuỗi rỗng,
 // khiến UI "Trưởng phòng giao:" trong ViecCuaToiView luôn trống.
+// BUG FIX: alias owner.username → owner_username_str để khớp với transforms.ts:144
+// Trước đây dùng AS owner_username → apiToEmployeeTask đọc owner_username_str → undefined
+// → t.ownerUsername luôn undefined → employee không thấy task nào của mình.
 const LIST_SQL = `
   SELECT
     et.*,
@@ -38,7 +41,7 @@ const LIST_SQL = `
     mgr.username      AS manager_username,
     mgr.avatar_url    AS manager_avatar_url,
     owner.fullname    AS owner_fullname,
-    owner.username    AS owner_username
+    owner.username    AS owner_username_str
   FROM employee_tasks et
   LEFT JOIN users mgr   ON et.manager_user_id = mgr.id
   LEFT JOIN users owner ON et.owner_user_id   = owner.id
@@ -59,7 +62,7 @@ const DETAIL_SQL = `
     mgr.username      AS manager_username,
     mgr.avatar_url    AS manager_avatar_url,
     owner.fullname    AS owner_fullname,
-    owner.username    AS owner_username
+    owner.username    AS owner_username_str
   FROM employee_tasks et
   LEFT JOIN users mgr   ON et.manager_user_id = mgr.id
   LEFT JOIN users owner ON et.owner_user_id   = owner.id

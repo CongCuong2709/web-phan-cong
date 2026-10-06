@@ -121,13 +121,15 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
   const [timeFilter, setTimeFilter] = useState<'month' | 'quarter' | 'year'>('month');
   const [allCollapsed, setAllCollapsed] = useState(false);
   const [collapsedMap, setCollapsedMap] = useState<Record<string, boolean>>({});
+  const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
 
   // Fix UI-05: timeline tính động từ timeFilter + Date.now()
   const timeline = useMemo(() => buildTimeline(timeFilter, new Date()), [timeFilter]);
-  const todayCol = timeline.columns.findIndex((_c, i) => {
-    // Mark "HÔM NAY" badge ở column có chứa today — chỉ tháng view hiện rõ
-    return timeFilter === 'month' && i === Math.floor(timeline.todayLeftPct / (100 / timeline.columnsCount));
-  });
+  // Tính today column index cho cả 3 view (month/quarter/year), clamp về [0, columnsCount-1]
+  const todayCol = Math.max(
+    0,
+    Math.min(timeline.columnsCount - 1, Math.floor((timeline.todayLeftPct / 100) * timeline.columnsCount))
+  );
 
   // Dynamic filter + DFS tree order (Fix: trước đây chỉ filter nên render theo thứ tự
   // push của mảng gốc → T1, hết T2, hết T3, hết T4. Giờ sort theo cây: T1 → T2 con →
@@ -469,18 +471,17 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                   <span className="w-24 text-center">Trạng thái</span>
                 </div>
 
-                {/* Right 50% Timeline Axis — Fix UI-05: columns + highlight column chứa today */}
+                {/* Right 50% Timeline Axis — Fix UI-05: columns + highlight column chứa today (đủ 3 view) */}
                 <div
                   className="w-[50%] bg-[#e5eeff] text-center font-mono text-[11px] relative font-semibold text-[#434655]"
                   style={{ display: 'grid', gridTemplateColumns: `repeat(${timeline.columnsCount}, minmax(0, 1fr))` }}
                 >
                   {timeline.columns.map((label, idx) => {
-                    const isTodayCol =
-                      timeFilter === 'month' && idx === todayCol;
+                    const isTodayCol = idx === todayCol;
                     return (
                       <div
                         key={idx}
-                        className={`py-1 flex items-center justify-center gap-1.5 ${
+                        className={`py-1 flex items-center justify-center gap-1.5 border-l border-[#dce9ff] ${
                           isTodayCol ? 'bg-[#004ac6]/10 text-[#004ac6]' : ''
                         }`}
                       >
@@ -508,9 +509,13 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                   </div>
                 </div>
 
-                {filteredItems.map((item) => {
+                {filteredItems.map((item, idx) => {
                   const isCollapsible = item.tier === 1 || item.tier === 2 || item.tier === 3;
                   const isCollapsed = collapsedMap[item.id];
+                  const isHovered = hoveredItemId === item.id;
+
+                  // Zebra striping: dòng chẵn tint nhẹ, dòng lẻ trắng → quét mắt dễ hơn
+                  const zebraBase = idx % 2 === 0 ? 'bg-white' : 'bg-[#f8faff]';
 
                   // Indentation calculation based on Tier
                   const indentClass =
@@ -522,14 +527,11 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                       ? 'pl-10'
                       : 'pl-16';
 
-                  const rowBg =
-                    item.blockerAlert
-                      ? 'bg-amber-50/40 hover:bg-amber-100/40'
-                      : item.tier === 1
-                      ? 'bg-white hover:bg-[#eff4ff]/60'
-                      : item.tier === 2
-                      ? 'bg-white/90 hover:bg-[#eff4ff]/60'
-                      : 'bg-white hover:bg-[#eff4ff]/60';
+                  const rowBg = item.blockerAlert
+                    ? 'bg-amber-50/60 hover:bg-amber-100/70'
+                    : item.tier === 1
+                    ? `${zebraBase} hover:bg-[#eff4ff]/80`
+                    : `${zebraBase} hover:bg-[#eff4ff]/70`;
 
                   return (
                     <div
@@ -761,28 +763,95 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                           const height = item.tier === 1 ? 'h-5' : item.tier === 2 ? 'h-4' : item.tier === 3 ? 'h-3.5' : 'h-2';
                           const isBlocked = item.status === 'Đang nghẽn' || item.status === 'Điểm nghẽn';
                           return (
-                            <div
-                              className={`absolute ${height} rounded shadow-sm flex items-center overflow-hidden`}
-                              style={{
-                                left: `${leftPct}%`,
-                                width: `${Math.max(widthPct, 3)}%`,
-                                backgroundColor: barColor,
-                              }}
-                            >
-                              {item.tier <= 3 && (
-                                <span className="font-mono text-[9px] px-1.5 text-white truncate">
-                                  {item.gantt.label || `${item.progress}%`}
-                                </span>
+                            <>
+                              <div
+                                onMouseEnter={() => setHoveredItemId(item.id)}
+                                onMouseLeave={() => setHoveredItemId(null)}
+                                className={`absolute ${height} rounded flex items-center overflow-hidden transition-all duration-150 ${
+                                  isHovered
+                                    ? 'shadow-xl ring-2 ring-[#004ac6]/50 z-10 brightness-110'
+                                    : 'shadow-sm'
+                                } ${isBlocked ? 'ring-2 ring-[#ba1a1a]/60 ring-offset-1' : ''}`}
+                                style={{
+                                  left: `${leftPct}%`,
+                                  width: `${Math.max(widthPct, 3)}%`,
+                                  backgroundColor: barColor,
+                                }}
+                              >
+                                {item.tier <= 3 && (
+                                  <span className="font-mono text-[9px] px-1.5 text-white truncate">
+                                    {item.gantt.label || `${item.progress}%`}
+                                  </span>
+                                )}
+                                {item.tier === 1 && (
+                                  <span className="font-mono text-[11px] font-bold text-white shrink-0 ml-auto mr-1.5">
+                                    {item.progress}%
+                                  </span>
+                                )}
+                                {/* Blocked: thay animate-ping bằng icon warning tĩnh — pro hơn, không gây mỏi mắt */}
+                                {isBlocked && (
+                                  <span
+                                    className="material-symbols-outlined text-white text-[12px] ml-auto mr-1 shrink-0"
+                                    style={{ fontVariationSettings: "'wght' 700, 'FILL' 1" }}
+                                  >
+                                    priority_high
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Custom Tooltip — hiện khi hover bar */}
+                              {isHovered && (
+                                <div
+                                  className="absolute z-30 pointer-events-none"
+                                  style={{
+                                    left: `${Math.min(95, Math.max(5, leftPct + widthPct / 2))}%`,
+                                    bottom: 'calc(100% + 10px)',
+                                    transform: 'translateX(-50%)',
+                                  }}
+                                >
+                                  <div className="bg-slate-900 text-white text-[11px] rounded-lg shadow-2xl px-3 py-2 min-w-[200px] max-w-[260px]">
+                                    <div className="font-bold text-[12px] mb-1.5 text-white leading-tight">
+                                      {item.title}
+                                    </div>
+                                    <div className="flex justify-between gap-3 mb-0.5">
+                                      <span className="text-slate-400">Mã:</span>
+                                      <span className="font-mono font-semibold">{item.code}</span>
+                                    </div>
+                                    <div className="flex justify-between gap-3 mb-0.5">
+                                      <span className="text-slate-400">Phụ trách:</span>
+                                      <span className="font-medium truncate max-w-[120px]">{item.owner.name}</span>
+                                    </div>
+                                    <div className="flex justify-between gap-3 mb-0.5">
+                                      <span className="text-slate-400">Hạn:</span>
+                                      <span className="font-mono">{item.deadline}</span>
+                                    </div>
+                                    <div className="flex justify-between gap-3 mb-0.5">
+                                      <span className="text-slate-400">Trạng thái:</span>
+                                      <span className="font-medium">{item.status}</span>
+                                    </div>
+                                    <div className="flex justify-between gap-3 pt-1 border-t border-slate-700">
+                                      <span className="text-slate-400">Tiến độ:</span>
+                                      <span
+                                        className="font-bold font-mono"
+                                        style={{ color: item.progress === 100 ? '#86efac' : '#bfdbfe' }}
+                                      >
+                                        {item.progress}%
+                                      </span>
+                                    </div>
+                                    {item.blockerAlert && (
+                                      <div className="mt-1.5 pt-1.5 border-t border-slate-700 text-amber-300 text-[10px] leading-snug">
+                                        <span className="font-semibold">⚠ Vướng mắc: </span>
+                                        {item.blockerAlert}
+                                      </div>
+                                    )}
+                                  </div>
+                                  {/* Arrow pointing to bar */}
+                                  <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-px">
+                                    <div className="w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-l-transparent border-r-transparent border-t-slate-900" />
+                                  </div>
+                                </div>
                               )}
-                              {item.tier === 1 && (
-                                <span className="font-mono text-[11px] font-bold text-white shrink-0 ml-auto mr-1.5">
-                                  {item.progress}%
-                                </span>
-                              )}
-                              {isBlocked && (
-                                <div className="w-1.5 h-1.5 rounded-full bg-white ml-0.5 animate-ping shrink-0" />
-                              )}
-                            </div>
+                            </>
                           );
                         })()}
                       </div>

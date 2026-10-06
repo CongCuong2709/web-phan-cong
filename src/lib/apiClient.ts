@@ -1,11 +1,8 @@
 /**
  * apiClient.ts — HTTP client gọi backend Express server.
  *
- * Phase 1 (dual-write): frontend vẫn dùng localStorage làm source of truth
- * cho UI, nhưng đồng thời gọi API để sync dữ liệu lên backend.
- * Nếu API down → app vẫn chạy bình thường (graceful degradation).
- *
- * Phase 2 (backend-only): bỏ localStorage, dùng React Query.
+ * localStorage chỉ được dùng cho JWT token (`mvp_token`).
+ * Mọi data nghiệp vụ đến từ API — không có localStorage cache.
  *
  * Usage:
  *   import { api } from './lib/apiClient';
@@ -48,17 +45,21 @@ export function clearToken(): void {
 // Internal fetch wrapper
 // ─────────────────────────────────────────────────────────────────────
 
-interface ApiError {
+export interface ApiError {
   error: string;
   message?: string;
 }
+
+export type ApiResponse<T = unknown> =
+  | { ok: true; data: T; error?: never; networkError?: false }
+  | { ok: false; error: ApiError; networkError: boolean };
 
 async function request<T = unknown>(
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
   path: string,
   body?: unknown,
   opts: { timeoutMs?: number; requireAuth?: boolean } = {}
-): Promise<{ ok: true; data: T } | { ok: false; error: ApiError; networkError: boolean }> {
+): Promise<ApiResponse<T>> {
   const token = getToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -127,6 +128,7 @@ export interface LoginResponse {
     fullname: string;
     email?: string | null;
     role: 'admin' | 'director' | 'manager' | 'employee';
+    departments?: string[] | string | null;
     initial?: string | null;
     avatar_url?: string | null;
   };
@@ -373,14 +375,16 @@ export const api = {
  * Dùng cho dual-write — UI không bao giờ bị block vì API lỗi.
  */
 export function fireAndForget<T>(
-  promise: Promise<{ ok: true; data: T } | { ok: false; error: ApiError; networkError: boolean }>,
+  promise: Promise<ApiResponse<T>>,
   context: string
 ): void {
   promise.then((r) => {
-    if (!r.ok && r.networkError) {
-      console.debug(`[api/${context}] skipped (backend offline)`);
-    } else if (!r.ok) {
-      console.debug(`[api/${context}] failed:`, r.error);
+    if (!r.ok) {
+      if (r.networkError) {
+        console.debug(`[api/${context}] skipped (backend offline)`);
+      } else {
+        console.debug(`[api/${context}] failed:`, r.error);
+      }
     }
   });
 }
