@@ -184,8 +184,8 @@ REM 5. Start dev server
 REM ============================================================================
 echo ============================================================================
 echo   San sang! Khoi dong dev server...
-echo   URL:    http://localhost:3001
-echo   Health: http://localhost:3001/api/health
+echo   URL:    http://localhost:3000
+echo   Health: http://localhost:3000/api/health
 echo   Login:  POST /api/auth/login ^(admin/admin123^)
 echo.
 echo   Ctrl+C de dung server.

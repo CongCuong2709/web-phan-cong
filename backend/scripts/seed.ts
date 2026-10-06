@@ -376,7 +376,7 @@ console.log('━━━━━━━━━━━━━━━━━━━━━━�
 console.log('');
 console.log('👉 Test thử:');
 console.log('   npm run dev   # chạy backend');
-console.log('   curl -X POST http://localhost:3001/api/auth/login \\');
+console.log('   curl -X POST http://localhost:3000/api/auth/login \\');
 console.log('     -H "Content-Type: application/json" \\');
 console.log('     -d \'{"username":"admin","password":"admin123"}\'');
 

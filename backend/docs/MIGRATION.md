@@ -23,7 +23,7 @@ Trong Phase 1, frontend **vẫn dùng localStorage làm source of truth** nhưng
 
 ```ts
 // src/lib/apiClient.ts (mới)
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
+const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
 async function apiRequest<T>(
   method: 'GET'|'POST'|'PUT'|'PATCH'|'DELETE',

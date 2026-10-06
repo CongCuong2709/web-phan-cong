@@ -4,12 +4,10 @@
  * Khi chạy `node backend/server.js`:
  *   1. Bootstrap DB (tạo file + apply schema nếu mới)
  *   2. Mount routes (/api/auth, /api/users, /api/tier-items)
- *   3. CORS cho Vite dev server (localhost:3000)
- *   4. Listen trên PORT (mặc định 3001)
+ *   3. CORS cho Vite dev server (localhost:5173)
+ *   4. Listen trên PORT (mặc định 3000)
  *
- * Sau khi backend chạy, frontend cần:
- *   - Set VITE_API_URL=http://localhost:3001 trong .env.local
- *   - src/lib/apiClient.ts sẽ gọi tới /api/*
+ * Sau khi backend chạy, frontend gọi tới http://localhost:3000/api/*
  */
 
 import 'dotenv/config';
@@ -28,8 +26,8 @@ import helpRequestRoutes from './routes/helpRequests.js';
 import historyRoutes from './routes/history.js';
 import teamMemberRoutes from './routes/teamMembers.js';
 
-const PORT = Number(process.env.PORT) || 3001;
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:3000';
+const PORT = Number(process.env.PORT) || 3000;
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
 
 const app = express();
 

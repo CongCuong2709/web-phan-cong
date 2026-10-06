@@ -15,8 +15,8 @@ start-server.bat
 ```
 
 Script sẽ tự động:
-1. ✅ Khởi động **backend** (Express + SQLite) ở `http://localhost:3001`
-2. ✅ Khởi động **frontend** (Vite + React) ở `http://localhost:3000`
+1. ✅ Khởi động **backend** (Express + SQLite) ở `http://localhost:3000`
+2. ✅ Khởi động **frontend** (Vite + React) ở `http://localhost:5173`
 3. ✅ Mở browser tới web app
 
 **Bấm phím bất kỳ trong cửa sổ launcher để tắt tất cả servers.**
@@ -60,7 +60,7 @@ start-dev.bat               # các lần sau: chỉ start server
 npm run dev
 ```
 
-Mở browser: http://localhost:3000
+Mở browser: http://localhost:5173
 
 ---
 
@@ -106,9 +106,9 @@ Highlights:
 | Lỗi | Cách sửa |
 |---|---|
 | `node:sqlite not found` | Upgrade Node ≥ 22.5 |
-| `Port 3001 already in use` | Chạy `taskkill /f /im node.exe` rồi thử lại |
-| `Port 3000 already in use` | Đổi port Vite: `npm run dev -- --port 3001` |
-| Browser không mở | Mở thủ công: http://localhost:3000 |
+| `Port 3000 already in use` | Chạy `taskkill /f /im node.exe` rồi thử lại |
+| `Port 5173 already in use` | Đổi port Vite: `npm run dev -- --port 5174` |
+| Browser không mở | Mở thủ công: http://localhost:5173 |
 | Backend không ready | Xem cửa sổ "Backend - 4-Tier API" |
 
 ---
