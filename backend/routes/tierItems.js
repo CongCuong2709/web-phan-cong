@@ -25,7 +25,13 @@ router.use(requireAuth);
 /** Quyết định xem user có thấy 1 tier item không (mirror frontend). */
 function canSee(user, item) {
   if (user.role === 'admin' || user.role === 'director') return true;
-  if (user.role === 'manager') return inDepartment(user, item.department_code);
+  if (user.role === 'manager') {
+    // T1 projects: manager LUÔN thấy như read-only context header — đúng pattern
+    // enterprise (BGĐ-owned project mà manager phụ trách phase bên dưới).
+    // Edit bị chặn bởi canEditTierItem ở middleware/check riêng.
+    if (item.tier === 1) return true;
+    return inDepartment(user, item.department_code);
+  }
   // employee: chỉ T4 của chính mình
   return item.tier === 4 && item.owner_username_str === user.username;
 }

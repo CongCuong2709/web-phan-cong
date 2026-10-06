@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react';
-import { TierItem } from '../types';
+import { TierItem, User } from '../types';
 
 interface Gantt4TangViewProps {
   tierItems: TierItem[];
+  currentUser?: User;
   onSelectItem: (item: TierItem) => void;
   onOpenNewModal: () => void;
   onExport: () => void;
@@ -113,6 +114,7 @@ function buildTimeline(timeFilter: 'month' | 'quarter' | 'year', today: Date) {
 
 export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
   tierItems,
+  currentUser,
   onSelectItem,
   onOpenNewModal,
   onExport,
@@ -181,6 +183,17 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
   const t2Count = tierItems.filter((i) => i.tier === 2).length;
   const t3Count = tierItems.filter((i) => i.tier === 3).length;
   const t4Count = tierItems.filter((i) => i.tier === 4).length;
+
+  // Read-only context: T1 project thuộc dept KHÔNG phải của currentUser.
+  // Hiển thị như context header nhưng không thể edit (theo pattern Jira/MS Project).
+  const userDepts = currentUser?.departments ?? [];
+  const isReadOnlyContext = (item: TierItem): boolean => {
+    if (item.tier !== 1) return false;
+    if (!item.department) return false;
+    return !userDepts.includes(item.department as never);
+  };
+  // True nếu có ít nhất 1 T1 read-only trong data → hiện chú thích ở legend
+  const hasReadOnlyContext = tierItems.some(isReadOnlyContext);
 
   // --- Dynamic KPI calculations ---
   const avgAll =
@@ -454,6 +467,12 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                 <span className="w-3 h-2 rounded-sm bg-[#f59e0b]"></span>
                 <span>T4: Điểm nghẽn/Chờ duyệt</span>
               </div>
+              {hasReadOnlyContext && (
+                <div className="flex items-center gap-1.5">
+                  <span className="w-3 h-2 rounded-sm bg-[#94a3b8]"></span>
+                  <span>Chỉ đọc (Dự án phòng ban khác)</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -513,6 +532,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                   const isCollapsible = item.tier === 1 || item.tier === 2 || item.tier === 3;
                   const isCollapsed = collapsedMap[item.id];
                   const isHovered = hoveredItemId === item.id;
+                  const readonlyCtx = isReadOnlyContext(item);
 
                   // Zebra striping: dòng chẵn tint nhẹ, dòng lẻ trắng → quét mắt dễ hơn
                   const zebraBase = idx % 2 === 0 ? 'bg-white' : 'bg-[#f8faff]';
@@ -527,7 +547,9 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                       ? 'pl-10'
                       : 'pl-16';
 
-                  const rowBg = item.blockerAlert
+                  const rowBg = readonlyCtx
+                    ? 'bg-slate-50/70 hover:bg-slate-100/80'
+                    : item.blockerAlert
                     ? 'bg-amber-50/60 hover:bg-amber-100/70'
                     : item.tier === 1
                     ? `${zebraBase} hover:bg-[#eff4ff]/80`
@@ -544,7 +566,14 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                         className={`w-[50%] flex items-center px-4 py-2 ${indentClass} border-r border-[#eff4ff]`}
                       >
                         <div className="flex-1 flex items-center gap-1.5 min-w-0 pr-3">
-                          {isCollapsible ? (
+                          {readonlyCtx ? (
+                            <span
+                              className="w-5 h-5 flex items-center justify-center text-slate-400 shrink-0"
+                              title="Dự án do phòng ban khác phụ trách — bạn chỉ có thể xem, không sửa"
+                            >
+                              <span className="material-symbols-outlined text-[16px]">lock</span>
+                            </span>
+                          ) : isCollapsible ? (
                             <button
                               onClick={(e) => toggleRowCollapse(e, item.id)}
                               className="w-5 h-5 flex items-center justify-center text-[#565e74] hover:bg-[#e5eeff] rounded"
@@ -560,8 +589,23 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
 
                           {/* Tier Badge */}
                           {item.tier === 1 && (
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#0F172A] text-white shrink-0 uppercase tracking-wider">
+                            <span
+                              className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 uppercase tracking-wider ${
+                                readonlyCtx
+                                  ? 'bg-slate-300 text-slate-700'
+                                  : 'bg-[#0F172A] text-white'
+                              }`}
+                            >
                               DỰ ÁN T1
+                            </span>
+                          )}
+                          {readonlyCtx && (
+                            <span
+                              className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 shrink-0 uppercase tracking-wider flex items-center gap-0.5"
+                              title={`Dự án thuộc phòng ban "${item.department}" — không thuộc phòng ban của bạn. Bạn có thể xem nhưng không thể sửa.`}
+                            >
+                              <span className="material-symbols-outlined text-[11px]">visibility</span>
+                              <span>Chỉ đọc</span>
                             </span>
                           )}
                           {item.tier === 2 && (
@@ -582,7 +626,9 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
 
                           <span
                             className={`truncate ${
-                              item.tier === 1
+                              readonlyCtx
+                                ? 'font-bold text-[14px] text-slate-500'
+                                : item.tier === 1
                                 ? 'font-bold text-[14px] text-[#0b1c30]'
                                 : item.tier === 2
                                 ? 'font-semibold text-[13px] text-[#0b1c30]'
@@ -754,6 +800,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                             }
                           }
                           const barColor = item.gantt.barColor || (
+                            readonlyCtx ? '#94a3b8' :
                             item.tier === 1 ? '#0F172A'
                             : item.tier === 2 ? '#004ac6'
                             : item.tier === 3 ? '#0284c7'

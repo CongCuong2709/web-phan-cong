@@ -163,11 +163,39 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   };
 
   // ---------------- Role-based data slicing ----------------
+  // Manager: thấy descendants thuộc dept của mình (T2/T3/T4), đồng thời include
+  // cả T1 project cha như là read-only context header — đúng pattern enterprise PM
+  // (Jira, MS Project) để user không bị "mất bức tranh lớn".
   const visibleTierItems = useMemo<TierItem[]>(() => {
     if (user.role === 'admin' || user.role === 'director') return tierItems;
     if (user.role === 'manager') {
       const depts = user.departments ?? [];
-      return tierItems.filter((t) => !t.department || depts.includes(t.department));
+      const result: TierItem[] = [];
+      const seen = new Set<string>();
+
+      // 1. Descendants (T2/T3/T4) thuộc dept của manager
+      const descendants = tierItems.filter(
+        (t) => t.tier >= 2 && (!t.department || depts.includes(t.department))
+      );
+      for (const d of descendants) {
+        if (!seen.has(d.id)) { result.push(d); seen.add(d.id); }
+      }
+
+      // 2. Walk UP: với mỗi descendant, include cả parent chain até T1.
+      //    → T1 project hiện như read-only context (DetailsDrawer đã có canEdit guard).
+      for (const d of descendants) {
+        let pid = d.parentId;
+        while (pid) {
+          if (seen.has(pid)) break;
+          const parent = tierItems.find((p) => p.id === pid);
+          if (!parent) break;
+          result.push(parent);
+          seen.add(pid);
+          if (parent.tier === 1) break; // đã lên T1, dừng
+          pid = parent.parentId;
+        }
+      }
+      return result;
     }
     return []; // employees don't see the 4-tier tree
   }, [tierItems, user]);
@@ -638,6 +666,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
           ) : (
             <Gantt4TangView
               tierItems={visibleTierItems}
+              currentUser={user}
               onSelectItem={(item) => {
                 setSelectedItemForDrawer(item);
                 setIsDrawerOpen(true);
