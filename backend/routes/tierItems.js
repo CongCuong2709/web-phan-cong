@@ -32,8 +32,11 @@ function canSee(user, item) {
     if (item.tier === 1) return true;
     return inDepartment(user, item.department_code);
   }
-  // employee: chỉ T4 của chính mình
-  return item.tier === 4 && item.owner_username_str === user.username;
+  // Employee: chỉ T4 của chính mình + toàn bộ T1/T2/T3 để walk-up context chain.
+  // T1/T2/T3 đều read-only (canEditTierItem cho employee chỉ true với T4 owned),
+  // nên chỉ là visibility, không phải edit risk.
+  if (item.tier === 4) return item.owner_username_str === user.username;
+  return true; // T1, T2, T3 — read-only context
 }
 
 /** Auto-rollup: tính lại progress của parent (và đệ quy lên trên). */

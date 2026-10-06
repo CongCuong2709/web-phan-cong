@@ -16,6 +16,7 @@ interface TierItemLite {
   title: string;
   parentId?: string;
   department?: string;
+  ownerUsername?: string;
 }
 
 type Role = 'admin' | 'director' | 'manager' | 'employee';
@@ -61,6 +62,28 @@ function visibleTierItems(user: UserLite, tierItems: TierItemLite[]): TierItemLi
     }
     return result;
   }
+  if (user.role === 'employee') {
+    const myT4 = tierItems.filter(
+      (t) => t.tier === 4 && t.ownerUsername === user.username
+    );
+    const result: TierItemLite[] = [];
+    const seen = new Set<string>();
+    for (const t of myT4) {
+      if (!seen.has(t.id)) { result.push(t); seen.add(t.id); }
+    }
+    for (const t of myT4) {
+      let cur: string | undefined = t.parentId;
+      while (cur) {
+        if (seen.has(cur)) break;
+        const parent = tierItems.find((p) => p.id === cur);
+        if (!parent) break;
+        result.push(parent);
+        seen.add(cur);
+        cur = parent.parentId;
+      }
+    }
+    return result;
+  }
   return [];
 }
 
@@ -71,6 +94,7 @@ const lite: TierItemLite[] = CONSTRUCTION_TIER_ITEMS.map((t) => ({
   title: t.title,
   parentId: t.parentId,
   department: t.department,
+  ownerUsername: t.ownerUsername,
 }));
 
 const tierCounts = (items: TierItemLite[]) => ({
@@ -117,6 +141,23 @@ console.log(`  ✓ Thấy ít nhất 1 T2 phase:            ${hungHasT2 ? 'PASS'
 console.log(`  ✓ T1 đó là read-only (không thuộc QLDA): ${hungHasReadOnlyT1 ? 'PASS' : 'FAIL ❌'}`);
 console.log(`  ✓ Tổng items > 0:                     ${hungVisible.length > 0 ? 'PASS' : 'FAIL ❌'}`);
 
-const allPass = hungHasT1 && hungHasT2 && hungHasReadOnlyT1 && hungVisible.length > 0;
+// Employee Hong: chỉ thấy T4 của mình + parent chain T3 → T2 → T1
+const hong = USERS.find((u) => u.username === 'hong')!;
+const hongVisible = visibleTierItems(hong, lite);
+const hongT4 = hongVisible.filter((i) => i.tier === 4).length;
+const hongT3 = hongVisible.filter((i) => i.tier === 3).length;
+const hongT2 = hongVisible.filter((i) => i.tier === 2).length;
+const hongT1 = hongVisible.filter((i) => i.tier === 1).length;
+const hongHasOwnT4 = hongT4 === 5;  // CV0001-0005
+
+console.log('\n━━━ Hong (employee QLDA) assertions ━━━');
+console.log(`  ✓ Thấy đúng 5 T4 của mình:             ${hongHasOwnT4 ? 'PASS' : 'FAIL ❌ (got ' + hongT4 + ')'}`);
+console.log(`  ✓ Thấy 1 T3 bundle parent chain:        ${hongT3 === 1 ? 'PASS' : 'FAIL ❌ (got ' + hongT3 + ')'}`);
+console.log(`  ✓ Thấy 1 T2 phase parent chain:         ${hongT2 === 1 ? 'PASS' : 'FAIL ❌ (got ' + hongT2 + ')'}`);
+console.log(`  ✓ Thấy 1 T1 project read-only context:   ${hongT1 === 1 ? 'PASS' : 'FAIL ❌ (got ' + hongT1 + ')'}`);
+
+const allPass =
+  hungHasT1 && hungHasT2 && hungHasReadOnlyT1 && hungVisible.length > 0 &&
+  hongHasOwnT4 && hongT3 === 1 && hongT2 === 1 && hongT1 === 1;
 console.log(`\n${allPass ? '🎉 TẤT CẢ PASS' : '❌ CÓ LỖI — CẦN DEBUG'}`);
 process.exit(allPass ? 0 : 1);

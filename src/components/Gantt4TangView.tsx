@@ -184,11 +184,17 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
   const t3Count = tierItems.filter((i) => i.tier === 3).length;
   const t4Count = tierItems.filter((i) => i.tier === 4).length;
 
-  // Read-only context: T1 project thuộc dept KHÔNG phải của currentUser.
-  // Hiển thị như context header nhưng không thể edit (theo pattern Jira/MS Project).
+  // Read-only context: T1 project mà currentUser không thể edit.
+  // - Admin/director: không bao giờ read-only (full quyền)
+  // - Manager: T1 ngoài dept của mình → read-only
+  // - Employee: TẤT CẢ T1 đều read-only (chỉ xem để biết project context)
   const userDepts = currentUser?.departments ?? [];
   const isReadOnlyContext = (item: TierItem): boolean => {
     if (item.tier !== 1) return false;
+    const role = currentUser?.role;
+    if (role === 'admin' || role === 'director') return false;
+    if (role === 'employee') return true; // mọi T1 đều read-only
+    // manager
     if (!item.department) return false;
     return !userDepts.includes(item.department as never);
   };
@@ -527,6 +533,24 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                     <div className="w-1.5 h-1.5 rounded-full bg-white"></div>
                   </div>
                 </div>
+
+                {filteredItems.length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
+                    <span className="material-symbols-outlined text-[#c3c6d7] text-[48px] mb-2">
+                      {currentUser?.role === 'employee' ? 'task_alt' : 'inbox'}
+                    </span>
+                    <h3 className="text-[15px] font-semibold text-[#0b1c30] mb-1">
+                      {currentUser?.role === 'employee'
+                        ? 'Bạn chưa có task nào được giao'
+                        : 'Chưa có dữ liệu để hiển thị'}
+                    </h3>
+                    <p className="text-[12px] text-[#737686] max-w-md">
+                      {currentUser?.role === 'employee'
+                        ? 'Liên hệ Trưởng phòng để được phân công đầu việc. Khi có task, bạn sẽ thấy task đó cùng với cây dự án (T1) → giai đoạn (T2) → hạng mục (T3) ở chế độ chỉ đọc.'
+                        : 'Hãy thêm dự án, giai đoạn, hạng mục hoặc đầu việc mới để bắt đầu.'}
+                    </p>
+                  </div>
+                )}
 
                 {filteredItems.map((item, idx) => {
                   const isCollapsible = item.tier === 1 || item.tier === 2 || item.tier === 3;

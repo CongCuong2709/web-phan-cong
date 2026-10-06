@@ -19,7 +19,9 @@ function canSee(user, item) {
     if (item.tier === 1) return true;  // T1 read-only context
     return inDepartment(user, item.department_code);
   }
-  return item.tier === 4 && item.owner_username_str === user.username;
+  // Employee: T4 của mình + T1/T2/T3 để walk-up (read-only context)
+  if (item.tier === 4) return item.owner_username_str === user.username;
+  return true;
 }
 
 const USERS = [
@@ -67,10 +69,12 @@ console.log(`  ✓ Cuong (KTTC) thấy T1 project:       ${cuongT1 === 1 ? 'PASS
 
 const hong = USERS.find((u) => u.username === 'hong');
 const hongT1 = ITEMS.filter((i) => i.tier === 1 && canSee(hong, i)).length;
+const hongT2 = ITEMS.filter((i) => i.tier === 2 && canSee(hong, i)).length;
 const hongT4 = ITEMS.filter((i) => i.tier === 4 && canSee(hong, i)).length;
-console.log(`  ✓ Hong (employee) KHÔNG thấy T1:      ${hongT1 === 0 ? 'PASS' : 'FAIL ❌'}`);
-console.log(`  ✓ Hong (employee) thấy T4 của mình:   ${hongT4 >= 1 ? 'PASS' : 'FAIL ❌'}`);
+console.log(`  ✓ Hong (employee) thấy T1 context:     ${hongT1 === 1 ? 'PASS' : 'FAIL ❌ (got ' + hongT1 + ')'}`);
+console.log(`  ✓ Hong (employee) thấy T2 parent chain: ${hongT2 === 3 ? 'PASS' : 'FAIL ❌ (got ' + hongT2 + ')'}`);
+console.log(`  ✓ Hong (employee) thấy T4 của mình:   ${hongT4 === 1 ? 'PASS' : 'FAIL ❌ (got ' + hongT4 + ')'}`);
 
-const allPass = hungT1 === 1 && cuongT1 === 1 && hongT1 === 0 && hongT4 >= 1;
+const allPass = hungT1 === 1 && cuongT1 === 1 && hongT1 === 1 && hongT2 === 3 && hongT4 === 1;
 console.log(`\n${allPass ? '🎉 TẤT CẢ PASS' : '❌ CẦN DEBUG'}`);
 process.exit(allPass ? 0 : 1);

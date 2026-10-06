@@ -166,6 +166,8 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   // Manager: thấy descendants thuộc dept của mình (T2/T3/T4), đồng thời include
   // cả T1 project cha như là read-only context header — đúng pattern enterprise PM
   // (Jira, MS Project) để user không bị "mất bức tranh lớn".
+  // Employee: chỉ thấy T4 của chính mình + parent chain (T3 → T2 → T1) làm read-only
+  // context — minimal-leak pattern, đúng use case "task này thuộc dự án nào?".
   const visibleTierItems = useMemo<TierItem[]>(() => {
     if (user.role === 'admin' || user.role === 'director') return tierItems;
     if (user.role === 'manager') {
@@ -197,7 +199,33 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       }
       return result;
     }
-    return []; // employees don't see the 4-tier tree
+    if (user.role === 'employee') {
+      // 1. T4 của chính employee
+      const myT4 = tierItems.filter(
+        (t) => t.tier === 4 && t.ownerUsername === user.username
+      );
+      const result: TierItem[] = [];
+      const seen = new Set<string>();
+
+      for (const t of myT4) {
+        if (!seen.has(t.id)) { result.push(t); seen.add(t.id); }
+      }
+
+      // 2. Walk UP: T4 → T3 → T2 → T1 (parent chain làm read-only context)
+      for (const t of myT4) {
+        let cur: string | undefined = t.parentId;
+        while (cur) {
+          if (seen.has(cur)) break;
+          const parent = tierItems.find((p) => p.id === cur);
+          if (!parent) break;
+          result.push(parent);
+          seen.add(cur);
+          cur = parent.parentId;
+        }
+      }
+      return result;
+    }
+    return [];
   }, [tierItems, user]);
 
   const visibleTeamMembers = useMemo<TeamMember[]>(() => {
@@ -660,21 +688,18 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       />
 
       <main className="w-full pt-14 flex-1">
-        {activeTab === 'cay-gantt-4-tang' &&
-          (user.role === 'employee' ? (
-            <ForbiddenView role="employee" />
-          ) : (
-            <Gantt4TangView
-              tierItems={visibleTierItems}
-              currentUser={user}
-              onSelectItem={(item) => {
-                setSelectedItemForDrawer(item);
-                setIsDrawerOpen(true);
-              }}
-              onOpenNewModal={() => setIsNewItemModalOpen(true)}
-              onExport={() => setIsExportModalOpen(true)}
-            />
-          ))}
+        {activeTab === 'cay-gantt-4-tang' && (
+          <Gantt4TangView
+            tierItems={visibleTierItems}
+            currentUser={user}
+            onSelectItem={(item) => {
+              setSelectedItemForDrawer(item);
+              setIsDrawerOpen(true);
+            }}
+            onOpenNewModal={() => setIsNewItemModalOpen(true)}
+            onExport={() => setIsExportModalOpen(true)}
+          />
+        )}
 
         {activeTab === 'giao-viec-nhom' &&
           (user.role === 'employee' || user.role === 'director' ? (

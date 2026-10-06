@@ -23,7 +23,9 @@ function visibleTabsFor(user: User | null): ActiveAppTab[] {
       return ['cay-gantt-4-tang', 'giao-viec-nhom', 'viec-cua-toi', 'bao-cao'];
     case 'employee':
     default:
-      return ['viec-cua-toi'];
+      // Employee xem 'cay-gantt-4-tang' dạng read-only context chain (parent T4 của mình),
+      // giống pattern Jira/Linear/Asana — chỉ thấy T1/T2/T3 cha của task mình.
+      return ['viec-cua-toi', 'cay-gantt-4-tang'];
   }
 }
 
