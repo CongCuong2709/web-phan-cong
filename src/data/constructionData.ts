@@ -589,45 +589,43 @@ const history: HistoryEntry[] = [];
     }
   };
 
-  // === GIAI ĐOẠN 1: THIẾT KẾ VÀ HOÀN THIỆN PHÁP LÝ XÂY DỰNG ===
+  // === GIAI ĐOẠN 1: THIẾT KẾ VÀ HOÀN THIỆN PHÁP LÝ XÂY DỰNG (Phòng QLDA) ===
   addPhase(1, 'Giai đoạn 1: THIẾT KẾ VÀ HOÀN THIỆN PHÁP LÝ XÂY DỰNG',
-    'Khảo sát, thiết kế, thẩm tra và phê duyệt dự toán', 'hung', 'QLDA',
+    'Khảo sát, thiết kế, thẩm tra và xin phép xây dựng dự án', 'hung', 'QLDA',
     -5, 15,
     [
-      { name: '1.1 Khảo sát địa chất, địa hình bổ sung',                                                    assigneeKey: 'hong', s: -10, e:  -3, progress: 100, status: 'completed',   results: 'Báo cáo khảo sát đã nghiệm thu' },
-      { name: '1.2 Lập nhiệm vụ thiết kế, yêu cầu kỹ thuật, tiêu chuẩn vật liệu',                         assigneeKey: 'hong', s:  -5, e:   5, progress:  60, status: 'in_progress', results: 'Nhiệm vụ thiết kế được duyệt' },
-      { name: '1.3 Thiết kế kỹ thuật / bản vẽ thi công (kiến trúc, kết cấu, MEP, PCCC, hạ tầng)',        assigneeKey: 'hong', s:   0, e:  10, progress:  30, status: 'in_progress', results: 'Bộ hồ sơ thiết kế' },
-      { name: '1.4 Thẩm tra thiết kế, dự toán',                                                             assigneeKey: 'hong', s:   5, e:  12, progress:   0, status: 'not_started', results: 'Báo cáo thẩm tra' },
-      { name: '1.5 Lập và phê duyệt dự toán, tổng mức đầu tư điều chỉnh',                                 assigneeKey: 'hong', s:   8, e:  15, progress:   0, status: 'not_started', results: 'Dự toán được duyệt, làm giá gói thầu' },
+      { name: '1.1 Khảo sát địa chất, địa hình bổ sung',                                            assigneeKey: 'hong', s: -10, e:  -3, progress: 100, status: 'completed',   results: 'Báo cáo khảo sát đã nghiệm thu' },
+      { name: '1.2 Lập nhiệm vụ thiết kế, yêu cầu kỹ thuật, tiêu chuẩn vật liệu',                 assigneeKey: 'hong', s:  -5, e:   5, progress:  60, status: 'in_progress', results: 'Nhiệm vụ thiết kế được duyệt' },
+      { name: '1.3 Thiết kế kỹ thuật / bản vẽ thi công (kiến trúc, kết cấu, MEP, PCCC, hạ tầng)', assigneeKey: 'hong', s:   0, e:  10, progress:  30, status: 'in_progress', results: 'Bộ hồ sơ thiết kế' },
+      { name: '1.4 Thẩm tra thiết kế, quy chuẩn & tiêu chuẩn kỹ thuật',                             assigneeKey: 'hong', s:   5, e:  12, progress:   0, status: 'not_started', results: 'Báo cáo thẩm tra' },
+      { name: '1.5 Xin cấp giấy phép xây dựng & hoàn thiện thủ tục pháp lý',                       assigneeKey: 'hong', s:   8, e:  15, progress:   0, status: 'not_started', results: 'Giấy phép xây dựng được cấp' },
     ],
   );
 
-  // === GIAI ĐOẠN 2: LỰA CHỌN NHÀ THẦU VÀ KÝ HỢP ĐỒNG ===
-  addPhase(2, 'Giai đoạn 2: LỰA CHỌN NHÀ THẦU VÀ KÝ HỢP ĐỒNG',
-    'Phân chia gói thầu, mời thầu, đánh giá, ký hợp đồng', 'hung', 'QLDA',
+  // === GIAI ĐOẠN 2: ĐẦU TƯ TÀI CHÍNH, ĐẤU THẦU VÀ BẢO LÃNH (Phòng KTTC) ===
+  addPhase(2, 'Giai đoạn 2: ĐẦU TƯ TÀI CHÍNH, ĐẤU THẦU VÀ BẢO LÃNH',
+    'Lập kế hoạch tài chính, hồ sơ mời thầu, thẩm định bảo lãnh và giải ngân', 'cuong', 'KTTC',
     10, 30,
     [
-      { name: '2.1 Lập kế hoạch phân chia gói thầu',                           assigneeKey: 'hong',   s: 10, e: 15, progress: 0, status: 'not_started', results: 'Kế hoạch lựa chọn nhà thầu' },
-      { name: '2.2 Lập hồ sơ mời thầu / yêu cầu báo giá',                     assigneeKey: 'hong',   s: 12, e: 20, progress: 0, status: 'not_started', results: 'HSMT được duyệt' },
-      { name: '2.3 Tổ chức mời thầu, đánh giá hồ sơ dự thầu',                 assigneeKey: 'hong',   s: 18, e: 25, progress: 0, status: 'not_started', results: 'Báo cáo đánh giá' },
-      { name: '2.4 Nhận bảo lãnh thực hiện hợp đồng, bảo lãnh tạm ứng',      assigneeKey: 'nguyet', s: 20, e: 27, progress: 0, status: 'not_started', results: 'Bảo lãnh hợp lệ' },
-      { name: '2.5 Lập kế hoạch mua sắm vật tư, thiết bị do chủ đầu tư cấp', assigneeKey: 'hong',   s: 22, e: 30, progress: 0, status: 'not_started', results: 'Kế hoạch mua sắm và dòng tiền' },
+      { name: '2.1 Lập kế hoạch tài chính & dự toán chi tiết dự án',                               assigneeKey: 'nguyet', s: 10, e: 16, progress:  50, status: 'in_progress', results: 'Kế hoạch tài chính đã phê duyệt' },
+      { name: '2.2 Lập hồ sơ mời thầu & đánh giá hồ sơ dự thầu các gói thầu',                     assigneeKey: 'hang',   s: 12, e: 20, progress:  20, status: 'in_progress', results: 'Bộ HSMT được phát hành' },
+      { name: '2.3 Thẩm định bảo lãnh thực hiện hợp đồng, bảo lãnh tạm ứng',                      assigneeKey: 'nguyet', s: 18, e: 25, progress:   0, status: 'not_started', results: 'Thư bảo lãnh hợp lệ' },
+      { name: '2.4 Kế hoạch giải ngân, mua sắm vật tư & quản lý dòng tiền dự án',                 assigneeKey: 'tu',     s: 20, e: 28, progress:   0, status: 'not_started', results: 'Dự toán giải ngân và dòng tiền' },
+      { name: '2.5 Thủ tục tạm ứng hợp đồng & mua bảo hiểm công trình',                            assigneeKey: 'tu',     s: 22, e: 30, progress:   0, status: 'not_started', results: 'Chứng từ giải ngân & bảo hiểm' },
     ],
   );
 
-  // === GIAI ĐOẠN 3: CHUẨN BỊ KHỞI CÔNG ===
-  addPhase(3, 'Giai đoạn 3: CHUẨN BỊ KHỞI CÔNG',
-    'Bàn giao mặt bằng, tổ chức công trường, an toàn, bảo hiểm, tạm ứng', 'thanh', 'TC',
+  // === GIAI ĐOẠN 3: CHUẨN BỊ VÀ CHỈ ĐẠO THI CÔNG CÔNG TRƯỜNG (Phòng TC) ===
+  addPhase(3, 'Giai đoạn 3: CHUẨN BỊ VÀ CHỈ ĐẠO THI CÔNG CÔNG TRƯỜNG',
+    'Bàn giao mặt bằng, tổ chức công trường, an toàn lao động, nghiệm thu', 'thanh', 'TC',
     25, 55,
     [
-      { name: '3.1 Bàn giao mặt bằng, mốc định vị, cao độ cho nhà thầu',                               assigneeKey: 'ngoc', s: 25, e: 28, progress: 0, status: 'not_started', results: 'Biên bản bàn giao mặt bằng' },
-      { name: '3.2 Thành lập Ban Chỉ huy công trường, quy chế phối hợp CĐT – TVGS – nhà thầu',         assigneeKey: 'ngoc', s: 25, e: 30, progress: 0, status: 'not_started', results: 'Sơ đồ tổ chức công trường, quy chế' },
-      { name: '3.3 Phê duyệt biện pháp thi công, tiến độ tổng thể và chi tiết',                        assigneeKey: 'ngoc', s: 28, e: 38, progress: 0, status: 'not_started', results: 'Biện pháp và tiến độ được duyệt' },
-      { name: '3.4 Kế hoạch an toàn lao động, vệ sinh môi trường, PCCC công trường',                   assigneeKey: 'ngoc', s: 30, e: 40, progress: 0, status: 'not_started', results: 'Kế hoạch ATLĐ – VSMT' },
-      { name: '3.5 Mua bảo hiểm công trình, bảo hiểm con người',                                       assigneeKey: 'hang', s: 30, e: 35, progress: 0, status: 'not_started', results: 'Hợp đồng bảo hiểm' },
-      { name: '3.6 Chuẩn bị lán trại, điện nước thi công, hàng rào, biển báo',                        assigneeKey: 'ngoc', s: 32, e: 42, progress: 0, status: 'not_started', results: 'Công trường đủ điều kiện' },
-      { name: '3.7 Lập quy trình quản lý hồ sơ chất lượng, biểu mẫu nghiệm thu',                     assigneeKey: 'hong', s: 35, e: 45, progress: 0, status: 'not_started', results: 'Bộ biểu mẫu thống nhất' },
-      { name: '3.8 Tạm ứng hợp đồng',                                                                  assigneeKey: 'tu',   s: 40, e: 55, progress: 0, status: 'not_started', results: 'Chứng từ tạm ứng' },
+      { name: '3.1 Bàn giao mặt bằng, mốc định vị, cao độ cho nhà thầu',                               assigneeKey: 'ngoc', s: 25, e: 28, progress:  80, status: 'in_progress', results: 'Biên bản bàn giao mặt bằng' },
+      { name: '3.2 Thành lập Ban Chỉ huy công trường, quy chế phối hợp CĐT – TVGS – nhà thầu',         assigneeKey: 'ngoc', s: 25, e: 30, progress:  40, status: 'in_progress', results: 'Sơ đồ tổ chức công trường, quy chế' },
+      { name: '3.3 Phê duyệt biện pháp thi công, tiến độ tổng thể và chi tiết',                        assigneeKey: 'ngoc', s: 28, e: 38, progress:   0, status: 'not_started', results: 'Biện pháp và tiến độ được duyệt' },
+      { name: '3.4 Kế hoạch an toàn lao động, vệ sinh môi trường, PCCC công trường',                   assigneeKey: 'ngoc', s: 30, e: 40, progress:   0, status: 'not_started', results: 'Kế hoạch ATLĐ – VSMT' },
+      { name: '3.5 Chuẩn bị lán trại, điện nước thi công, hàng rào, biển báo',                        assigneeKey: 'ngoc', s: 32, e: 42, progress:   0, status: 'not_started', results: 'Công trường đủ điều kiện' },
+      { name: '3.6 Lập quy trình quản lý hồ sơ chất lượng, biểu mẫu nghiệm thu',                     assigneeKey: 'ngoc', s: 35, e: 45, progress:   0, status: 'not_started', results: 'Bộ biểu mẫu thống nhất' },
     ],
   );
 }
