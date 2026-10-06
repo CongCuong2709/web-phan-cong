@@ -456,501 +456,109 @@ const dailyLogs: DailyLog[] = [];
 const history: HistoryEntry[] = [];
 
 // -----------------------------------------------------------------------
-// 1. DỰ ÁN 1: DA-CCM-001 — Chung cư mini 7 tầng Hoàng Mai (Đang thi công)
+// DỰ ÁN: Nhà ở Xã hội khu Bắc Ninh (DA-NOTX-001)
+// Chủ trì theo từng task: QLDA → hong, KTTC → nguyet/hang/tu, TC → ngoc.
 // -----------------------------------------------------------------------
 {
   const p = makeProject(
-    'DA-CCM-001',
-    'Chung cư mini 7 tầng Hoàng Mai',
-    'Xây dựng tòa nhà chung cư mini 7 tầng + 1 tầng hầm, diện tích sàn 450m². CĐT: Ông Trần Văn Bình.',
-    '68 Nguyễn Đức Cảnh, Hoàng Mai, Hà Nội',
+    'DA-NOTX-001',
+    'Nhà ở Xã hội khu Bắc Ninh',
+    'Dự án nhà ở xã hội phục vụ công nhân và người thu nhập thấp tại khu Bắc Ninh.',
+    'Khu Bắc Ninh, TP. Bắc Ninh',
     'khanh',
-    -60,
-    120,
+    -10, 55,
     'in_progress',
-    12_500_000_000,
-    'Tổng thể Q4/2026 – Q1/2027',
-  );
-  p.item.id = p.id;
-  tierItems.push(p.item);
-  history.push(
-    makeHistory('project', p.id, `Tạo dự án "${p.item.title}"`, 'khanh'),
-  );
-
-  // Phase 1
-  const ph1 = makePhase(p.id, 1, 'Chuẩn bị pháp lý & Thiết kế thi công', 'completed', -60, -25);
-  ph1.item.id = ph1.id;
-  tierItems.push(ph1.item);
-
-  const b1_1 = makeBundle({
-    projectId: p.id, phaseId: ph1.id, ownerKey: 'hung', dept: 'QLDA',
-    desc: 'Lập hồ sơ Giấy phép xây dựng & Bản vẽ thi công',
-    start_offset: -60, due_offset: -30, status: 'closed', progress: 100, priority: 'high', collab_depts: ['KTTC'],
-  });
-  b1_1.item.id = b1_1.id;
-  tierItems.push(b1_1.item);
-  {
-    const t = makeTask({
-      bundleId: b1_1.id, projectId: p.id, dept: 'QLDA', assigneeKey: 'hong',
-      name: 'Thu thập Giấy chứng nhận QSDĐ & Hồ sơ pháp lý hiện trạng',
-      start_offset: -60, end_offset: -45, progress: 100, status: 'completed', priority: 'high',
-      results: 'Đã hoàn tất xác minh ranh giới thửa đất và nộp bản đồ hiện trạng.',
-    });
-    tierItems.push(t.item);
-  }
-  {
-    const t = makeTask({
-      bundleId: b1_1.id, projectId: p.id, dept: 'QLDA', assigneeKey: 'hung',
-      name: 'Thiết kế bản vẽ thi công tầng hầm + 7 tầng nổi',
-      start_offset: -45, end_offset: -30, progress: 100, status: 'completed', priority: 'high',
-      results: 'Hồ sơ thiết kế kết cấu bê tông M300 đã được kiến trúc sư thẩm định.',
-    });
-    tierItems.push(t.item);
-  }
-
-  const b1_2 = makeBundle({
-    projectId: p.id, phaseId: ph1.id, ownerKey: 'cuong', dept: 'KTTC',
-    desc: 'Lập dự toán tổng mức đầu tư & Kế hoạch ngân sách',
-    start_offset: -55, due_offset: -25, status: 'closed', progress: 100, priority: 'high',
-  });
-  b1_2.item.id = b1_2.id;
-  tierItems.push(b1_2.item);
-  {
-    const t = makeTask({
-      bundleId: b1_2.id, projectId: p.id, dept: 'KTTC', assigneeKey: 'nguyet',
-      name: 'Khảo sát báo giá sắt thép Hòa Phát, bê tông M300',
-      start_offset: -55, end_offset: -40, progress: 100, status: 'completed',
-      results: 'Chốt hợp đồng nguyên tắc nhà cung cấp bê tông Việt Hàn.',
-    });
-    tierItems.push(t.item);
-  }
-
-  // Phase 2 (in_progress)
-  const ph2 = makePhase(p.id, 2, 'Thi công móng & Kết cấu phần thô', 'in_progress', -25, 45);
-  ph2.item.id = ph2.id;
-  tierItems.push(ph2.item);
-
-  const b1_3 = makeBundle({
-    projectId: p.id, phaseId: ph2.id, ownerKey: 'thanh', dept: 'TC',
-    desc: 'Giám sát ép cọc D400 & Thi công móng tầng hầm',
-    start_offset: -25, due_offset: 15, status: 'in_progress', progress: 75, priority: 'high',
-  });
-  b1_3.item.id = b1_3.id;
-  tierItems.push(b1_3.item);
-
-  const t1_1 = makeTask({
-    bundleId: b1_3.id, projectId: p.id, dept: 'TC', assigneeKey: 'thanh',
-    name: 'Giám sát thi công ép 48 cọc bê tông D400 sâu 22m',
-    start_offset: -25, end_offset: -10, progress: 100, status: 'completed', priority: 'high',
-    results: '100% cọc ép đạt tải trọng thiết kế Pmax = 120 tấn.',
-  });
-  tierItems.push(t1_1.item);
-
-  const t1_2 = makeTask({
-    bundleId: b1_3.id, projectId: p.id, dept: 'TC', assigneeKey: 'ngoc',
-    name: 'Thi công cốt thép dầm móng & Đổ bê tông móng băng',
-    start_offset: -10, end_offset: 10, progress: 80, status: 'in_progress', priority: 'high',
-    results: 'Đã hoàn thành 80% khối lượng bê tông móng băng và hầm.',
-  });
-  tierItems.push(t1_2.item);
-
-  const sub1_1 = makeSubTask({
-    taskId: t1_2.id, assigneeKey: 'ngoc',
-    name: 'Gia công cốt thép dầm móng D18/D22',
-    start_offset: -10, end_offset: -2, progress: 100, status: 'completed', priority: 'high',
-    results: 'Nghiệm thu thép móng đạt khoảng cách đai 150mm.',
-  });
-  subtasks.push(sub1_1);
-  dailyLogs.push(
-    makeDailyLog({ subtaskId: sub1_1.id, userKey: 'ngoc', days_offset: -8, desc: 'Kiểm tra mật độ đai thép dầm móng D18, khoảng cách 150mm.', result: 'Đạt tiêu chuẩn TCVN', obstacle: 'Không', progress: 50 }),
-    makeDailyLog({ subtaskId: sub1_1.id, userKey: 'ngoc', days_offset: -3, desc: 'Hoàn thành buộc thép dầm móng khung trục A-D. Chờ CĐT nghiệm thu.', result: 'Ký biên bản nghiệm thu chuyển bước', obstacle: 'Mưa nhẹ buổi sáng', progress: 100 }),
-  );
-
-  const sub1_2 = makeSubTask({
-    taskId: t1_2.id, assigneeKey: 'ngoc',
-    name: 'Đổ 350m³ bê tông thương phẩm M300 móng & Sàn hầm',
-    start_offset: -2, end_offset: 5, progress: 75, status: 'in_progress', priority: 'high',
-  });
-  subtasks.push(sub1_2);
-  dailyLogs.push(
-    makeDailyLog({ subtaskId: sub1_2.id, userKey: 'ngoc', days_offset: -2, desc: 'Đổ đợt 1 được 200m³ bê tông móng băng. Lấy 6 mẫu thử nén.', result: 'Bê tông đầm kỹ, không rỗ mặt', obstacle: 'Không', progress: 50 }),
-    makeDailyLog({ subtaskId: sub1_2.id, userKey: 'ngoc', days_offset: 0, desc: 'Đổ tiếp đợt 2 được 100m³ bê tông sàn hầm. Thời tiết thuận lợi.', result: 'Tiến độ đúng kế hoạch', obstacle: 'Không', progress: 75 }),
-  );
-
-  const b1_4 = makeBundle({
-    projectId: p.id, phaseId: ph2.id, ownerKey: 'hung', dept: 'QLDA',
-    desc: 'Quản lý nhà thầu phụ & Cung ứng vật tư móng',
-    start_offset: -20, due_offset: 20, status: 'in_progress', progress: 60, priority: 'high', collab_depts: ['KTTC'],
-  });
-  b1_4.item.id = b1_4.id;
-  tierItems.push(b1_4.item);
-  {
-    const t = makeTask({
-      bundleId: b1_4.id, projectId: p.id, dept: 'QLDA', assigneeKey: 'hong',
-      name: 'Theo dõi tiến độ cung ứng sắt thép Hòa Phát đợt 1',
-      start_offset: -15, end_offset: 10, progress: 65, status: 'in_progress', priority: 'medium',
-      results: 'Đã nhập kho 45 tấn thép D10-D25 đạt chứng chỉ CO/CQ.',
-    });
-    tierItems.push(t.item);
-  }
-
-  const b1_5 = makeBundle({
-    projectId: p.id, phaseId: ph2.id, ownerKey: 'cuong', dept: 'KTTC',
-    desc: 'Thanh toán tiến độ & Kiểm soát ngân sách thi công đợt 1',
-    start_offset: -10, due_offset: 25, status: 'in_progress', progress: 50, priority: 'high',
-  });
-  b1_5.item.id = b1_5.id;
-  tierItems.push(b1_5.item);
-  {
-    const t = makeTask({
-      bundleId: b1_5.id, projectId: p.id, dept: 'KTTC', assigneeKey: 'hang',
-      name: 'Thanh toán đợt 1 cho đội thi công ép cọc & làm móng',
-      start_offset: -10, end_offset: 2, progress: 80, status: 'in_progress', priority: 'high',
-      notes: 'Đã giải ngân 420 triệu tiền ép cọc.',
-    });
-    tierItems.push(t.item);
-  }
-
-  // Phase 3 & 4
-  const ph3 = makePhase(p.id, 3, 'Thi công hoàn thiện & Hệ thống M&E', 'pending', 45, 100);
-  ph3.item.id = ph3.id;
-  tierItems.push(ph3.item);
-  {
-    const b = makeBundle({
-      projectId: p.id, phaseId: ph3.id, ownerKey: 'thanh', dept: 'TC',
-      desc: 'Thi công hệ thống Điện nước M&E & PCCC âm tường',
-      start_offset: 45, due_offset: 90, status: 'assigned', progress: 0, priority: 'medium',
-    });
-    b.item.id = b.id;
-    tierItems.push(b.item);
-  }
-  const ph4 = makePhase(p.id, 4, 'Nghiệm thu PCCC & Bàn giao quyết toán', 'pending', 100, 120);
-  ph4.item.id = ph4.id;
-  tierItems.push(ph4.item);
-  {
-    const b = makeBundle({
-      projectId: p.id, phaseId: ph4.id, ownerKey: 'cuong', dept: 'KTTC',
-      desc: 'Hồ sơ quyết toán công trình & Bàn giao CĐT',
-      start_offset: 105, due_offset: 120, status: 'assigned', progress: 0, priority: 'high',
-    });
-    b.item.id = b.id;
-    tierItems.push(b.item);
-  }
-}
-
-// -----------------------------------------------------------------------
-// 2. DỰ ÁN 2: DA-BT-002 — Biệt thự Vinhomes Riverside (Đang duyệt)
-// -----------------------------------------------------------------------
-{
-  const p = makeProject(
-    'DA-BT-002',
-    'Biệt thự Tân cổ điển 3 tầng Vinhomes Riverside',
-    'Thiết kế & Thi công hoàn thiện trọn gói biệt thự đơn lập 3 tầng, 380m² sàn. CĐT: Bà Lê Thị Hoa.',
-    'Bằng Lăng 5-12, Vinhomes Riverside, Long Biên, Hà Nội',
-    'nam',
-    -20,
-    90,
-    'in_progress',
-    6_800_000_000,
-    'Tổng thể T10 – T12/2026',
-  );
-  p.item.id = p.id;
-  tierItems.push(p.item);
-  history.push(makeHistory('project', p.id, `Tạo dự án "${p.item.title}"`, 'nam'));
-
-  const ph1 = makePhase(p.id, 1, 'Thiết kế 3D Nội thất & Xin phép cải tạo', 'in_progress', -20, 10);
-  ph1.item.id = ph1.id;
-  tierItems.push(ph1.item);
-
-  const b2_1 = makeBundle({
-    projectId: p.id, phaseId: ph1.id, ownerKey: 'hung', dept: 'QLDA',
-    desc: 'Chốt phương án 3D Kiến trúc & Mẫu vật liệu cao cấp',
-    start_offset: -20, due_offset: 5, status: 'in_progress', progress: 85, priority: 'high',
-  });
-  b2_1.item.id = b2_1.id;
-  tierItems.push(b2_1.item);
-
-  const t2_1 = makeTask({
-    bundleId: b2_1.id, projectId: p.id, dept: 'QLDA', assigneeKey: 'hong',
-    name: 'Phối cảnh 3D ngoại thất phong cách Tân cổ điển',
-    start_offset: -20, end_offset: -5, progress: 100, status: 'completed', priority: 'high',
-    results: 'Chủ nhà đã phê duyệt bản vẽ thiết kế 3D ngoại thất.',
-  });
-  tierItems.push(t2_1.item);
-
-  const t2_2 = makeTask({
-    bundleId: b2_1.id, projectId: p.id, dept: 'QLDA', assigneeKey: 'hung',
-    name: 'Duyệt bản vẽ chi tiết điện nước M&E với gia chủ',
-    start_offset: -10, end_offset: 5, progress: 75, status: 'in_progress', priority: 'high',
-  });
-  tierItems.push(t2_2.item);
-
-  const sub2_1 = makeSubTask({
-    taskId: t2_2.id, assigneeKey: 'hong',
-    name: 'Trình duyệt mẫu đá Marble Calacatta & Gỗ Óc chó',
-    start_offset: -8, end_offset: 0, progress: 90, status: 'in_progress', priority: 'high',
-  });
-  subtasks.push(sub2_1);
-  dailyLogs.push(
-    makeDailyLog({ subtaskId: sub2_1.id, userKey: 'hong', days_offset: -3, desc: 'Cùng CĐT xem 5 mẫu đá Marble tại kho Long Biên.', result: 'CĐT chốt mẫu đá vân mây M-08', obstacle: 'Không', progress: 70 }),
-    makeDailyLog({ subtaskId: sub2_1.id, userKey: 'hong', days_offset: 0, desc: 'Trình bảng màu sơn Dulux & Mẫu gỗ Óc chó lát sàn.', result: 'CĐT đã ký xác nhận mẫu vật liệu', obstacle: 'Không', progress: 90 }),
-  );
-
-  const b2_2 = makeBundle({
-    projectId: p.id, phaseId: ph1.id, ownerKey: 'cuong', dept: 'KTTC',
-    desc: 'Lập dự toán thi công trọn gói biệt thự',
-    start_offset: -15, due_offset: 10, status: 'in_progress', progress: 80, priority: 'medium',
-  });
-  b2_2.item.id = b2_2.id;
-  tierItems.push(b2_2.item);
-  {
-    const t = makeTask({
-      bundleId: b2_2.id, projectId: p.id, dept: 'KTTC', assigneeKey: 'nguyet',
-      name: 'Báo giá thiết bị vệ sinh Kohler & Hệ thống điện thông minh',
-      start_offset: -15, end_offset: -2, progress: 100, status: 'completed',
-      results: 'Đã nhận báo giá chiết khấu 25% từ đại lý Kohler chính hãng.',
-    });
-    tierItems.push(t.item);
-  }
-
-  const ph2 = makePhase(p.id, 2, 'Tháo dỡ & Thi công ép cọc móng', 'pending', 10, 40);
-  ph2.item.id = ph2.id;
-  tierItems.push(ph2.item);
-  {
-    const b = makeBundle({
-      projectId: p.id, phaseId: ph2.id, ownerKey: 'thanh', dept: 'TC',
-      desc: 'Giám sát tháo dỡ & Đào móng ép cọc nhồi D300',
-      start_offset: 10, due_offset: 35, status: 'assigned', progress: 0, priority: 'high',
-    });
-    b.item.id = b.id;
-    tierItems.push(b.item);
-  }
-}
-
-// -----------------------------------------------------------------------
-// 3. DỰ ÁN 3: DA-KXS-003 — Kho xưởng Bắc Ninh (ĐÃ HOÀN THÀNH)
-// -----------------------------------------------------------------------
-{
-  const p = makeProject(
-    'DA-KXS-003',
-    'Nhà máy & Kho xưởng công nghiệp 2000m² Bắc Ninh',
-    'Xây dựng kho xưởng khung thép tiền chế 2000m², sàn bê tông chịu lực 5 tấn/m². Đã bàn giao.',
-    'KCN Tiên Sơn, Tiên Du, Bắc Ninh',
-    'khanh',
-    -150,
-    -10,
-    'completed',
-    18_500_000_000,
-    'Hoàn thành T08/2026',
+    250_000_000_000,
+    'Q4/2026 - Q1/2027',
   );
   p.item.id = p.id;
   tierItems.push(p.item);
   history.push(makeHistory('project', p.id, `Tạo dự án "${p.item.title}"`, 'khanh'));
 
-  const ph3_1 = makePhase(p.id, 1, 'Pháp lý KCN & Thiết kế nhà thép', 'completed', -150, -110);
-  ph3_1.item.id = ph3_1.id;
-  tierItems.push(ph3_1.item);
-  {
+  // Helper: T2 + 1 T3 wrapper + N T4 tasks trong cùng phase. ponytail: inline (3 callsites)
+  const addPhase = (
+    seq: number,
+    title: string,
+    bundleDesc: string,
+    ownerKey: keyof typeof U,
+    dept: Department,
+    s: number, e: number,
+    tasks: Array<{
+      name: string; results: string;
+      assigneeKey: keyof typeof U;
+      s: number; e: number;
+      progress: number; status: TaskStatus;
+    }>,
+  ) => {
+    const ph = makePhase(p.id, seq, title, 'in_progress', s, e);
+    ph.item.id = ph.id;
+    ph.item.owner = { name: U[ownerKey].fullname, role: `TP.${dept}`, initial: U[ownerKey].fullname.charAt(0) };
+    ph.item.ownerUsername = ownerKey;
+    ph.item.department = dept;
+    tierItems.push(ph.item);
+
     const b = makeBundle({
-      projectId: p.id, phaseId: ph3_1.id, ownerKey: 'hung', dept: 'QLDA',
-      desc: 'Xin phép xây dựng KCN & Thẩm định PCCC nhà xưởng',
-      start_offset: -150, due_offset: -115, status: 'closed', progress: 100, priority: 'high',
+      projectId: p.id, phaseId: ph.id, ownerKey, dept,
+      desc: bundleDesc,
+      start_offset: s, due_offset: e,
+      status: 'in_progress', progress: 0, priority: 'high',
     });
     b.item.id = b.id;
     tierItems.push(b.item);
-    const t = makeTask({
-      bundleId: b.id, projectId: p.id, dept: 'QLDA', assigneeKey: 'hung',
-      name: 'Khảo sát địa chất & Nộp hồ sơ BQL KCN Bắc Ninh',
-      start_offset: -150, end_offset: -115, progress: 100, status: 'completed',
-      results: 'Đã nhận Giấy phép xây dựng số 48/GPXD-BQL.',
-    });
-    tierItems.push(t.item);
-  }
 
-  const ph3_2 = makePhase(p.id, 2, 'Thi công kết cấu khung thép & Lợp mái', 'completed', -110, -40);
-  ph3_2.item.id = ph3_2.id;
-  tierItems.push(ph3_2.item);
-  {
-    const b = makeBundle({
-      projectId: p.id, phaseId: ph3_2.id, ownerKey: 'thanh', dept: 'TC',
-      desc: 'Gia công 160 tấn khung thép & Lợp tôn PE Kliplok',
-      start_offset: -110, due_offset: -45, status: 'closed', progress: 100, priority: 'high',
-    });
-    b.item.id = b.id;
-    tierItems.push(b.item);
-    const t = makeTask({
-      bundleId: b.id, projectId: p.id, dept: 'TC', assigneeKey: 'ngoc',
-      name: 'Lắp dựng khung nhà thép bằng cẩu 50 tấn',
-      start_offset: -100, end_offset: -60, progress: 100, status: 'completed',
-      results: 'Lắp dựng 12 vì kèo thép an toàn tuyệt đối.',
-    });
-    tierItems.push(t.item);
-  }
+    for (const t of tasks) {
+      const task = makeTask({
+        bundleId: b.id, projectId: p.id, dept,
+        assigneeKey: t.assigneeKey, name: t.name,
+        start_offset: t.s, end_offset: t.e,
+        progress: t.progress, status: t.status, priority: 'high',
+        results: t.results,
+      });
+      tierItems.push(task.item);
+    }
+  };
 
-  const ph3_3 = makePhase(p.id, 3, 'Bê tông nền xưởng & Hệ thống PCCC', 'completed', -40, -15);
-  ph3_3.item.id = ph3_3.id;
-  tierItems.push(ph3_3.item);
-  {
-    const b = makeBundle({
-      projectId: p.id, phaseId: ph3_3.id, ownerKey: 'thanh', dept: 'TC',
-      desc: 'Đổ bê tông nền xưởng 2000m² xoa Sika Green & PCCC',
-      start_offset: -40, due_offset: -18, status: 'closed', progress: 100, priority: 'high',
-    });
-    b.item.id = b.id;
-    tierItems.push(b.item);
-    const t3_1 = makeTask({
-      bundleId: b.id, projectId: p.id, dept: 'TC', assigneeKey: 'ngoc',
-      name: 'Đổ bê tông tươi M300 dày 200mm & Xoa nền tăng cứng',
-      start_offset: -38, end_offset: -20, progress: 100, status: 'completed', priority: 'high',
-    });
-    tierItems.push(t3_1.item);
-    const sub3_1 = makeSubTask({
-      taskId: t3_1.id, assigneeKey: 'ngoc',
-      name: 'Xoa nền đánh bóng Sika Green 2000m²',
-      start_offset: -35, end_offset: -20, progress: 100, status: 'completed',
-    });
-    subtasks.push(sub3_1);
-    dailyLogs.push(
-      makeDailyLog({ subtaskId: sub3_1.id, userKey: 'ngoc', days_offset: -30, desc: 'Đổ 400m³ bê tông nền. Đội xoa nền làm việc liên tục 14 tiếng.', result: 'Mặt nền phẳng bóng, không nứt nẻ', obstacle: 'Không', progress: 100 }),
-    );
-  }
-
-  const ph3_4 = makePhase(p.id, 4, 'Nghiệm thu bàn giao & Quyết toán', 'completed', -15, -10);
-  ph3_4.item.id = ph3_4.id;
-  tierItems.push(ph3_4.item);
-  {
-    const b = makeBundle({
-      projectId: p.id, phaseId: ph3_4.id, ownerKey: 'cuong', dept: 'KTTC',
-      desc: 'Quyết toán công trình & Thanh lý hợp đồng',
-      start_offset: -15, due_offset: -5, status: 'closed', progress: 100, priority: 'high',
-    });
-    b.item.id = b.id;
-    tierItems.push(b.item);
-    const t = makeTask({
-      bundleId: b.id, projectId: p.id, dept: 'KTTC', assigneeKey: 'cuong',
-      name: 'Nghiệm thu bàn giao đưa nhà xưởng vào hoạt động',
-      start_offset: -12, end_offset: -5, progress: 100, status: 'completed',
-      results: 'Đã nghiệm thu PCCC và thu hồi 100% công nợ 18.35 tỷ.',
-    });
-    tierItems.push(t.item);
-  }
-}
-
-// -----------------------------------------------------------------------
-// 4. DỰ ÁN 4: DA-SCL-004 — Cải tạo VP Techcombank (Khẩn, đang thi công)
-// -----------------------------------------------------------------------
-{
-  const p = makeProject(
-    'DA-SCL-004',
-    'Cải tạo & Sửa chữa nâng cấp Trụ sở VP Techcom',
-    'Cải tạo 3 tầng văn phòng làm việc 650m², thi công trần thạch cao, vách kính & M&E.',
-    '18 Lý Thường Kiệt, Hoàn Kiếm, Hà Nội',
-    'nam',
-    -25,
-    25,
-    'in_progress',
-    3_200_000_000,
-    'T10/2026 – T11/2026 (Khẩn)',
-  );
-  p.item.id = p.id;
-  tierItems.push(p.item);
-  history.push(makeHistory('project', p.id, `Tạo dự án "${p.item.title}"`, 'nam'));
-
-  const ph4_1 = makePhase(p.id, 1, 'Tháo dỡ & Cải tạo mặt bằng cũ', 'completed', -25, -10);
-  ph4_1.item.id = ph4_1.id;
-  tierItems.push(ph4_1.item);
-  {
-    const b = makeBundle({
-      projectId: p.id, phaseId: ph4_1.id, ownerKey: 'thanh', dept: 'TC',
-      desc: 'Tháo dỡ trần cũ & Đập phá tường nới rộng phòng họp',
-      start_offset: -25, due_offset: -12, status: 'closed', progress: 100, priority: 'high',
-    });
-    b.item.id = b.id;
-    tierItems.push(b.item);
-    const t = makeTask({
-      bundleId: b.id, projectId: p.id, dept: 'TC', assigneeKey: 'ngoc',
-      name: 'Giám sát tháo dỡ nội thất cũ & Dọn dẹp phế thải',
-      start_offset: -25, end_offset: -12, progress: 100, status: 'completed',
-      results: 'Đã vận chuyển 14 chuyến xe phế thải rời khỏi công trường.',
-    });
-    tierItems.push(t.item);
-  }
-
-  const ph4_2 = makePhase(p.id, 2, 'Thi công Trần thạch cao, Vách kính & M&E', 'in_progress', -10, 15);
-  ph4_2.item.id = ph4_2.id;
-  tierItems.push(ph4_2.item);
-
-  const b4_2 = makeBundle({
-    projectId: p.id, phaseId: ph4_2.id, ownerKey: 'thanh', dept: 'TC',
-    desc: 'Thi công trần thạch cao Vĩnh Tường & M&E âm trần',
-    start_offset: -10, due_offset: 10, status: 'in_progress', progress: 75, priority: 'high',
-  });
-  b4_2.item.id = b4_2.id;
-  tierItems.push(b4_2.item);
-
-  const t4_1 = makeTask({
-    bundleId: b4_2.id, projectId: p.id, dept: 'TC', assigneeKey: 'thanh',
-    name: 'Đi dây điện Cadivi, Dây mạng Cat6 & Ống điều hòa âm trần',
-    start_offset: -10, end_offset: -2, progress: 100, status: 'completed', priority: 'high',
-    results: 'Đã đo đạc thử áp lực đường ống đồng đạt 350 PSI.',
-  });
-  tierItems.push(t4_1.item);
-
-  const t4_2 = makeTask({
-    bundleId: b4_2.id, projectId: p.id, dept: 'TC', assigneeKey: 'ngoc',
-    name: 'Bắn tấm thạch cao Gyproc chống ẩm & Trét bột sơn Dulux',
-    start_offset: -2, end_offset: 10, progress: 65, status: 'in_progress', priority: 'high',
-  });
-  tierItems.push(t4_2.item);
-
-  const sub4_1 = makeSubTask({
-    taskId: t4_2.id, assigneeKey: 'ngoc',
-    name: 'Bắn 650m² tấm thạch cao khu VP làm việc',
-    start_offset: -2, end_offset: 5, progress: 70, status: 'in_progress', priority: 'high',
-  });
-  subtasks.push(sub4_1);
-  dailyLogs.push(
-    makeDailyLog({ subtaskId: sub4_1.id, userKey: 'ngoc', days_offset: -2, desc: 'Đóng khung xương sắt nẹp Vĩnh Tường tầng 2.', result: 'Khung xương phẳng, chắc chắn', obstacle: 'Không', progress: 40 }),
-    makeDailyLog({ subtaskId: sub4_1.id, userKey: 'ngoc', days_offset: 0, desc: 'Bắn xong 450m² tấm thạch cao chống ẩm. Xử lý mối nối.', result: 'Bề mặt trần phẳng đẹp', obstacle: 'Không', progress: 70 }),
+  // === GIAI ĐOẠN 1: THIẾT KẾ VÀ HOÀN THIỆN PHÁP LÝ XÂY DỰNG ===
+  addPhase(1, 'Giai đoạn 1: THIẾT KẾ VÀ HOÀN THIỆN PHÁP LÝ XÂY DỰNG',
+    'Khảo sát, thiết kế, thẩm tra và phê duyệt dự toán', 'hung', 'QLDA',
+    -5, 15,
+    [
+      { name: '1.1 Khảo sát địa chất, địa hình bổ sung', assigneeKey: 'hong', s: -10, e: -3, progress: 100, status: 'completed', results: 'Báo cáo khảo sát đã nghiệm thu' },
+      { name: '1.2 Lập nhiệm vụ thiết kế, yêu cầu kỹ thuật, tiêu chuẩn vật liệu', assigneeKey: 'hong', s: -5, e: 5, progress: 60, status: 'in_progress', results: 'Nhiệm vụ thiết kế được duyệt' },
+      { name: '1.3 Thiết kế kỹ thuật / bản vẽ thi công (kiến trúc, kết cấu, MEP, PCCC, hạ tầng)', assigneeKey: 'hong', s: 0, e: 10, progress: 30, status: 'in_progress', results: 'Bộ hồ sơ thiết kế' },
+      { name: '1.4 Thẩm tra thiết kế, dự toán', assigneeKey: 'hong', s: 5, e: 12, progress: 0, status: 'not_started', results: 'Báo cáo thẩm tra' },
+      { name: '1.5 Lập và phê duyệt dự toán, tổng mức đầu tư điều chỉnh', assigneeKey: 'hong', s: 8, e: 15, progress: 0, status: 'not_started', results: 'Dự toán được duyệt, làm giá gói thầu' },
+    ],
   );
 
-  const b4_3 = makeBundle({
-    projectId: p.id, phaseId: ph4_2.id, ownerKey: 'hung', dept: 'QLDA',
-    desc: 'Cung cấp & Lắp đặt vách kính cường lực 12mm',
-    start_offset: -8, due_offset: 12, status: 'in_progress', progress: 60, priority: 'medium',
-  });
-  b4_3.item.id = b4_3.id;
-  tierItems.push(b4_3.item);
-
-  const t4_3 = makeTask({
-    bundleId: b4_3.id, projectId: p.id, dept: 'QLDA', assigneeKey: 'hong',
-    name: 'Lắp đặt 180m² vách kính cường lực & Cửa thủy lực',
-    start_offset: -5, end_offset: 8, progress: 60, status: 'in_progress',
-  });
-  tierItems.push(t4_3.item);
-
-  const sub4_2 = makeSubTask({
-    taskId: t4_3.id, assigneeKey: 'hong',
-    name: 'Lắp vách kính phòng họp & Phòng Giám đốc',
-    start_offset: -1, end_offset: 8, progress: 40, status: 'in_progress',
-  });
-  subtasks.push(sub4_2);
-  dailyLogs.push(
-    makeDailyLog({ subtaskId: sub4_2.id, userKey: 'hong', days_offset: -1, desc: 'Tập kết 24 tấm kính cường lực 12mm lên tầng 3.', result: 'Đã định vị 6 ô kính phòng họp', obstacle: 'Không', progress: 40 }),
+  // === GIAI ĐOẠN 2: LỰA CHỌN NHÀ THẦU VÀ KÝ HỢP ĐỒNG ===
+  addPhase(2, 'Giai đoạn 2: LỰA CHỌN NHÀ THẦU VÀ KÝ HỢP ĐỒNG',
+    'Phân chia gói thầu, mời thầu, đánh giá, ký hợp đồng', 'hung', 'QLDA',
+    10, 30,
+    [
+      { name: '2.1 Lập kế hoạch phân chia gói thầu', assigneeKey: 'hong', s: 10, e: 15, progress: 0, status: 'not_started', results: 'Kế hoạch lựa chọn nhà thầu' },
+      { name: '2.2 Lập hồ sơ mời thầu / yêu cầu báo giá', assigneeKey: 'hong', s: 12, e: 20, progress: 0, status: 'not_started', results: 'HSMT được duyệt' },
+      { name: '2.3 Tổ chức mời thầu, đánh giá hồ sơ dự thầu', assigneeKey: 'hong', s: 18, e: 25, progress: 0, status: 'not_started', results: 'Báo cáo đánh giá' },
+      { name: '2.4 Nhận bảo lãnh thực hiện hợp đồng, bảo lãnh tạm ứng', assigneeKey: 'nguyet', s: 20, e: 27, progress: 0, status: 'not_started', results: 'Bảo lãnh hợp lệ' },
+      { name: '2.5 Lập kế hoạch mua sắm vật tư, thiết bị do chủ đầu tư cấp', assigneeKey: 'hong', s: 22, e: 30, progress: 0, status: 'not_started', results: 'Kế hoạch mua sắm và dòng tiền' },
+    ],
   );
 
-  const ph4_3 = makePhase(p.id, 3, 'Lắp đặt nội thất VP & Bàn giao', 'pending', 15, 25);
-  ph4_3.item.id = ph4_3.id;
-  tierItems.push(ph4_3.item);
-  {
-    const b = makeBundle({
-      projectId: p.id, phaseId: ph4_3.id, ownerKey: 'cuong', dept: 'KTTC',
-      desc: 'Nghiệm thu bàn giao & Thanh toán quyết toán',
-      start_offset: 15, due_offset: 25, status: 'assigned', progress: 0, priority: 'high',
-    });
-    b.item.id = b.id;
-    tierItems.push(b.item);
-  }
+  // === GIAI ĐOẠN 3: CHUẨN BỊ KHỞI CÔNG ===
+  addPhase(3, 'Giai đoạn 3: CHUẨN BỊ KHỞI CÔNG',
+    'Bàn giao mặt bằng, tổ chức công trường, an toàn, bảo hiểm, tạm ứng', 'thanh', 'TC',
+    25, 55,
+    [
+      { name: '3.1 Bàn giao mặt bằng, mốc định vị, cao độ cho nhà thầu', assigneeKey: 'ngoc', s: 25, e: 28, progress: 0, status: 'not_started', results: 'Biên bản bàn giao mặt bằng' },
+      { name: '3.2 Thành lập Ban Chỉ huy công trường, quy chế phối hợp CĐT – TVGS – nhà thầu', assigneeKey: 'ngoc', s: 25, e: 30, progress: 0, status: 'not_started', results: 'Sơ đồ tổ chức công trường, quy chế' },
+      { name: '3.3 Phê duyệt biện pháp thi công, tiến độ tổng thể và chi tiết', assigneeKey: 'ngoc', s: 28, e: 38, progress: 0, status: 'not_started', results: 'Biện pháp và tiến độ được duyệt' },
+      { name: '3.4 Kế hoạch an toàn lao động, vệ sinh môi trường, PCCC công trường', assigneeKey: 'ngoc', s: 30, e: 40, progress: 0, status: 'not_started', results: 'Kế hoạch ATLĐ – VSMT' },
+      { name: '3.5 Mua bảo hiểm công trình, bảo hiểm con người', assigneeKey: 'hang', s: 30, e: 35, progress: 0, status: 'not_started', results: 'Hợp đồng bảo hiểm' },
+      { name: '3.6 Chuẩn bị lán trại, điện nước thi công, hàng rào, biển báo', assigneeKey: 'ngoc', s: 32, e: 42, progress: 0, status: 'not_started', results: 'Công trường đủ điều kiện' },
+      { name: '3.7 Lập quy trình quản lý hồ sơ chất lượng, biểu mẫu nghiệm thu', assigneeKey: 'hong', s: 35, e: 45, progress: 0, status: 'not_started', results: 'Bộ biểu mẫu thống nhất' },
+      { name: '3.8 Tạm ứng hợp đồng', assigneeKey: 'tu', s: 40, e: 55, progress: 0, status: 'not_started', results: 'Chứng từ tạm ứng' },
+    ],
+  );
 }
 
 // ===========================================================================

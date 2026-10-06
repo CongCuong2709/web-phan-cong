@@ -160,6 +160,121 @@ export interface DailyLogDto {
   progress: number;
 }
 
+// Fix TD-05: typed DTOs thay cho `unknown[]`. TypeScript sẽ bắt lỗi runtime
+// (sai tên field, missing field) ngay lúc compile thay vì chỉ nổn console.
+export interface TeamLeadTaskDto {
+  id: number;
+  code: string;
+  title: string;
+  category?: string;
+  deliverable_type: 'pdf' | 'spreadsheet' | 'text' | 'photo';
+  deliverable_text?: string;
+  file_name?: string;
+  owner_fullname?: string;
+  owner_username_str?: string;
+  department_code?: string;
+  submitted_at: string;
+  deadline?: string;
+  status: 'pending_approval' | 'need_help' | 'in_progress' | 'done';
+  priority?: 'Cao' | 'Thường';
+  progress_text?: string;
+  help_message_body?: string;
+  help_message_author?: string;
+  help_message_timeago?: string;
+}
+
+export interface EmployeeTaskDto {
+  id: number;
+  code: string;
+  bundle_name?: string;
+  title: string;
+  description?: string;
+  current_deliverable?: string;
+  last_updated?: string;
+  deadline?: string;
+  is_today?: number | boolean;
+  status: 'doing' | 'done' | 'pending';
+  manager_fullname?: string;
+  manager_username?: string;
+  manager_avatar_url?: string;
+  owner_fullname?: string;
+  owner_username?: string;
+  notesCount?: number;
+  owner_username_str?: string;
+  department_code?: string;
+}
+
+export interface QuickHelpRequestDto {
+  id: number;
+  sender_user_id: number;
+  sender_fullname?: string;
+  sender_username?: string;
+  sender_avatar_url?: string;
+  reason: string;
+  message: string;
+  status: 'pending' | 'resolved';
+  related_team_lead_task_id?: number | null;
+  created_at: string;
+  resolved_at?: string | null;
+  resolved_by_user_id?: number | null;
+}
+
+export interface TeamMemberDto {
+  id?: number;
+  username: string;
+  name?: string;
+  role?: string;
+  avatar?: string;
+  activeTasks?: number;
+  onTimeRate?: string;
+  statusText?: string;
+  statusType?: 'busy' | 'idle' | 'need_help';
+  workloadPercent?: number;
+  needHelp?: boolean;
+  department?: string;
+}
+
+export interface SubtaskDto {
+  id: number;
+  tier_item_id: number;
+  name: string;
+  description?: string;
+  assignee_username_str?: string;
+  assignee_fullname?: string;
+  start_date: string;
+  end_date: string;
+  progress: number;
+  status: 'not_started' | 'in_progress' | 'completed' | 'blocked' | 'review';
+  priority: 'low' | 'medium' | 'high' | 'critical';
+  results?: string;
+  notes?: string;
+}
+
+export interface DailyLogRowDto {
+  id: number;
+  subtask_id: number;
+  log_date: string;
+  description: string;
+  result?: string;
+  obstacle?: string;
+  progress: number;
+  author_user_id: number;
+  user_username_str?: string;
+  user_fullname?: string;
+  created_at: string;
+}
+
+export interface HistoryEntryDto {
+  id: number;
+  entity_type: 'project' | 'phase' | 'bundle' | 'task' | 'subtask' | 'team_lead_task' | 'employee_task';
+  entity_id: number;
+  action: string;
+  author_user_id?: number;
+  author_username?: string;
+  author_fullname?: string;
+  created_at: string;
+}
+
 export const api = {
   /** POST /api/auth/login — Save token on success. */
   async login(username: string, password: string) {
@@ -187,7 +302,7 @@ export const api = {
     return request<{ items: TierItemDto[] }>('GET', '/api/tier-items');
   },
   async createTierItem(item: TierItemDto) {
-    return request('POST', '/api/tier-items', item);
+    return request<{ item: TierItemDto }>('POST', '/api/tier-items', item);
   },
   async updateTierItem(id: number, patch: Partial<TierItemDto>) {
     return request('PATCH', `/api/tier-items/${id}`, patch);
@@ -208,7 +323,7 @@ export const api = {
 
   // --- Team tasks ---
   async listTeamTasks() {
-    return request<{ tasks: unknown[] }>('GET', '/api/team-tasks');
+    return request<{ tasks: TeamLeadTaskDto[] }>('GET', '/api/team-tasks');
   },
   async approveTask(id: number) {
     return request('POST', `/api/team-tasks/${id}/approve`);
@@ -219,7 +334,7 @@ export const api = {
 
   // --- Employee tasks ---
   async listEmployeeTasks() {
-    return request<{ tasks: unknown[] }>('GET', '/api/employee-tasks');
+    return request<{ tasks: EmployeeTaskDto[] }>('GET', '/api/employee-tasks');
   },
   async createEmployeeTask(task: {
     title: string;
@@ -231,25 +346,25 @@ export const api = {
 
   // --- Help requests ---
   async listHelpRequests() {
-    return request<{ requests: unknown[] }>('GET', '/api/help-requests');
+    return request<{ requests: QuickHelpRequestDto[] }>('GET', '/api/help-requests');
   },
 
   // --- Team members (derived) ---
   async listTeamMembers() {
-    return request<{ members: unknown[] }>('GET', '/api/team-members');
+    return request<{ members: TeamMemberDto[] }>('GET', '/api/team-members');
   },
 
   // --- Subtasks + Daily logs ---
   async listSubtasks() {
-    return request<{ items: unknown[] }>('GET', '/api/subtasks');
+    return request<{ items: SubtaskDto[] }>('GET', '/api/subtasks');
   },
   async listDailyLogs() {
-    return request<{ items: unknown[] }>('GET', '/api/daily-logs');
+    return request<{ items: DailyLogRowDto[] }>('GET', '/api/daily-logs');
   },
 
   // --- History ---
   async listHistory(limit = 50) {
-    return request<{ items: unknown[] }>('GET', `/api/history?limit=${limit}`);
+    return request<{ items: HistoryEntryDto[] }>('GET', `/api/history?limit=${limit}`);
   },
 };
 

@@ -22,6 +22,8 @@ interface DetailsDrawerProps {
   subtasks?: SubTask[];
   dailyLogs?: DailyLog[];
   history?: HistoryEntry[];
+  /** Fix TD-07: cần truyền allTierItems để compute descendants khi filter history. */
+  allTierItems?: TierItem[];
   onUpdateSubtaskProgress?: (subtaskId: string, progress: number) => void;
   onAddDailyLog?: (
     subtaskId: string,
@@ -58,6 +60,7 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
   subtasks = [],
   dailyLogs = [],
   history = [],
+  allTierItems = [],
   onUpdateSubtaskProgress,
   onAddDailyLog,
   currentUser,
@@ -105,16 +108,29 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
     return map;
   }, [dailyLogs]);
 
+  // Fix TD-07: history filter đúng theo ý đồ — bao gồm:
+  //  1. History của chính item hiện tại
+  //  2. History của tất cả descendants (cây con) — bubbled-down
+  // Bug cũ:
+  //   - `formData.parentId === null` không bao giờ đúng vì parentId là `string | undefined`
+  //   - Không bao giờ có descendant history vì comment `false` cố ý
+  //   - Hệ quả: T2/T3 chỉ thấy history của chính nó, bỏ sót audit log của các T3/T4 con
   const itemHistory = useMemo(() => {
     if (!formData) return [];
-    return history.filter(
-      (h) =>
-        h.entityId === formData.id ||
-        (h.entityType === 'project' && formData.parentId === null) ||
-        // bubbled-down: also show history of any descendant phase/bundle
-        false
-    );
-  }, [history, formData]);
+    // Build descendants set 1 lần
+    const descendantIds = new Set<string>();
+    const stack = [formData.id];
+    while (stack.length > 0) {
+      const cur = stack.pop()!;
+      for (const t of allTierItems) {
+        if (t.parentId === cur && !descendantIds.has(t.id)) {
+          descendantIds.add(t.id);
+          stack.push(t.id);
+        }
+      }
+    }
+    return history.filter((h) => h.entityId === formData.id || descendantIds.has(h.entityId));
+  }, [history, formData, allTierItems]);
 
   if (!isOpen || !formData) return null;
 
@@ -278,25 +294,39 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
             <label className="text-[11px] font-semibold text-[#565e74] uppercase tracking-wider block mb-1.5">
               4. Trạng thái điều hành
             </label>
-            <select
-              value={formData.status}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  status: e.target.value as TierItem['status'],
-                })
-              }
-              className="w-full text-[13px] font-medium bg-[#f8f9ff] text-[#0b1c30] border border-[#c3c6d7] rounded px-3 py-1.5 focus:outline-none focus:border-[#004ac6]"
-            >
-              <option value="Đang chạy">Đang chạy</option>
-              <option value="Sắp xong">Sắp xong</option>
-              <option value="Đã xong">Đã xong</option>
-              <option value="Điểm nghẽn">Điểm nghẽn (Blocker)</option>
-              <option value="Đang làm">Đang làm</option>
-              <option value="Đang nghẽn">Đang nghẽn</option>
-              <option value="Lên lịch">Lên lịch</option>
-              <option value="Chuẩn bị">Chuẩn bị</option>
-            </select>
+            {/* Fix UI-04: select chỉ interactive khi canEdit=true. Khi !canEdit, hiển thị
+                read-only badge tránh user đổi status rồi save description → ghi nhầm. */}
+            {canEdit ? (
+              <select
+                value={formData.status}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    status: e.target.value as TierItem['status'],
+                  })
+                }
+                className="w-full text-[13px] font-medium bg-[#f8f9ff] text-[#0b1c30] border border-[#c3c6d7] rounded px-3 py-1.5 focus:outline-none focus:border-[#004ac6]"
+              >
+                <option value="Đang chạy">Đang chạy</option>
+                <option value="Sắp xong">Sắp xong</option>
+                <option value="Đã xong">Đã xong</option>
+                <option value="Điểm nghẽn">Điểm nghẽn (Blocker)</option>
+                <option value="Đang làm">Đang làm</option>
+                <option value="Đang nghẽn">Đang nghẽn</option>
+                <option value="Lên lịch">Lên lịch</option>
+                <option value="Chuẩn bị">Chuẩn bị</option>
+              </select>
+            ) : (
+              <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#eff4ff] text-[#004ac6] rounded border border-[#dce9ff] text-[13px] font-semibold">
+                <span className="material-symbols-outlined text-[15px]">
+                  lock
+                </span>
+                <span>{formData.status}</span>
+                <span className="text-[10px] font-medium text-[#737686] ml-1">
+                  · Chỉ đọc
+                </span>
+              </div>
+            )}
           </div>
 
           {/* 5. Priority */}

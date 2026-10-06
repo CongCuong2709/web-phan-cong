@@ -8,6 +8,109 @@ interface Gantt4TangViewProps {
   onExport: () => void;
 }
 
+/** Format dd/MM (Fix UI-05 helper). */
+function fmtDdMm(d: Date): string {
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/** Format "Tháng N/YYYY". */
+function fmtMonthYear(d: Date): string {
+  return `Tháng ${d.getMonth() + 1}/${d.getFullYear()}`;
+}
+
+/** Tính timeline header theo timeFilter. Trả về:
+ *  - columns: danh sách nhãn hiển thị (4 tuần / 13 tuần / 12 tháng)
+ *  - columnsCount: số cột
+ *  - todayLeftPct: vị trí % của "hôm nay" trong timeline (0..100)
+ *  - rangeStart/End: Date đầu/cuối timeline (cho Gantt bar mapping)
+ *
+ * Logic:
+ *  - 'month'  → 4 tuần của tháng hiện tại (week starts Monday)
+ *  - 'quarter'→ 13 tuần (~3 tháng) bắt đầu từ tuần hiện tại
+ *  - 'year'   → 12 tháng của năm hiện tại
+ */
+function buildTimeline(timeFilter: 'month' | 'quarter' | 'year', today: Date) {
+  const dayOfWeek = today.getDay() === 0 ? 7 : today.getDay(); // CN=0 → 7
+  const monday = new Date(today);
+  monday.setDate(monday.getDate() - (dayOfWeek - 1));
+  monday.setHours(0, 0, 0, 0);
+
+  if (timeFilter === 'month') {
+    // 4 tuần của tháng hiện tại: tuần chứa ngày 1 tháng → ngày cuối tháng
+    const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const lastOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    const startMonday = new Date(firstOfMonth);
+    const sw = startMonday.getDay() === 0 ? 7 : startMonday.getDay();
+    startMonday.setDate(startMonday.getDate() - (sw - 1));
+    const totalDays = Math.ceil((lastOfMonth.getTime() - startMonday.getTime()) / 86400000) + 1;
+    const numWeeks = Math.ceil(totalDays / 7);
+    const columns: string[] = [];
+    for (let i = 0; i < numWeeks; i++) {
+      const ws = new Date(startMonday);
+      ws.setDate(ws.getDate() + i * 7);
+      const we = new Date(ws);
+      we.setDate(we.getDate() + 6);
+      columns.push(`Tuần ${i + 1} (${fmtDdMm(ws)} - ${fmtDdMm(we)})`);
+    }
+    const todayLeftPct = ((today.getTime() - startMonday.getTime()) / 86400000) / totalDays * 100;
+    return {
+      columns,
+      columnsCount: numWeeks,
+      todayLeftPct: Math.max(0, Math.min(100, todayLeftPct)),
+      rangeStart: startMonday,
+      rangeEnd: lastOfMonth,
+      label: fmtMonthYear(today),
+      unitDays: totalDays,
+    };
+  }
+
+  if (timeFilter === 'quarter') {
+    const numWeeks = 13;
+    const start = new Date(monday);
+    const columns: string[] = [];
+    for (let i = 0; i < numWeeks; i++) {
+      const ws = new Date(start);
+      ws.setDate(ws.getDate() + i * 7);
+      const we = new Date(ws);
+      we.setDate(we.getDate() + 6);
+      columns.push(`T${i + 1} (${fmtDdMm(ws)}-${fmtDdMm(we)})`);
+    }
+    const totalDays = numWeeks * 7;
+    const todayLeftPct = ((today.getTime() - start.getTime()) / 86400000) / totalDays * 100;
+    const end = new Date(start);
+    end.setDate(end.getDate() + totalDays - 1);
+    return {
+      columns,
+      columnsCount: numWeeks,
+      todayLeftPct: Math.max(0, Math.min(100, todayLeftPct)),
+      rangeStart: start,
+      rangeEnd: end,
+      label: `Quý ${Math.floor(today.getMonth() / 3) + 1}/${today.getFullYear()}`,
+      unitDays: totalDays,
+    };
+  }
+
+  // 'year'
+  const year = today.getFullYear();
+  const columns: string[] = [];
+  for (let m = 0; m < 12; m++) {
+    columns.push(`T${m + 1}/${year}`);
+  }
+  const start = new Date(year, 0, 1);
+  const end = new Date(year, 11, 31);
+  const totalDays = 365 + (year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 1 : 0);
+  const todayLeftPct = ((today.getTime() - start.getTime()) / 86400000) / totalDays * 100;
+  return {
+    columns,
+    columnsCount: 12,
+    todayLeftPct: Math.max(0, Math.min(100, todayLeftPct)),
+    rangeStart: start,
+    rangeEnd: end,
+    label: `Cả năm ${year}`,
+    unitDays: totalDays,
+  };
+}
+
 export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
   tierItems,
   onSelectItem,
@@ -19,27 +122,47 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
   const [allCollapsed, setAllCollapsed] = useState(false);
   const [collapsedMap, setCollapsedMap] = useState<Record<string, boolean>>({});
 
-  // Dynamic filter
+  // Fix UI-05: timeline tính động từ timeFilter + Date.now()
+  const timeline = useMemo(() => buildTimeline(timeFilter, new Date()), [timeFilter]);
+  const todayCol = timeline.columns.findIndex((_c, i) => {
+    // Mark "HÔM NAY" badge ở column có chứa today — chỉ tháng view hiện rõ
+    return timeFilter === 'month' && i === Math.floor(timeline.todayLeftPct / (100 / timeline.columnsCount));
+  });
+
+  // Dynamic filter + DFS tree order (Fix: trước đây chỉ filter nên render theo thứ tự
+  // push của mảng gốc → T1, hết T2, hết T3, hết T4. Giờ sort theo cây: T1 → T2 con →
+  // T3 con → T4 con).
   const filteredItems = useMemo(() => {
-    return tierItems.filter((item) => {
+    const filtered = tierItems.filter((item) => {
       const matchSearch =
         item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
         item.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
         item.owner.name.toLowerCase().includes(searchTerm.toLowerCase());
-
       if (!matchSearch) return false;
-
-      // Check if any ancestor is collapsed
-      if (allCollapsed && (item.tier === 3 || item.tier === 4)) {
-        return false;
-      }
-
-      if (item.parentId && collapsedMap[item.parentId]) {
-        return false;
-      }
-
+      if (allCollapsed && (item.tier === 3 || item.tier === 4)) return false;
+      if (item.parentId && collapsedMap[item.parentId]) return false;
       return true;
     });
+    // Index filtered items by parent → DFS visit roots → render cây đúng quan hệ cha-con.
+    const childrenOf = new Map<string | undefined, TierItem[]>();
+    for (const item of filtered) {
+      const key = item.parentId ?? undefined;
+      const arr = childrenOf.get(key);
+      if (arr) arr.push(item);
+      else childrenOf.set(key, [item]);
+    }
+    for (const arr of childrenOf.values()) {
+      arr.sort((a, b) => a.code.localeCompare(b.code));
+    }
+    const ordered: TierItem[] = [];
+    const visit = (parentId: string | undefined) => {
+      for (const child of childrenOf.get(parentId) ?? []) {
+        ordered.push(child);
+        visit(child.id);
+      }
+    };
+    visit(undefined);
+    return ordered;
   }, [tierItems, searchTerm, allCollapsed, collapsedMap]);
 
   const toggleCollapseAll = () => {
@@ -108,41 +231,25 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
 
           {/* Action & View Controls */}
           <div className="flex items-center gap-2.5 flex-wrap shrink-0">
-            {/* Time Filter Segmented */}
+            {/* Time Filter Segmented — Fix UI-05: labels động theo current month/quarter/year */}
             <div className="flex items-center bg-[#eff4ff] p-1 rounded-md">
-              <button
-                onClick={() => setTimeFilter('month')}
-                className={`px-3 py-1 text-[12px] font-semibold rounded transition-colors ${
-                  timeFilter === 'month'
-                    ? 'bg-white shadow-sm text-[#004ac6]'
-                    : 'text-[#565e74] hover:text-[#0b1c30]'
-                }`}
-                type="button"
-              >
-                Tháng 10/2026
-              </button>
-              <button
-                onClick={() => setTimeFilter('quarter')}
-                className={`px-3 py-1 text-[12px] font-semibold rounded transition-colors ${
-                  timeFilter === 'quarter'
-                    ? 'bg-white shadow-sm text-[#004ac6]'
-                    : 'text-[#565e74] hover:text-[#0b1c30]'
-                }`}
-                type="button"
-              >
-                Quý 4/2026
-              </button>
-              <button
-                onClick={() => setTimeFilter('year')}
-                className={`px-3 py-1 text-[12px] font-semibold rounded transition-colors ${
-                  timeFilter === 'year'
-                    ? 'bg-white shadow-sm text-[#004ac6]'
-                    : 'text-[#565e74] hover:text-[#0b1c30]'
-                }`}
-                type="button"
-              >
-                Cả năm
-              </button>
+              {(['month', 'quarter', 'year'] as const).map((tf) => (
+                <button
+                  key={tf}
+                  onClick={() => setTimeFilter(tf)}
+                  className={`px-3 py-1 text-[12px] font-semibold rounded transition-colors ${
+                    timeFilter === tf
+                      ? 'bg-white shadow-sm text-[#004ac6]'
+                      : 'text-[#565e74] hover:text-[#0b1c30]'
+                  }`}
+                  type="button"
+                >
+                  {tf === 'month' && fmtMonthYear(new Date())}
+                  {tf === 'quarter' &&
+                    `Quý ${Math.floor(new Date().getMonth() / 3) + 1}/${new Date().getFullYear()}`}
+                  {tf === 'year' && `Cả năm ${new Date().getFullYear()}`}
+                </button>
+              ))}
             </div>
 
             {/* Tree Controls */}
@@ -362,24 +469,40 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                   <span className="w-24 text-center">Trạng thái</span>
                 </div>
 
-                {/* Right 50% Timeline Axis */}
-                <div className="w-[50%] grid grid-cols-4 items-center bg-[#e5eeff] text-center font-mono text-[12px] relative font-semibold text-[#434655]">
-                  <div className="py-1">Tuần 1 (01 - 07/10)</div>
-                  <div className="py-1 bg-[#004ac6]/10 text-[#004ac6] flex items-center justify-center gap-1.5">
-                    <span>Tuần 2 (08 - 14/10)</span>
-                    <span className="px-1.5 py-0.5 rounded bg-[#004ac6] text-white text-[9px] font-bold">
-                      HÔM NAY
-                    </span>
-                  </div>
-                  <div className="py-1">Tuần 3 (15 - 21/10)</div>
-                  <div className="py-1">Tuần 4 (22 - 31/10)</div>
+                {/* Right 50% Timeline Axis — Fix UI-05: columns + highlight column chứa today */}
+                <div
+                  className="w-[50%] bg-[#e5eeff] text-center font-mono text-[11px] relative font-semibold text-[#434655]"
+                  style={{ display: 'grid', gridTemplateColumns: `repeat(${timeline.columnsCount}, minmax(0, 1fr))` }}
+                >
+                  {timeline.columns.map((label, idx) => {
+                    const isTodayCol =
+                      timeFilter === 'month' && idx === todayCol;
+                    return (
+                      <div
+                        key={idx}
+                        className={`py-1 flex items-center justify-center gap-1.5 ${
+                          isTodayCol ? 'bg-[#004ac6]/10 text-[#004ac6]' : ''
+                        }`}
+                      >
+                        <span className="truncate px-1">{label}</span>
+                        {isTodayCol && (
+                          <span className="px-1.5 py-0.5 rounded bg-[#004ac6] text-white text-[9px] font-bold shrink-0">
+                            HÔM NAY
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
               {/* DATA ROWS LIST */}
               <div className="flex flex-col relative divide-y divide-[#eff4ff]">
-                {/* RED TODAY MARKER LINE (spanning entire timeline height in Week 2) */}
-                <div className="absolute top-0 bottom-0 left-[62.5%] w-[2px] bg-[#004ac6] z-20 pointer-events-none">
+                {/* Fix UI-05: today marker line ở vị trí % tính từ ngày thực, không hardcode */}
+                <div
+                  className="absolute top-0 bottom-0 w-[2px] bg-[#004ac6] z-20 pointer-events-none"
+                  style={{ left: `${timeline.todayLeftPct}%` }}
+                >
                   <div className="sticky top-10 -ml-1.5 w-3.5 h-3.5 rounded-full bg-[#004ac6] flex items-center justify-center shadow-md">
                     <div className="w-1.5 h-1.5 rounded-full bg-white"></div>
                   </div>
@@ -569,21 +692,65 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
 
                       {/* Right Cell: Gantt Bar Timeline (50%) */}
                       <div className="w-[50%] relative flex items-center px-1.5 bg-[#eff4ff]/15">
-                        {/* Timeline Grid vertical guides */}
-                        <div className="absolute inset-0 grid grid-cols-4 pointer-events-none">
-                          <div className="border-r border-dashed border-[#dce9ff]"></div>
-                          <div className="border-r border-dashed border-[#dce9ff] bg-[#004ac6]/[0.015]"></div>
-                          <div className="border-r border-dashed border-[#dce9ff]"></div>
-                          <div></div>
+                        {/* Timeline Grid vertical guides — số cột động theo timeFilter */}
+                        <div
+                          className="absolute inset-0 pointer-events-none"
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns: `repeat(${timeline.columnsCount}, minmax(0, 1fr))`,
+                          }}
+                        >
+                          {Array.from({ length: timeline.columnsCount }, (_, i) => (
+                            <div
+                              key={i}
+                              className={`border-r border-dashed border-[#dce9ff] ${
+                                timeFilter === 'month' && i === todayCol
+                                  ? 'bg-[#004ac6]/[0.015]'
+                                  : ''
+                              }`}
+                            />
+                          ))}
                         </div>
 
-                        {/* Dynamic Gantt Bar — tính từ item.gantt.startWeek / endWeek (1–4 tuần) */}
+                        {/* Dynamic Gantt Bar — Fix UI-05:
+                            month view: dùng gantt.startWeek/endWeek (1..N tuần)
+                            year view: dùng deadline để suy ra vị trí */}
                         {(() => {
-                          const WEEKS = 4; // tổng số cột tuần
-                          const sw = Math.max(1, Math.min(WEEKS, item.gantt.startWeek ?? 1));
-                          const ew = Math.max(sw + 0.1, Math.min(WEEKS, item.gantt.endWeek ?? sw + 0.5));
-                          const leftPct = ((sw - 1) / WEEKS) * 100;
-                          const widthPct = ((ew - sw) / WEEKS) * 100;
+                          let leftPct = 0;
+                          let widthPct = 0;
+                          if (timeFilter === 'month') {
+                            const WEEKS = timeline.columnsCount;
+                            const sw = Math.max(1, Math.min(WEEKS, item.gantt.startWeek ?? 1));
+                            const ew = Math.max(sw + 0.1, Math.min(WEEKS, item.gantt.endWeek ?? sw + 0.5));
+                            leftPct = ((sw - 1) / WEEKS) * 100;
+                            widthPct = ((ew - sw) / WEEKS) * 100;
+                          } else {
+                            // quarter / year: parse deadline (dd/MM/yyyy hoặc ISO 'YYYY-MM-DD')
+                            const dMatch = /(\d{2})\/(\d{2})\/(\d{4})/.exec(item.deadline)
+                              ?? /^(\d{4})-(\d{2})-(\d{2})/.exec(item.deadline);
+                            if (dMatch) {
+                              let dayNum: number;
+                              if (dMatch[1].length === 2) {
+                                // dd/MM/yyyy
+                                const dd = Number(dMatch[1]);
+                                const mm = Number(dMatch[2]) - 1;
+                                const yyyy = Number(dMatch[3]);
+                                dayNum = Math.floor((new Date(yyyy, mm, dd).getTime() - timeline.rangeStart.getTime()) / 86400000);
+                              } else {
+                                // yyyy-MM-dd
+                                const yyyy = Number(dMatch[1]);
+                                const mm = Number(dMatch[2]) - 1;
+                                const dd = Number(dMatch[3]);
+                                dayNum = Math.floor((new Date(yyyy, mm, dd).getTime() - timeline.rangeStart.getTime()) / 86400000);
+                              }
+                              leftPct = Math.max(0, Math.min(100, (dayNum / timeline.unitDays) * 100));
+                              // Width ước lượng = ~7% (1 tuần) hoặc 8% (year view)
+                              widthPct = timeFilter === 'quarter' ? 7 : 8;
+                            } else {
+                              leftPct = 0;
+                              widthPct = 3;
+                            }
+                          }
                           const barColor = item.gantt.barColor || (
                             item.tier === 1 ? '#0F172A'
                             : item.tier === 2 ? '#004ac6'

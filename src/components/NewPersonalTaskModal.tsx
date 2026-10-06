@@ -8,6 +8,29 @@ interface NewPersonalTaskModalProps {
   currentUser: User;
 }
 
+/** Fix UI-06: format Date thành chuỗi dd/MM theo local timezone. */
+function formatDdMm(d: Date): string {
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}`;
+}
+
+/** Lấy thứ Hai của tuần chứa d (start-of-week theo ISO). */
+function startOfWeek(d: Date): Date {
+  const out = new Date(d);
+  const day = out.getDay() === 0 ? 7 : out.getDay(); // CN=0 → 7
+  out.setDate(out.getDate() - (day - 1));
+  out.setHours(0, 0, 0, 0);
+  return out;
+}
+
+/** Lấy Chủ nhật cuối cùng của tuần chứa d (end-of-week theo ISO). */
+function endOfWeek(d: Date): Date {
+  const out = startOfWeek(d);
+  out.setDate(out.getDate() + 6);
+  return out;
+}
+
 export const NewPersonalTaskModal: React.FC<NewPersonalTaskModalProps> = ({
   isOpen,
   onClose,
@@ -24,16 +47,22 @@ export const NewPersonalTaskModal: React.FC<NewPersonalTaskModalProps> = ({
 
   if (!isOpen) return null;
 
+  // Fix UI-06: deadline text được tính động từ ngày thực tế thay vì hardcode.
+  const now = new Date();
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const weekEnd = endOfWeek(now);
+
+  const deadlineText =
+    dueOption === 'today'
+      ? 'Hôm nay (Hạn: 17:00)'
+      : dueOption === 'tomorrow'
+      ? `Ngày mai (${formatDdMm(tomorrow)})`
+      : `Trong tuần này (${formatDdMm(weekEnd)})`;
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!taskName.trim()) return;
-
-    const deadlineText =
-      dueOption === 'today'
-        ? 'Hôm nay (Hạn: 17:00)'
-        : dueOption === 'tomorrow'
-        ? 'Ngày mai (19/10)'
-        : 'Trong tuần này (24/10)';
 
     onAdd(taskName, deadlineText, notes);
     setTaskName('');

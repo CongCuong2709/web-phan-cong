@@ -16,20 +16,37 @@ const router = Router();
 router.use(requireAuth);
 
 /** GET /api/help-requests — List filtered. */
+// Fix TD-04: JOIN với users để trả về sender_fullname + sender_username.
+// Trước đây chỉ SELECT * → transforms.ts:156 bỏ trống sender field.
+const LIST_SQL = `
+  SELECT
+    hr.*,
+    sender.fullname  AS sender_fullname,
+    sender.username  AS sender_username,
+    sender.avatar_url AS sender_avatar_url
+  FROM help_requests hr
+  LEFT JOIN users sender ON hr.sender_user_id = sender.id
+  ORDER BY hr.created_at DESC
+`;
+
 router.get('/', (req, res) => {
-  let all;
+  const all = db.prepare(LIST_SQL).all();
+  let visible;
   if (req.user.role === 'admin' || req.user.role === 'director') {
-    all = stmt.listAllHelpRequests.all();
+    visible = all;
   } else if (req.user.role === 'manager') {
-    const allList = stmt.listAllHelpRequests.all();
-    all = allList.filter((r) => {
+    // Manager chỉ thấy help_requests của user cùng department.
+    // Lookup sender_user_id → check user_departments. Đã JOIN users nên dùng trực tiếp
+    // sender.username; tuy nhiên dept của sender không có sẵn trong row này,
+    // nên giữ logic filter cũ bằng getUserById cho đúng.
+    visible = all.filter((r) => {
       const sender = stmt.getUserById.get(r.sender_user_id);
       return sender && sender.departments?.some((d) => inDepartment(req.user, d));
     });
   } else {
-    all = stmt.listHelpRequestsBySender.all(req.user.id);
+    visible = all.filter((r) => r.sender_user_id === req.user.id);
   }
-  return res.json({ requests: all });
+  return res.json({ requests: visible });
 });
 
 /** POST /api/help-requests — Tạo. */

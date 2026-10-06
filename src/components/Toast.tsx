@@ -2,7 +2,9 @@ import React from 'react';
 
 interface ToastProps {
   message: string | null;
-  type?: 'success' | 'info' | 'warning';
+  // Fix Bổ sung-5: thêm 'error' type — đỏ, icon error. Trước đây thiếu nên phải
+  // fake bằng 'warning' cho mọi lỗi API.
+  type?: 'success' | 'info' | 'warning' | 'error';
 }
 
 export const Toast: React.FC<ToastProps> = ({ message, type = 'success' }) => {
@@ -16,6 +18,8 @@ export const Toast: React.FC<ToastProps> = ({ message, type = 'success' }) => {
             ? 'text-[#85f8c4]'
             : type === 'warning'
             ? 'text-amber-400'
+            : type === 'error'
+            ? 'text-[#ff8a80]'
             : 'text-sky-300'
         }`}
       >
@@ -23,6 +27,8 @@ export const Toast: React.FC<ToastProps> = ({ message, type = 'success' }) => {
           ? 'check_circle'
           : type === 'warning'
           ? 'warning'
+          : type === 'error'
+          ? 'error'
           : 'info'}
       </span>
       <span className="text-[13px] font-medium">{message}</span>

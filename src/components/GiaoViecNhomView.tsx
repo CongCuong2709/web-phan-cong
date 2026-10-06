@@ -246,7 +246,13 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                 onClick={() => setMemberFilter(null)}
                 className="px-2.5 py-1 bg-[#eff4ff] text-[#004ac6] text-[11px] font-semibold rounded hover:bg-[#dce9ff]"
               >
-                Đang lọc: {memberFilter} (Bấm để xóa lọc)
+                {/* Fix TD-06: hiển thị TÊN thay vì raw value. Trước đây memberFilter
+                    có thể là username ("nv_an") → UI hiển thị kỳ lạ. */}
+                Đang lọc:{' '}
+                {teamMembers.find((m) => m.username === memberFilter)?.name ??
+                  teamMembers.find((m) => m.name === memberFilter)?.name ??
+                  memberFilter}
+                {' '}(Bấm để xóa lọc)
               </button>
             ) : (
               <span className="px-2.5 py-1 bg-[#eff4ff] text-[#434655] text-[11px] font-medium rounded-lg">

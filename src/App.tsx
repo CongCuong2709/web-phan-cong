@@ -233,56 +233,67 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   const [isNewPersonalTaskOpen, setIsNewPersonalTaskOpen] = useState(false);
 
   // Toast state
+  // Fix Bổ sung-5: showToast giờ nhận type để Toast component hiển thị màu/icon phù hợp
+  // (success/error/warning). Trước đây luôn là success → user không phân biệt được lỗi API.
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const showToast = (msg: string) => {
+  const [toastType, setToastType] = useState<'success' | 'error' | 'warning'>('success');
+  const showToast = (
+    msg: string,
+    type: 'success' | 'error' | 'warning' = 'success'
+  ) => {
     setToastMessage(msg);
+    setToastType(type);
     setTimeout(() => setToastMessage(null), 3500);
   };
 
   // Roll-up recalculation helper
+  // Fix Bổ sung-2: pre-group childrenByParent trong 1 pass O(N) thay vì filter 3 lần
+  // trong mỗi tier loop → cũ O(N²), giờ O(N). Quan trọng khi scale lên 500+ items.
   const recalculateRollup = (items: TierItem[]): TierItem[] => {
-    const itemsMap = new Map(items.map((i) => [i.id, { ...i }]));
+    // Explicit Map type — nếu không, TypeScript widen status/progress thành string/number
+    // và các phép gán literal bên dưới bị reject.
+    const itemsMap = new Map<string, TierItem>(
+      items.map((i) => [i.id, { ...i }])
+    );
 
-    // Calculate tier 3 from tier 4
+    // 1 pass: group children by parent id
+    const childrenByParent = new Map<string, TierItem[]>();
     for (const item of itemsMap.values()) {
-      if (item.tier === 3) {
-        const children = [...itemsMap.values()].filter((c) => c.parentId === item.id);
-        if (children.length > 0) {
-          const avg = Math.round(
-            children.reduce((acc, c) => acc + c.progress, 0) / children.length
-          );
-          item.progress = avg;
-          if (avg === 100) item.status = 'Đã xong';
-        }
+      if (item.parentId) {
+        const arr = childrenByParent.get(item.parentId);
+        if (arr) arr.push(item);
+        else childrenByParent.set(item.parentId, [item]);
       }
     }
 
-    // Calculate tier 2 from tier 3
-    for (const item of itemsMap.values()) {
-      if (item.tier === 2) {
-        const children = [...itemsMap.values()].filter((c) => c.parentId === item.id);
-        if (children.length > 0) {
-          const avg = Math.round(
-            children.reduce((acc, c) => acc + c.progress, 0) / children.length
-          );
-          item.progress = avg;
-          if (avg === 100) item.status = 'Đã xong';
-          else if (avg > 90) item.status = 'Sắp xong';
-        }
+    // Helper: tính avg + cập nhật status theo threshold (mirror backend logic).
+    const applyRollup = (parent: TierItem, children: TierItem[], includeRunningStatus: boolean) => {
+      if (children.length === 0) return;
+      const avg = Math.round(
+        children.reduce((acc, c) => acc + c.progress, 0) / children.length
+      );
+      parent.progress = avg;
+      if (avg === 100) parent.status = 'Đã xong';
+      else if (avg > 90) parent.status = 'Sắp xong';
+      else if (includeRunningStatus && avg > 0 &&
+               (parent.status === 'Đã xong' || parent.status === 'Sắp xong')) {
+        // Tier 1: nếu trước đó đã xong mà progress giảm → revert về 'Đang chạy'.
+        // Tránh overwrite 'Chuẩn bị' khi avg = 0.
+        parent.status = 'Đang chạy';
       }
-    }
+    };
 
-    // Calculate tier 1 from tier 2
+    // Tier 3 ← Tier 4
     for (const item of itemsMap.values()) {
-      if (item.tier === 1) {
-        const children = [...itemsMap.values()].filter((c) => c.parentId === item.id);
-        if (children.length > 0) {
-          const avg = Math.round(
-            children.reduce((acc, c) => acc + c.progress, 0) / children.length
-          );
-          item.progress = avg;
-        }
-      }
+      if (item.tier === 3) applyRollup(item, childrenByParent.get(item.id) ?? [], false);
+    }
+    // Tier 2 ← Tier 3
+    for (const item of itemsMap.values()) {
+      if (item.tier === 2) applyRollup(item, childrenByParent.get(item.id) ?? [], false);
+    }
+    // Tier 1 ← Tier 2 (Fix Bổ sung-1: Tier 1 giờ update status)
+    for (const item of itemsMap.values()) {
+      if (item.tier === 1) applyRollup(item, childrenByParent.get(item.id) ?? [], true);
     }
 
     return Array.from(itemsMap.values());
@@ -321,9 +332,10 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   };
 
   // Add new item into 4-Tier tree
-  const handleAddTierItem = (newItemData: Partial<TierItem>) => {
+  const handleAddTierItem = async (newItemData: Partial<TierItem>) => {
+    const localId = `tier-item-${Date.now()}`;
     const newItem: TierItem = {
-      id: `tier-item-${Date.now()}`,
+      id: localId,
       code: newItemData.code || `NV-${Math.floor(Math.random() * 900)}`,
       tier: newItemData.tier || 4,
       tierName: newItemData.tierName || 'Tầng 4: Đầu việc',
@@ -354,39 +366,87 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       },
     };
 
+    // Optimistic update với rollup ngay để UI responsive
     const newItems = [...tierItems, newItem];
-    const recalculated = recalculateRollup(newItems);
-    setTierItems(recalculated);
+    setTierItems(recalculateRollup(newItems));
     logHistory(
       newItem.tier === 1 ? 'project' : newItem.tier === 2 ? 'phase' : newItem.tier === 3 ? 'bundle' : 'task',
-      newItem.id,
+      localId,
       `Tạo mới ${newItem.code}: ${newItem.title}`,
     );
-    // Dual-write: sync TierItem mới lên backend.
-    fireAndForget(
-      api.createTierItem({
-        code: newItem.code,
-        tier: newItem.tier,
-        title: newItem.title,
-        parent_id: newItem.parentId
-          ? Number(tierItems.find((t) => t.code === newItem.parentId)?.id) || undefined
-          : undefined,
-        department_code: newItem.department,
-        owner_user_id: undefined, // backend sẽ default = current user
-        progress: newItem.progress,
-        status: newItem.status,
-        priority: newItem.priority,
-        description: newItem.description,
-        management_notes: newItem.managementNotes,
-        deadline: newItem.deadline,
-        start_week: newItem.gantt.startWeek,
-        end_week: newItem.gantt.endWeek,
-        gantt_label: newItem.gantt.label,
-        gantt_bar_color: newItem.gantt.barColor,
-      }),
-      `createTierItem#${newItem.code}`,
-    );
     showToast(`Đã thêm thành công: ${newItem.title}`);
+
+    // Sync lên backend — đợi response để lấy id thật
+    // Fix TD-02: parentId từ form đã là id (string), chỉ cần Number() trực tiếp.
+    //           KHÔNG lookup theo code (id chứ không phải code mới đúng).
+    // Fix Bổ sung-3: sau khi backend trả về item thật, thay local id bằng backend id
+    //                để các PATCH sau gọi đúng endpoint.
+    const parentNumericId = newItem.parentId
+      ? Number(newItem.parentId) || undefined
+      : undefined;
+
+    const result = await api.createTierItem({
+      code: newItem.code,
+      tier: newItem.tier,
+      title: newItem.title,
+      parent_id: parentNumericId,
+      department_code: newItem.department,
+      owner_user_id: undefined, // backend sẽ default = current user
+      progress: newItem.progress,
+      status: newItem.status,
+      priority: newItem.priority,
+      description: newItem.description,
+      management_notes: newItem.managementNotes,
+      deadline: newItem.deadline,
+      start_week: newItem.gantt.startWeek,
+      end_week: newItem.gantt.endWeek,
+      gantt_label: newItem.gantt.label,
+      gantt_bar_color: newItem.gantt.barColor,
+    });
+
+    if (result.ok && result.data?.item?.id != null) {
+      const backendId = String(result.data.item.id);
+      // Replace local id bằng backend id trong state (fix Bổ sung-3)
+      // Đồng thời cập nhật code nếu backend đã generate lại (vd: NEW-XXXXXX)
+      const backendItem = result.data.item;
+      setTierItems((prev) =>
+        prev.map((t) =>
+          t.id === localId
+            ? {
+                ...t,
+                id: backendId,
+                code: backendItem.code ?? t.code,
+                // Sync các field từ backend để khớp với DB.
+                // Cast progress/status vì TierItemDto dùng string/number thay vì literal union.
+                progress: typeof backendItem.progress === 'number'
+                  ? backendItem.progress
+                  : t.progress,
+                status: (backendItem.status as TierItem['status']) ?? t.status,
+              }
+            : t
+        )
+      );
+      // Cập nhật history entry id tương ứng
+      setHistory((prev) =>
+        prev.map((h) =>
+          h.entityId === localId && h.entityType === (
+            newItem.tier === 1 ? 'project' :
+            newItem.tier === 2 ? 'phase' :
+            newItem.tier === 3 ? 'bundle' : 'task'
+          )
+            ? { ...h, entityId: backendId }
+            : h
+        )
+      );
+    } else if (!result.ok) {
+      console.warn(`[handleAddTierItem] Backend lưu thất bại: ${result.error?.message || 'unknown'}`);
+      // Fix Bổ sung-5: báo lỗi API rõ ràng (toast error) để user biết dữ liệu chỉ
+      // tồn tại local. Trước đây silent → user tưởng backend OK.
+      showToast(
+        `Đã lưu local nhưng backend lỗi: ${result.error?.message || 'unknown'}`,
+        'warning'
+      );
+    }
   };
 
   // Approve Team Task
@@ -467,6 +527,24 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       )
     );
     showToast('Đã lưu kết quả bàn giao mới!');
+  };
+
+  // Fix UI-03: thêm ghi chú vào EmployeeTask — immutable update đúng cách
+  // (trước đây ViecCuaToiView mutate trực tiếp task.notes — vi phạm React).
+  const handleAddEmployeeNote = (taskId: string, noteText: string) => {
+    setEmployeeTasks((prev) =>
+      prev.map((t) =>
+        t.id === taskId
+          ? {
+              ...t,
+              notes: [...(t.notes ?? []), noteText],
+              notesCount: (t.notesCount ?? 0) + 1,
+            }
+          : t
+      )
+    );
+    showToast('Đã gửi ghi chú cho Trưởng phòng');
+    // TODO Phase 2: wire lên POST /api/employee-tasks/:id/notes khi backend có endpoint
   };
 
   // Send help request from Employee (uses real logged-in user)
@@ -600,6 +678,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
               onToggleDone={handleToggleEmployeeTask}
               onStartTask={handleStartEmployeeTask}
               onUpdateDeliverable={handleUpdateEmployeeDeliverable}
+              onAddNote={handleAddEmployeeNote}
               onSendHelpRequest={handleSendHelpRequest}
               onOpenNewPersonalTaskModal={() => setIsNewPersonalTaskOpen(true)}
             />
@@ -639,6 +718,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
         subtasks={subtasks}
         dailyLogs={dailyLogs}
         history={history}
+        allTierItems={tierItems}
         currentUser={user}
         onUpdateSubtaskProgress={(subId, progress) => {
           const subtask = subtasks.find((s) => s.id === subId);
@@ -754,7 +834,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       />
 
       {/* Toast Notification */}
-      <Toast message={toastMessage} />
+      <Toast message={toastMessage} type={toastType} />
     </div>
   );
 }

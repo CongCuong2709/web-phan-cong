@@ -28,15 +28,46 @@ function visibleTasks(user, allTasks) {
 }
 
 /** GET /api/employee-tasks — List filtered. */
+// Fix TD-03: JOIN với users 2 lần (manager + owner) để trả về fullname + avatar.
+// Trước đây chỉ SELECT * → frontend transforms.ts:135-139 fill bằng chuỗi rỗng,
+// khiến UI "Trưởng phòng giao:" trong ViecCuaToiView luôn trống.
+const LIST_SQL = `
+  SELECT
+    et.*,
+    mgr.fullname      AS manager_fullname,
+    mgr.username      AS manager_username,
+    mgr.avatar_url    AS manager_avatar_url,
+    owner.fullname    AS owner_fullname,
+    owner.username    AS owner_username
+  FROM employee_tasks et
+  LEFT JOIN users mgr   ON et.manager_user_id = mgr.id
+  LEFT JOIN users owner ON et.owner_user_id   = owner.id
+  ORDER BY et.created_at DESC
+`;
+
 router.get('/', (req, res) => {
-  const all = db.prepare('SELECT * FROM employee_tasks ORDER BY created_at DESC').all();
+  const all = db.prepare(LIST_SQL).all();
   const tasks = visibleTasks(req.user, all);
   return res.json({ tasks });
 });
 
 /** GET /api/employee-tasks/:id — Chi tiết. */
+const DETAIL_SQL = `
+  SELECT
+    et.*,
+    mgr.fullname      AS manager_fullname,
+    mgr.username      AS manager_username,
+    mgr.avatar_url    AS manager_avatar_url,
+    owner.fullname    AS owner_fullname,
+    owner.username    AS owner_username
+  FROM employee_tasks et
+  LEFT JOIN users mgr   ON et.manager_user_id = mgr.id
+  LEFT JOIN users owner ON et.owner_user_id   = owner.id
+  WHERE et.id = ?
+`;
+
 router.get('/:id(\\d+)', (req, res) => {
-  const task = db.prepare('SELECT * FROM employee_tasks WHERE id = ?').get(Number(req.params.id));
+  const task = db.prepare(DETAIL_SQL).get(Number(req.params.id));
   if (!task) return res.status(404).json({ error: 'not_found' });
   const visible = visibleTasks(req.user, [task]);
   if (visible.length === 0) return res.status(403).json({ error: 'forbidden' });

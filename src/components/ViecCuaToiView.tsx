@@ -7,6 +7,8 @@ interface ViecCuaToiViewProps {
   onToggleDone: (taskId: string) => void;
   onStartTask: (taskId: string) => void;
   onUpdateDeliverable: (taskId: string, newText: string) => void;
+  /** Fix UI-03: callback prop để thêm ghi chú qua state setter ở App.tsx (immutable update). */
+  onAddNote: (taskId: string, noteText: string) => void;
   onSendHelpRequest: (request: Omit<QuickHelpRequest, 'id' | 'timestamp' | 'status'>) => void;
   onOpenNewPersonalTaskModal: () => void;
 }
@@ -17,6 +19,7 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
   onToggleDone,
   onStartTask,
   onUpdateDeliverable,
+  onAddNote,
   onSendHelpRequest,
   onOpenNewPersonalTaskModal,
 }) => {
@@ -73,6 +76,8 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
   });
 
   const doingCount = tasks.filter((t) => t.status === 'doing').length;
+  const pendingCount = tasks.filter((t) => t.status === 'pending').length;
+  const todoCount = pendingCount + doingCount; // Tổng việc CHƯA xong (Fix UI-01)
   const todayCount = tasks.filter((t) => t.isToday).length;
   const doneCount = tasks.filter((t) => t.status === 'done').length;
   const overdueCount = tasks.filter((t) => t.isToday && t.status !== 'done').length;
@@ -161,7 +166,8 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
             </div>
             <div className="mt-3 flex items-baseline gap-1.5">
               <span className="text-[32px] font-bold text-[#0b1c30] tabular-nums">
-                {doingCount + (tasks.find((t) => t.isToday && t.status !== 'done') ? 0 : 0)}
+                {/* Fix UI-01: tổng việc CHƯA xong (pending + doing) thay vì biểu thức `? 0 : 0` rỗng */}
+                {todoCount}
               </span>
               <span className="text-[13px] text-[#565e74]">việc</span>
             </div>
@@ -192,7 +198,8 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
               <span className="text-[13px] text-[#565e74]">đầu việc chốt</span>
             </div>
             <div className="mt-1 text-[11px] text-[#0b1c30] font-medium truncate">
-              Thuê mặt bằng & ký hợp đồng
+              {/* Fix UI-02: dùng firstTodayPending?.title thay vì hardcode "Thuê mặt bằng & ký hợp đồng" */}
+              {firstTodayPending?.title ?? 'Không có việc gấp hôm nay'}
             </div>
           </div>
 
@@ -548,11 +555,9 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
                         <button
                           onClick={() => {
                             if (newNoteText.trim()) {
-                              // Fix C5: use proper state update via onUpdateDeliverable or local state copy
-                              // Append to existing notes array immutably
-                              const updatedNotes = [...(task.notes ?? []), newNoteText];
-                              onUpdateDeliverable(task.id, task.currentDeliverable); // trigger re-render
-                              task.notes = updatedNotes; // temporary — will be replaced by proper state handler
+                              // Fix UI-03: KHÔNG mutate trực tiếp task.notes nữa.
+                              // Gọi callback onAddNote → App.tsx xử lý qua state setter (immutable).
+                              onAddNote(task.id, newNoteText);
                               setNewNoteText('');
                               setNoteOpenTaskId(null);
                             }

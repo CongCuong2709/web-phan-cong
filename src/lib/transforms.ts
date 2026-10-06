@@ -132,14 +132,16 @@ export function apiToEmployeeTask(api: any): EmployeeTask {
     deadline: String(api.deadline || ''),
     isToday: Boolean(api.is_today),
     status: (api.status as EmployeeTask['status']) || 'doing',
+    // Fix TD-03: đọc manager_fullname/avatar từ backend JOIN (xem employeeTasks.js:30-44).
+    // Fallback sang owner_fullname nếu chưa gán manager (task tự tạo).
     manager: {
-      name: '',
-      role: '',
-      avatar: '',
+      name: String(api.manager_fullname ?? api.owner_fullname ?? '—'),
+      role: 'Trưởng phòng phụ trách',
+      avatar: String(api.manager_avatar_url ?? ''),
     },
     notesCount: Number(api.notesCount ?? 0),
     notes: [],
-    ownerUsername: (api.owner_username_str as string) || undefined,
+    ownerUsername: (api.owner_username_str as string | undefined) || undefined,
     department: api.department_code as EmployeeTask['department'],
   };
 }
@@ -153,7 +155,8 @@ export function apiToHelpRequest(api: any): QuickHelpRequest {
   return {
     id: String(api.id),
     timestamp: String(api.created_at || ''),
-    sender: '',
+    // Fix TD-04: đọc sender_fullname từ backend JOIN (xem helpRequests.js:21-30).
+    sender: String(api.sender_fullname ?? '—'),
     reason: String(api.reason || ''),
     message: String(api.message || ''),
     status: (api.status as QuickHelpRequest['status']) || 'pending',
