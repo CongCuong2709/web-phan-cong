@@ -748,13 +748,8 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
 
       {/* Footer */}
       <footer className="w-full bg-white border-t border-[#e5eeff] py-4">
-        <div className="max-w-[1720px] mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-2 text-[#565e74] text-[12px]">
-          <span>
-            © 2026 Tiến độ 4 Tầng & Việc Nhóm Enterprise • Quản trị điều hành chính xác & trực quan
-          </span>
-          <span className="text-[#565e74]/70">
-            Dự án (T1) → Giai đoạn (T2) → Hạng mục (T3) → Đầu việc (T4)
-          </span>
+        <div className="max-w-[1720px] mx-auto px-4 sm:px-6 flex items-center justify-center gap-2 text-[#565e74] text-[12px]">
+          <span>© 2026 Hệ thống công việc và báo cáo TAG</span>
         </div>
       </footer>
 
@@ -868,7 +863,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
         onSuccess={(type) => {
           showToast(
             `Đã xuất thành công tệp ${
-              type === 'pdf' ? 'Tien-do-4-tang-Q4.pdf' : 'Tien-do-dieu-hanh-WBS.xlsx'
+              type === 'pdf' ? 'He-thong-TAG-Q4.pdf' : 'Bao-cao-TAG.xlsx'
             }!`
           );
         }}
@@ -902,18 +897,13 @@ const ForbiddenView: React.FC<{ role: User['role'] }> = ({ role }) => {
       <h2 className="text-[20px] font-bold text-[#0b1c30]">Bạn không có quyền truy cập</h2>
       {isDirector ? (
         <p className="text-[13px] text-[#565e74] max-w-md leading-relaxed">
-          Vai trò <span className="font-semibold">{ROLE_LABEL[role]} (BGĐ)</span> hoạt động ở
-          chế độ <span className="font-semibold text-[#004ac6]">Executive Only</span>, chỉ truy cập
-          <span className="font-semibold text-[#004ac6]"> Cây Gantt 4 Tầng</span> và
-          <span className="font-semibold text-[#004ac6]"> Báo cáo &amp; Tổng quan</span>.
-          Các tab điều hành cấp phòng ban được ẩn để tránh trùng lặp nghiệp vụ với
-          Trưởng phòng.
+          Vai trò BGĐ chỉ truy cập <span className="font-semibold text-[#004ac6]">Cây công việc</span> và
+          <span className="font-semibold text-[#004ac6]"> Báo cáo</span>.
         </p>
       ) : (
         <p className="text-[13px] text-[#565e74] max-w-md">
           Vai trò <span className="font-semibold">{ROLE_LABEL[role]}</span> chỉ được phép truy cập
-          mục <span className="font-semibold text-[#004ac6]">Việc của tôi</span>. Hãy đăng nhập bằng
-          tài khoản có vai trò cao hơn nếu bạn cần xem báo cáo này.
+          mục <span className="font-semibold text-[#004ac6]">Việc của tôi</span>.
         </p>
       )}
     </div>

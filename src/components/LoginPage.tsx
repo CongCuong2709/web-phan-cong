@@ -33,7 +33,7 @@ const LoginPage: React.FC = () => {
               (e.currentTarget as HTMLImageElement).style.display = 'none';
             }}
           />
-          <span className="text-[16px] font-bold text-[#0b1c30]">Tiến độ 4 Tầng</span>
+          <span className="text-[16px] font-bold text-[#0b1c30]">Hệ thống công việc và báo cáo TAG</span>
         </div>
 
         {/* ===== Title ===== */}

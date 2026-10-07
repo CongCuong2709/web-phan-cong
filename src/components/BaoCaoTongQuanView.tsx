@@ -54,17 +54,9 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
         {/* Sub Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 sm:p-6 rounded-xl border border-[#e5eeff] shadow-sm">
           <div>
-            <div className="flex items-center gap-1.5 text-[#565e74] text-[11px] font-semibold uppercase tracking-wider mb-1">
-              <span>Báo cáo điều hành</span>
-              <span className="material-symbols-outlined text-[14px]">chevron_right</span>
-              <span className="text-[#004ac6] font-bold">Tổng quan tiến độ 4 tầng</span>
-            </div>
             <h1 className="text-[22px] sm:text-[26px] font-bold text-[#0b1c30] tracking-tight">
-              Báo cáo & Phân tích Đa Tầng Q{currentQuarter}/{currentYear}
+              Báo cáo Q{currentQuarter}/{currentYear}
             </h1>
-            <p className="text-[13px] text-[#434655]">
-              Cộng dồn tự động (Auto-Rollup) dữ liệu từ {teamMembers.length} thành viên và 4 tầng quản trị chiến lược.
-            </p>
           </div>
 
           <div className="flex items-center gap-2.5">
@@ -98,13 +90,13 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
               <div className="h-full bg-[#0F172A] rounded-full" style={{ width: `${kpiT1}%` }}></div>
             </div>
             <span className="text-[12px] text-[#565e74]">
-              {tier1Items.length} Dự án trọng điểm đang kích hoạt
+              {tier1Items.length} dự án
             </span>
           </div>
 
           <div className="bg-white p-5 rounded-xl border border-[#e5eeff] shadow-sm">
             <span className="text-[11px] font-bold text-[#565e74] uppercase tracking-wider block mb-1">
-              Tầng 2: Giai đoạn triển khai
+              Giai đoạn
             </span>
             <div className="text-[28px] font-bold text-[#004ac6] tabular-nums">
               {kpiT2}%
@@ -119,7 +111,7 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
 
           <div className="bg-white p-5 rounded-xl border border-[#e5eeff] shadow-sm">
             <span className="text-[11px] font-bold text-[#565e74] uppercase tracking-wider block mb-1">
-              Tầng 3: Gói việc giao
+              Hạng mục
             </span>
             <div className="text-[28px] font-bold text-[#006243] tabular-nums">
               {kpiT3}%
@@ -138,7 +130,7 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
                 blockedCount > 0 ? 'text-[#ba1a1a]' : 'text-[#006243]'
               }`}
             >
-              Điểm nghẽn Critical Path
+              Điểm nghẽn
             </span>
             <div
               className={`text-[28px] font-bold tabular-nums ${
@@ -173,7 +165,7 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
           <div className="bg-white p-5 rounded-xl border border-[#e5eeff] shadow-sm flex flex-col gap-4">
             <div className="flex items-center justify-between">
               <h3 className="text-[16px] font-bold text-[#0b1c30]">
-                Tiến độ chi tiết từng cấp độ
+                Tiến độ chi tiết
               </h3>
               <span className="text-[12px] text-[#565e74]">
                 {completedTierItems}/{tierItems.length} hoàn tất

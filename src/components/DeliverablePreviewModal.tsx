@@ -102,7 +102,6 @@ export const DeliverablePreviewModal: React.FC<DeliverablePreviewModalProps> = (
                     ? 'Ảnh/Hình ảnh thực tế'
                     : 'Báo cáo văn bản'}
                 </strong>
-                {' '}— Kiểm tra nội dung trước khi duyệt.
               </span>
             </div>
           </div>

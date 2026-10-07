@@ -47,7 +47,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
         <div className="p-5 flex flex-col gap-4">
           <div className="text-[13px] text-[#434655]">
-            Chọn định dạng bạn muốn xuất báo cáo tiến độ 4 tầng và phân bổ nhân sự:
+            Chọn định dạng xuất báo cáo:
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -65,7 +65,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               <div>
                 <div className="text-[13px] font-bold text-[#0b1c30]">Báo cáo PDF</div>
                 <div className="text-[11px] text-[#565e74]">
-                  Bản in điều hành đồ họa Gantt
+                  Bản in đồ họa
                 </div>
               </div>
             </div>
@@ -84,7 +84,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               <div>
                 <div className="text-[13px] font-bold text-[#0b1c30]">Bảng tính Excel</div>
                 <div className="text-[11px] text-[#565e74]">
-                  Dữ liệu thô 4 tầng & WBS
+                  Dữ liệu chi tiết
                 </div>
               </div>
             </div>

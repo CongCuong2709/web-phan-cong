@@ -99,7 +99,7 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
             <div className="flex items-center gap-2 flex-wrap">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#dae2fd] text-[#131b2e] text-[12px] font-semibold">
                 <span className="w-2 h-2 rounded-full bg-[#006243]"></span>
-                Không gian cá nhân • {ROLE_LABEL[currentUser.role]}
+                {ROLE_LABEL[currentUser.role]}
               </span>
               <span className="font-mono text-[12px] text-[#565e74] font-semibold">
                 @{currentUser.username}
@@ -109,18 +109,10 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
               <span className="text-[17px] font-bold text-[#004ac6]">
                 Xin chào {currentUser.fullname} 👋
               </span>
-              <span className="text-[14px] text-[#565e74]">
-                Chúc bạn một ngày làm việc hiệu quả và nhẹ nhàng!
-              </span>
             </div>
             <h1 className="text-[22px] sm:text-[26px] font-bold text-[#0b1c30] tracking-tight">
-              Việc của tôi hôm nay
+              Việc của tôi
             </h1>
-            <p className="text-[13px] text-[#434655] leading-relaxed">
-              Các đầu việc được Trưởng phòng phân công. Làm xong chỉ cần bấm{' '}
-              <span className="font-semibold text-[#006243]">[✓ Xong việc]</span> hoặc bấm{' '}
-              <span className="font-semibold text-[#ba1a1a]">[Cần hỗ trợ]</span> nếu gặp khó khăn.
-            </p>
           </div>
 
           {/* Action buttons */}
@@ -307,12 +299,6 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
               >
                 Đã làm xong ({doneCount})
               </button>
-            </div>
-            <div className="flex items-center gap-1.5 text-[#565e74] text-[11px] self-end sm:self-center pr-2">
-              <span className="material-symbols-outlined text-[16px] text-[#004ac6]">
-                touch_app
-              </span>
-              <span>Bấm trực tiếp để thao tác nhanh</span>
             </div>
           </div>
 
@@ -549,7 +535,7 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
                           type="text"
                           value={newNoteText}
                           onChange={(e) => setNewNoteText(e.target.value)}
-                          placeholder="Viết ghi chú ngắn cho sếp..."
+                          placeholder="Ghi chú cho sếp..."
                           className="text-[12px] px-2.5 py-1.5 bg-white border border-[#c3c6d7] rounded flex-1 focus:outline-none focus:border-[#004ac6]"
                         />
                         <button
@@ -593,20 +579,16 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
                   Bạn đang bị vướng mắc ở khâu nào?
                 </h3>
                 <span className="text-[13px] text-[#565e74]">
-                  Báo trực tiếp cho {managerLabel} chỉ với 1 cú bấm, không cần viết email dài dòng.
+                  Gửi trực tiếp cho {managerLabel}.
                 </span>
               </div>
             </div>
-            <span className="hidden md:inline-flex items-center gap-1.5 text-[#565e74] text-[11px] bg-[#eff4ff] px-2.5 py-1 rounded font-medium">
-              <span className="w-2 h-2 rounded-full bg-[#006243]"></span>
-              Trưởng phòng đang online
-            </span>
           </div>
 
           {/* Quick Reason Presets */}
           <div className="flex flex-col gap-1.5">
             <span className="text-[12px] font-bold text-[#0b1c30]">
-              1. Chọn nhanh lý do vướng mắc:
+              Chọn lý do vướng mắc:
             </span>
             <div className="flex flex-wrap gap-2">
               {reasonPresets.map((reason) => {
@@ -636,7 +618,7 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
           {/* Quick Message Input */}
           <div className="flex flex-col gap-1.5">
             <span className="text-[12px] font-bold text-[#0b1c30]">
-              2. Lời nhắn nhanh gửi Trưởng phòng:
+              Lời nhắn gửi Trưởng phòng:
             </span>
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
               <div className="relative flex-1">
@@ -650,7 +632,7 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
                     if (e.key === 'Enter') handleSendHelp();
                   }}
                   className="w-full h-11 pl-10 pr-3 rounded-lg bg-[#eff4ff] text-[#0b1c30] text-[13px] placeholder:text-[#737686] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#004ac6] border border-[#dce9ff]"
-                  placeholder="Nhập nhanh điều bạn cần Trưởng phòng giải quyết (ví dụ: Cần sếp duyệt chuyển cọc 10tr sáng nay)..."
+                  placeholder="Nhập điều bạn cần Trưởng phòng giải quyết..."
                   type="text"
                 />
               </div>
@@ -673,38 +655,11 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
               <span className="material-symbols-outlined text-[#006243] text-[20px]">
                 check_circle
               </span>
-              <span>
-                Tin nhắn đã được chuyển tới thông báo của {managerLabel}. Sếp sẽ phản hồi cho bạn sớm nhất!
-              </span>
+              <span>Đã gửi tới {managerLabel}.</span>
             </div>
           )}
         </div>
         )} {/* end !isManager */}
-
-        {/* Motivational & Reassurance Footer Banner */}
-        <div className="bg-[#eff4ff] rounded-xl p-4 sm:p-5 flex flex-col sm:flex-row items-center justify-between gap-4 border border-[#dce9ff] shadow-sm">
-          <div className="flex items-center gap-3.5">
-            <div className="w-10 h-10 rounded-full bg-[#004ac6] text-white flex items-center justify-center shrink-0 shadow-sm">
-              <span className="material-symbols-outlined text-[22px]">
-                sync
-              </span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[14px] font-bold text-[#0b1c30]">
-                Đồng bộ tự động theo thời gian thực
-              </span>
-              <p className="text-[12px] text-[#565e74] leading-relaxed">
-                Mọi thao tác bấm của bạn tự động cập nhật lên bảng theo dõi của Trưởng phòng. Bạn hoàn toàn không cần phải soạn email hay làm báo cáo cuối ngày!
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-1.5 text-[#006243] text-[12px] font-bold shrink-0 bg-white px-3.5 py-1.5 rounded-full shadow-sm border border-[#e5eeff]">
-            <span className="material-symbols-outlined text-[16px]">
-              done_all
-            </span>
-            <span>Hệ thống sẵn sàng</span>
-          </div>
-        </div>
       </div>
     </div>
   );

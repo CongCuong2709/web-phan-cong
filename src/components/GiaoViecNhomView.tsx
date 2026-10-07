@@ -24,7 +24,6 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
 }) => {
   const [filter, setFilter] = useState<'all' | 'pending' | 'need_help' | 'done'>('pending');
   const [memberFilter, setMemberFilter] = useState<string | null>(null);
-  const [showTip, setShowTip] = useState(true);
 
   // Filtered task list
   const filteredTasks = tasks.filter((t) => {
@@ -67,20 +66,9 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
         {/* Header Section */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 sm:p-6 rounded-xl border border-[#e5eeff] shadow-sm">
           <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2 text-[#565e74] text-[12px] font-semibold">
-              <span className="material-symbols-outlined text-[17px] text-[#004ac6]">
-                groups
-              </span>
-              <span>Phòng ban</span>
-              <span className="text-[#c3c6d7]">•</span>
-              <span className="text-[#004ac6]">Đội ngũ của tôi</span>
-            </div>
             <h1 className="text-[22px] sm:text-[26px] font-bold text-[#0b1c30] tracking-tight">
-              Giao việc & Theo dõi tiến độ nhóm (Trưởng phòng)
+              Giao việc & Theo dõi nhóm
             </h1>
-            <p className="text-[14px] text-[#434655] max-w-2xl leading-relaxed">
-              Phân chia việc cho các bạn trong nhóm, hỗ trợ khi gặp khó khăn và kiểm tra công việc đã hoàn thành dễ dàng, không thuật ngữ phức tạp.
-            </p>
           </div>
 
           <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap shrink-0">
@@ -252,7 +240,6 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                 {teamMembers.find((m) => m.username === memberFilter)?.name ??
                   teamMembers.find((m) => m.name === memberFilter)?.name ??
                   memberFilter}
-                {' '}(Bấm để xóa lọc)
               </button>
             ) : (
               <span className="px-2.5 py-1 bg-[#eff4ff] text-[#434655] text-[11px] font-medium rounded-lg">
@@ -635,40 +622,6 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
             )}
           </div>
         </div>
-
-        {/* Friendly Team Leader Guidance Card */}
-        {showTip && (
-          <div className="p-4 sm:p-5 bg-[#dce9ff]/50 border border-[#c3c6d7] rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all">
-            <div className="flex items-center gap-3.5">
-              <div className="w-10 h-10 rounded-full bg-[#004ac6] text-white flex items-center justify-center shrink-0 shadow-sm">
-                <span className="material-symbols-outlined text-[22px]">
-                  lightbulb
-                </span>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[14px] font-bold text-[#0b1c30]">
-                  Mẹo quản lý cho Trưởng phòng
-                </span>
-                <p className="text-[12px] text-[#434655] leading-relaxed">
-                  Bạn chỉ cần mở trang này vào đầu buổi sáng: duyệt các mục có nhãn{' '}
-                  <span className="text-[#004ac6] font-semibold">
-                    [Chờ duyệt kết quả]
-                  </span>{' '}
-                  hoặc bấm{' '}
-                  <span className="text-[#ba1a1a] font-semibold">[Giúp ngay]</span>{' '}
-                  khi nhân viên báo vướng. Những việc còn lại nhân viên tự tích hoàn thành, bạn không cần ghi sổ sách riêng!
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={() => setShowTip(false)}
-              className="px-3.5 py-1.5 bg-white text-[#004ac6] hover:bg-[#eff4ff] rounded-lg text-[12px] font-bold shrink-0 shadow-sm border border-[#c3c6d7]"
-              type="button"
-            >
-              Đã hiểu mẹo này
-            </button>
-          </div>
-        )}
       </div>
     </div>
   );

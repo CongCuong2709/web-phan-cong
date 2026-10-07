@@ -37,10 +37,10 @@ const ROLE_BADGE_COLOR: Record<User['role'], string> = {
 };
 
 const TAB_LABEL: Record<ActiveAppTab, string> = {
-  'cay-gantt-4-tang': 'Cây Gantt 4 Tầng',
+  'cay-gantt-4-tang': 'Cây công việc',
   'giao-viec-nhom': 'Giao việc Nhóm',
   'viec-cua-toi': 'Việc của tôi',
-  'bao-cao': 'Báo cáo & Tổng quan',
+  'bao-cao': 'Báo cáo',
 };
 
 export const Header: React.FC<HeaderProps> = ({
@@ -75,17 +75,12 @@ export const Header: React.FC<HeaderProps> = ({
             src={BRAND_LOGO_URL}
             onClick={() => setActiveTab(tabs[0] ?? 'viec-cua-toi')}
           />
-          <div className="flex items-center gap-2">
-            <span
-              onClick={() => setActiveTab(tabs[0] ?? 'viec-cua-toi')}
-              className="font-semibold text-[15px] sm:text-[16px] text-[#0b1c30] tracking-tight cursor-pointer hover:text-[#004ac6] transition-colors"
-            >
-              Tiến độ 4 Tầng
-            </span>
-            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#dae2fd] text-[#5c647a] uppercase tracking-wider hidden sm:inline-block">
-              Enterprise
-            </span>
-          </div>
+          <span
+            onClick={() => setActiveTab(tabs[0] ?? 'viec-cua-toi')}
+            className="font-semibold text-[14px] sm:text-[15px] text-[#0b1c30] tracking-tight cursor-pointer hover:text-[#004ac6] transition-colors whitespace-nowrap"
+          >
+            Hệ thống công việc và báo cáo TAG
+          </span>
         </div>
 
         {/* Navigation Tabs Center */}

@@ -228,25 +228,17 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
       <div className="w-full px-4 sm:px-6 py-5 bg-white border-b border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
         <div className="max-w-[1720px] mx-auto flex flex-col lg:flex-row lg:items-end justify-between gap-4">
           <div className="space-y-1.5">
-            <div className="flex items-center gap-1.5 text-[#565e74] text-[11px] font-semibold uppercase tracking-wider">
-              <span>Tiến độ tổ chức</span>
-              <span className="material-symbols-outlined text-[14px]">chevron_right</span>
-              <span className="text-[#004ac6] font-bold">Khung điều hành 4 tầng</span>
-            </div>
             <h1 className="text-[22px] sm:text-[26px] font-bold text-[#0b1c30] tracking-tight">
-              Tiến độ & Cây Gantt 4 Tầng
+              Hệ thống công việc và báo cáo TAG
             </h1>
             <p className="text-[13px] text-[#434655] flex items-center gap-2 flex-wrap">
-              <span>Dự án (Tầng 1)</span>
+              <span>Dự án</span>
               <span className="material-symbols-outlined text-[13px] text-[#737686]">arrow_forward</span>
-              <span>Giai đoạn (Tầng 2)</span>
+              <span>Giai đoạn</span>
               <span className="material-symbols-outlined text-[13px] text-[#737686]">arrow_forward</span>
-              <span>Hạng mục giao (Tầng 3)</span>
+              <span>Hạng mục</span>
               <span className="material-symbols-outlined text-[13px] text-[#737686]">arrow_forward</span>
-              <span>Đầu việc (Tầng 4)</span>
-              <span className="font-mono text-[11px] font-semibold px-2 py-0.5 bg-[#eff4ff] text-[#004ac6] rounded">
-                Cộng dồn tự động (Auto-Rollup)
-              </span>
+              <span>Đầu việc</span>
             </p>
           </div>
 
@@ -304,10 +296,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
           <div className="bg-white p-4 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-[#565e74] uppercase tracking-wider">
-                Tổng tiến độ toàn diện
-              </span>
-              <span className="font-mono text-[11px] text-[#004ac6] font-semibold">
-                Tự động tính
+                Tổng tiến độ
               </span>
             </div>
             <div className="my-2 flex items-baseline gap-2">
@@ -331,10 +320,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
           <div className="bg-white p-4 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-[#565e74] uppercase tracking-wider">
-                Dự án trọng điểm
-              </span>
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#eff4ff] text-[#004ac6] uppercase">
-                Tầng 1 Active
+                Dự án
               </span>
             </div>
             <div className="my-2 flex items-baseline gap-2">
@@ -391,10 +377,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
           <div className="bg-white p-4 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-[#565e74] uppercase tracking-wider">
-                Điểm nghẽn cần tháo gỡ
-              </span>
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#ffdad6] text-[#ba1a1a] uppercase">
-                Critical Path
+                Điểm nghẽn
               </span>
             </div>
             <div className="my-2 flex items-baseline gap-2">
@@ -455,7 +438,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
             <div className="hidden xl:flex items-center gap-4 text-[11px] font-semibold text-[#565e74]">
               <div className="flex items-center gap-1.5">
                 <span className="w-3 h-2 rounded-sm bg-[#0F172A]"></span>
-                <span>T1: Dự án (Executive)</span>
+                <span>T1: Dự án</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <span className="w-3 h-2 rounded-sm bg-[#004ac6]"></span>
@@ -463,20 +446,20 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
               </div>
               <div className="flex items-center gap-1.5">
                 <span className="w-3 h-2 rounded-sm bg-[#0284c7]"></span>
-                <span>T3: Hạng mục giao</span>
+                <span>T3: Hạng mục</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <span className="w-3 h-2 rounded-sm bg-[#006243]"></span>
-                <span>T4: Đầu việc hoàn thành</span>
+                <span>T4: Đầu việc</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <span className="w-3 h-2 rounded-sm bg-[#f59e0b]"></span>
-                <span>T4: Điểm nghẽn/Chờ duyệt</span>
+                <span>T4: Nghẽn</span>
               </div>
               {hasReadOnlyContext && (
                 <div className="flex items-center gap-1.5">
                   <span className="w-3 h-2 rounded-sm bg-[#94a3b8]"></span>
-                  <span>Chỉ đọc (Dự án phòng ban khác)</span>
+                  <span>Chỉ đọc</span>
                 </div>
               )}
             </div>
@@ -489,7 +472,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
               <div className="flex items-stretch bg-[#eff4ff] text-[#565e74] text-[11px] font-bold uppercase tracking-wider h-10 select-none border-b border-[#dce9ff]">
                 {/* Left 50% Tree Grid Header */}
                 <div className="w-[50%] flex items-center px-4">
-                  <span className="flex-1">Cấu trúc cây 4 tầng & Tên công việc</span>
+                  <span className="flex-1">Cấu trúc & Tên công việc</span>
                   <span className="w-28 text-left">Phụ trách</span>
                   <span className="w-24 text-center">Hạn chót</span>
                   <span className="w-28 text-center">Tiến độ</span>
@@ -934,26 +917,15 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
           </div>
 
           {/* Quick Summary Footer */}
-          <div className="p-3 bg-[#eff4ff] flex flex-col sm:flex-row items-center justify-between text-[12px] text-[#565e74] gap-2 border-t border-[#dce9ff]">
-            <div className="flex items-center gap-2">
-              <span className="material-symbols-outlined text-[16px] text-[#004ac6]">
-                sync
-              </span>
-              <span>
-                Dữ liệu tiến độ tự động cộng dồn từ <strong>Tầng 4</strong> lên{' '}
-                <strong>Tầng 1</strong> theo thời gian thực (Cập nhật 2 phút trước).
-              </span>
-            </div>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={onExport}
-                className="text-[#004ac6] hover:underline font-semibold flex items-center gap-1"
-                type="button"
-              >
-                <span className="material-symbols-outlined text-[16px]">download</span>
-                <span>Xuất báo cáo PDF / Excel</span>
-              </button>
-            </div>
+          <div className="p-3 bg-[#eff4ff] flex items-center justify-end text-[12px] text-[#565e74] border-t border-[#dce9ff]">
+            <button
+              onClick={onExport}
+              className="text-[#004ac6] hover:underline font-semibold flex items-center gap-1"
+              type="button"
+            >
+              <span className="material-symbols-outlined text-[16px]">download</span>
+              <span>Xuất báo cáo PDF / Excel</span>
+            </button>
           </div>
         </div>
       </div>

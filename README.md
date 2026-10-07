@@ -1,6 +1,6 @@
-# 4-Tier Enterprise Execution System & Team Workspace
+# Hệ thống công việc và báo cáo TAG
 
-Ứng dụng web quản lý tiến độ 4 tầng (Dự án → Giai đoạn → Hạng mục → Đầu việc) cho doanh nghiệp, kèm workspace nhân viên.
+Hệ thống công việc và báo cáo TAG — điều phối công việc nhóm và quản lý tiến độ theo cấp.
 
 **Stack**:
 - **Frontend**: React 19 + TypeScript + Vite + Tailwind CSS v4
@@ -109,13 +109,13 @@ Highlights:
 | `Port 3000 already in use` | Chạy `taskkill /f /im node.exe` rồi thử lại |
 | `Port 5173 already in use` | Đổi port Vite: `npm run dev -- --port 5174` |
 | Browser không mở | Mở thủ công: http://localhost:5173 |
-| Backend không ready | Xem cửa sổ "Backend - 4-Tier API" |
+| Backend không ready | Xem cửa sổ "Backend - TAG API" |
 
 ---
 
 ## 📝 Notes khác
 
-File này gốc là template của AI Studio (Google AI Studio). Đã được customize cho dự án 4-Tier Enterprise với backend riêng.
+File này gốc là template của AI Studio (Google AI Studio). Đã được customize cho hệ thống TAG với backend riêng.
 
 Original instructions:
 1. Install dependencies: `npm install`

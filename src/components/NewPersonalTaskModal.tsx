@@ -142,7 +142,7 @@ export const NewPersonalTaskModal: React.FC<NewPersonalTaskModalProps> = ({
               rows={2}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Ghi chú ngắn để bạn không bị quên..."
+              placeholder="Ghi chú ngắn..."
               className="w-full p-2.5 rounded-lg bg-[#eff4ff] text-[#0b1c30] text-[13px] border border-[#dce9ff] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#004ac6]"
             />
           </div>

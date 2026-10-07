@@ -134,7 +134,7 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
               add_task
             </span>
             <h4 className="text-[17px] font-bold text-[#0b1c30]">
-              Thêm mới vào Khung điều hành 4 tầng
+              Thêm công việc mới
             </h4>
           </div>
           <button
@@ -174,17 +174,7 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
                 </button>
               ))}
             </div>
-            {currentUser.role === 'manager' && (
-              <p className="text-[11px] text-[#565e74] italic">
-                Trưởng phòng chỉ được tạo Hạng mục (T3) và Đầu việc (T4).
-              </p>
-            )}
-            {currentUser.role === 'director' && (
-              <p className="text-[11px] text-[#565e74] italic">
-                BGĐ chỉ được tạo Dự án (T1) và Giai đoạn (T2).
-              </p>
-            )}
-          </div>
+            </div>
 
           {/* Title */}
           <div className="flex flex-col gap-1.5">
@@ -196,7 +186,7 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
               required
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="Ví dụ: Triển khai kiểm thử bảo mật toàn diện..."
+              placeholder="Ví dụ: Triển khai kiểm thử bảo mật..."
               className="w-full h-10 px-3 rounded-lg bg-[#eff4ff] text-[#0b1c30] text-[13px] border border-[#dce9ff] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#004ac6]"
             />
           </div>
