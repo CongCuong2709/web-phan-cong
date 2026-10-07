@@ -39,17 +39,23 @@ if exist ".git" (
     git stash pop >nul 2>&1
 
 ) else (
-    echo  [1/2] Lan dau — Dang clone tu GitHub...
+    echo  [1/2] Lan dau — Dang clone tu GitHub (qua thu muc tam)...
     echo        %REPO_URL%
     echo.
-    git clone "%REPO_URL%" .
+    git clone "%REPO_URL%" _tmp_update
     if errorlevel 1 (
         echo.
         echo  [X] Clone that bai! Kiem tra ket noi mang.
+        rd /S /Q _tmp_update >nul 2>&1
         pause
         exit /b 1
     )
-    echo  [2/2] Xong.
+    echo  [2/2] Dang copy file vao thu muc hien tai...
+    xcopy /E /Y /I _tmp_update\* . >nul
+    :: Copy thu muc .git de lan sau dung git pull binh thuong
+    xcopy /E /Y /I _tmp_update\.git .git >nul 2>&1
+    rd /S /Q _tmp_update >nul 2>&1
+    echo  Xong — lan sau se dung git pull tu dong.
 )
 
 if errorlevel 1 (
