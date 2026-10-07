@@ -158,12 +158,3 @@ function buildSeedUsers(): User[] {
 }
 
 export const SEED_USERS: User[] = buildSeedUsers();
-
-/** Quick lookup table for the login page. */
-export const DEMO_ACCOUNTS = SEED_USERS.map((u) => ({
-  username: u.username,
-  fullname: u.fullname,
-  role: u.role,
-  departments: u.departments,
-  password: u.password,
-}));

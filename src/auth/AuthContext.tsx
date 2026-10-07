@@ -37,8 +37,6 @@ export interface AuthContextValue {
   users: User[];
   login: (username: string, password: string) => Promise<{ ok: true } | { ok: false; reason: string }>;
   logout: () => void;
-  /** Demo-only quick-login (e.g. từ "Tài khoản demo" list). */
-  loginAs: (username: string) => void;
   /** Refresh users (e.g. sau khi admin edit profile). */
   setUsers: (next: User[]) => void;
   /** True nếu current user thấy items thuộc `department`. */
@@ -144,16 +142,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [users]
   );
 
-  const loginAs = useCallback(
-    (username: string) => {
-      // Demo quick-login: tìm trong SEED_USERS, gọi login() bình thường.
-      const seed = SEED_USERS.find((u) => u.username.toLowerCase() === username.toLowerCase());
-      if (!seed) return;
-      login(seed.username, seed.password).catch(() => { /* swallow */ });
-    },
-    [login]
-  );
-
   const logout = useCallback(() => {
     setCurrentUserId(null);
     api.logout().catch(() => { /* swallow */ });
@@ -200,13 +188,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       users,
       login,
       logout,
-      loginAs,
       setUsers,
       canSeeDepartment,
       canSeeOwner,
       findUser,
     }),
-    [user, login, loginAs, logout, setUsers, canSeeDepartment, canSeeOwner, findUser, users]
+    [user, login, logout, setUsers, canSeeDepartment, canSeeOwner, findUser, users]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
