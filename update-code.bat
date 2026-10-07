@@ -23,6 +23,8 @@ if errorlevel 1 (
 :: Neu da co .git => pull, chua co => clone
 if exist ".git" (
     echo  [1/2] Dang kiem tra thay doi cuc bo...
+    :: Stage tat ca file (bao gom ca untracked file nhu update-code.bat) roi stash
+    git add -A >nul 2>&1
     git stash >nul 2>&1
 
     echo  [2/2] Dang lay code moi nhat tu GitHub...
