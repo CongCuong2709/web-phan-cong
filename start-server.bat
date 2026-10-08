@@ -51,11 +51,16 @@ REM ============================================================================
 echo [1/4] Cau hinh frontend...
 if not exist .env.local (
     echo VITE_API_URL=http://localhost:3000 > .env.local
+    echo VITE_PROXY_TARGET=http://localhost:3000 >> .env.local
     echo      Tao .env.local moi
 ) else (
     findstr /c:"VITE_API_URL" .env.local >nul 2>&1 || (
         echo VITE_API_URL=http://localhost:3000 >> .env.local
         echo      Them VITE_API_URL vao .env.local
+    )
+    findstr /c:"VITE_PROXY_TARGET" .env.local >nul 2>&1 || (
+        echo VITE_PROXY_TARGET=http://localhost:3000 >> .env.local
+        echo      Them VITE_PROXY_TARGET vao .env.local
     )
     echo      .env.local OK
 )

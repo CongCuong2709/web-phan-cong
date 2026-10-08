@@ -26,14 +26,13 @@ import helpRequestRoutes from './routes/helpRequests.js';
 import historyRoutes from './routes/history.js';
 import teamMemberRoutes from './routes/teamMembers.js';
 
-const PORT = Number(process.env.PORT) || 3000;
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
+const PORT = Number(process.env.PORT) || 3001;
 
 const app = express();
 
 // --- Middleware ---
 app.use(cors({
-  origin: FRONTEND_ORIGIN,
+  origin: true,
   credentials: true,
 }));
 app.use(express.json({ limit: '2mb' }));

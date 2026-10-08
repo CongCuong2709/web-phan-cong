@@ -10,7 +10,7 @@
  *   api.createTierItem({ ... });  // fire-and-forget
  */
 
-const API_BASE = (import.meta.env.VITE_API_URL as string) || 'http://localhost:3000';
+const API_BASE = (import.meta.env.VITE_API_URL as string) || 'http://localhost:3001';
 const TOKEN_KEY = 'mvp_token';
 
 // ─────────────────────────────────────────────────────────────────────
