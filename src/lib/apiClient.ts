@@ -345,6 +345,47 @@ export const api = {
   }) {
     return request('POST', '/api/employee-tasks', task);
   },
+  /**
+   * BUG-02 fix: ghi note mới cho employee task (xem employeeTasks.js:183-215).
+   * @param id frontend task id (string, vd "123") — sẽ convert sang number cho backend.
+   */
+  async addEmployeeNote(id: string | number, body: string) {
+    return request('POST', `/api/employee-tasks/${Number(id)}/notes`, { body });
+  },
+  /**
+   * BUG-03 fix: toggle done ↔ doing (xem employeeTasks.js:155-181).
+   */
+  async toggleEmployeeTask(id: string | number) {
+    return request('POST', `/api/employee-tasks/${Number(id)}/toggle`);
+  },
+  /**
+   * BUG-03 fix: dùng cho "Start task" — chuyển status pending → doing.
+   * Backend có PATCH /api/employee-tasks/:id chấp nhận status (xem employeeTasks.js:117-153).
+   */
+  async patchEmployeeTaskStatus(id: string | number, status: 'doing' | 'done' | 'pending') {
+    return request('PATCH', `/api/employee-tasks/${Number(id)}`, { status });
+  },
+
+  // --- Users (BUG-04 fix: NewItemModal cần danh sách user thật cho dropdown) ---
+  /**
+   * GET /api/users — admin thấy tất cả, manager thấy users trong cùng department.
+   * (xem routes/users.js:19-43). Employee bị 403, không dùng được từ client.
+   */
+  async listUsers(department?: string) {
+    const qs = department ? `?department=${encodeURIComponent(department)}` : '';
+    return request<{
+      users: Array<{
+        id: number;
+        username: string;
+        fullname: string;
+        email?: string | null;
+        role: 'admin' | 'director' | 'manager' | 'employee';
+        departments?: string | null;
+        initial?: string | null;
+        avatar_url?: string | null;
+      }>;
+    }>('GET', `/api/users${qs}`);
+  },
 
   // --- Help requests ---
   async listHelpRequests() {

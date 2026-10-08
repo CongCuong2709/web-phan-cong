@@ -13,16 +13,19 @@
 import { Router } from 'express';
 import { db, stmt, tx } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
-import { inDepartment, uid } from '../utils/permissions.js';
+import { uid } from '../utils/permissions.js';
 
 const router = Router();
 router.use(requireAuth);
 
 /** Filter employee tasks theo role. */
+// BUG-01 fix: tab "Việc của tôi" phải theo OWNER, không theo phòng ban.
+// Trước đây manager lọc theo department_code → lộ việc của nhân viên dưới quyền.
+// Manager giờ chỉ thấy task mà CHÍNH HỌ là owner (giống pattern employee).
 function visibleTasks(user, allTasks) {
   if (user.role === 'admin' || user.role === 'director') return allTasks;
   if (user.role === 'manager') {
-    return allTasks.filter((t) => !t.department_code || inDepartment(user, t.department_code));
+    return allTasks.filter((t) => t.owner_user_id === user.id);
   }
   return allTasks.filter((t) => t.owner_user_id === user.id);
 }

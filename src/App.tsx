@@ -48,20 +48,22 @@ const ROLE_HELLO: Record<User['role'], string> = {
 };
 
 function AppShell() {
-  const { user, logout } = useAuth();
+  const { user, logout, users: onlineUsers } = useAuth();
 
   if (!user) {
     return <LoginPage />;
   }
 
-  return <AuthenticatedApp key={user.id} user={user} />;
+  return <AuthenticatedApp key={user.id} user={user} onlineUsers={onlineUsers} />;
 }
 
 interface AuthenticatedAppProps {
   user: User;
+  /** Danh sách user đã biết ở AuthContext (SEED + user backend vừa login). */
+  onlineUsers: User[];
 }
 
-function AuthenticatedApp({ user }: AuthenticatedAppProps) {
+function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
   // Navigation
   const [activeTab, setActiveTab] = useState<ActiveAppTab>(() => {
     // Employees land on "Việc của tôi" by default.
@@ -139,6 +141,46 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   const [subtasks, setSubtasks] = useState<SubTask[]>([]);
   const [dailyLogs, setDailyLogs] = useState<DailyLog[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+
+  // BUG-04 fix: danh sách user thật từ backend (cho dropdown "Người phụ trách" trong NewItemModal).
+  // Admin thấy tất cả; Manager thấy user cùng phòng; Employee bị 403 (không cần cho tab này).
+  // Ban đầu = SEED_USERS để không flash "rỗng" trong lúc fetch; sẽ bị replace ngay khi API trả về.
+  const [directoryUsers, setDirectoryUsers] = useState<User[]>(SEED_USERS);
+
+  /** Fetch /api/users sau khi login. Employee skip (backend 403). */
+  useEffect(() => {
+    if (user.role === 'employee') {
+      setDirectoryUsers([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const r = await api.listUsers();
+      if (cancelled) return;
+      if (r.ok) {
+        const rawDepts = (u: { departments?: string | null }): string[] => {
+          const d = u.departments;
+          if (!d) return [];
+          return d.split(',').map((s) => s.trim()).filter(Boolean);
+        };
+        setDirectoryUsers(
+          r.data.users.map((u) => ({
+            id: String(u.id),
+            username: u.username,
+            fullname: u.fullname,
+            email: u.email ?? undefined,
+            role: u.role,
+            departments: rawDepts(u) as User['departments'],
+            initial: u.initial ?? u.fullname.charAt(0),
+            avatar: u.avatar_url ?? undefined,
+            password: '', // không cần plaintext ở client
+          }))
+        );
+      }
+      // Fail → giữ SEED_USERS (offline fallback)
+    })();
+    return () => { cancelled = true; };
+  }, [user.id, user.role]);
 
   // C9 fix: helper ghi HistoryEntry kèm entityType/entityId phù hợp.
   // Được gọi từ các handler chính (handleUpdateTierItem, handleAddTierItem,
@@ -261,15 +303,13 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       // BGĐ không có tab Việc của tôi nên trả về rỗng — tránh leak dữ liệu nhân viên
       return [];
     }
-    if (user.role === 'manager') {
-      const depts = user.departments ?? [];
-      return employeeTasks.filter(
-        (t) => !t.department || depts.includes(t.department)
-      );
-    }
-    // Employees only see their own tasks (case-insensitive username check).
+    // BUG-01 fix (FE): tab "Việc của tôi" của Manager chỉ hiển thị task mà CHÍNH HỌ là owner,
+    // không lọc theo department nữa (sẽ lộ việc của nhân viên dưới quyền).
+    // Pattern đồng nhất với employee ở dưới — case-insensitive username check.
     const usernameLower = user.username.toLowerCase();
-    return employeeTasks.filter((t) => t.ownerUsername?.toLowerCase() === usernameLower);
+    return employeeTasks.filter(
+      (t) => t.ownerUsername?.toLowerCase() === usernameLower
+    );
   }, [employeeTasks, user]);
 
   // ---------------- Modals & Drawers state ----------------
@@ -543,6 +583,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   };
 
   // Toggle Employee Task Done
+  // BUG-03 fix: đồng bộ lên backend POST /api/employee-tasks/:id/toggle (xem employeeTasks.js:155-181).
   const handleToggleEmployeeTask = (taskId: string) => {
     setEmployeeTasks((prev) =>
       prev.map((t) => {
@@ -558,14 +599,29 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       })
     );
     showToast('Tuyệt vời! Kết quả công việc đã tự động cập nhật lên bảng của Trưởng phòng.');
+    // Sync lên backend — chỉ gọi nếu id là số.
+    if (/^\d+$/.test(String(taskId))) {
+      fireAndForget(
+        api.toggleEmployeeTask(taskId),
+        `toggleEmployeeTask#${taskId}`,
+      );
+    }
   };
 
   // Start task in employee view
+  // BUG-03 fix: dùng PATCH /api/employee-tasks/:id (chuyển status pending → doing).
+  // Backend toggle endpoint chỉ xử lý done ↔ doing, không cover pending → doing.
   const handleStartEmployeeTask = (taskId: string) => {
     setEmployeeTasks((prev) =>
       prev.map((t) => (t.id === taskId ? { ...t, status: 'doing' } : t))
     );
     showToast('Trạng thái chuyển sang: Đang tiến hành làm.');
+    if (/^\d+$/.test(String(taskId))) {
+      fireAndForget(
+        api.patchEmployeeTaskStatus(taskId, 'doing'),
+        `startEmployeeTask#${taskId}`,
+      );
+    }
   };
 
   // Update deliverable text
@@ -582,6 +638,9 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
 
   // Fix UI-03: thêm ghi chú vào EmployeeTask — immutable update đúng cách
   // (trước đây ViecCuaToiView mutate trực tiếp task.notes — vi phạm React).
+  // BUG-02 fix: đồng bộ lên backend POST /api/employee-tasks/:id/notes (xem employeeTasks.js:183-215).
+  // Dual-write: cập nhật local trước (UI mượt), song song fire-and-forget API.
+  // Backend có thể trả 403 nếu user không phải owner — log silent, không block UI.
   const handleAddEmployeeNote = (taskId: string, noteText: string) => {
     setEmployeeTasks((prev) =>
       prev.map((t) =>
@@ -595,7 +654,13 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       )
     );
     showToast('Đã gửi ghi chú cho Trưởng phòng');
-    // TODO Phase 2: wire lên POST /api/employee-tasks/:id/notes khi backend có endpoint
+    // Sync lên backend — chỉ gọi nếu id là số (tier items seed có id chuỗi sẽ skip).
+    if (/^\d+$/.test(String(taskId))) {
+      fireAndForget(
+        api.addEmployeeNote(taskId, noteText),
+        `addEmployeeNote#${taskId}`,
+      );
+    }
   };
 
   // Send help request from Employee (uses real logged-in user)
@@ -640,7 +705,15 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   // Add personal task (uses current user info)
   const handleAddPersonalTask = (title: string, deadline: string, notes: string) => {
     // C4 fix: tìm đúng Trưởng phòng phụ trách thay vì gán chính employee.
-    const manager = findManagerOf(user, SEED_USERS);
+    // BUG-05 fix: ưu tiên dùng `directoryUsers` (từ /api/users nếu manager/admin vừa login)
+    // hoặc `onlineUsers` (từ AuthContext — bao gồm user backend merge vào).
+    // Fallback về SEED_USERS chỉ khi cả 2 nguồn trên rỗng (offline thật sự).
+    // Lưu ý: employee không gọi được /api/users (403), nên thường dùng AuthContext.users.
+    const sourceUsers = directoryUsers.length > 0 ? directoryUsers : onlineUsers;
+    const manager = findManagerOf(
+      user,
+      sourceUsers.length > 0 ? sourceUsers : SEED_USERS,
+    );
     const newTask: EmployeeTask = {
       id: `emp-task-${Date.now()}`,
       code: `NV-${Math.floor(100 + Math.random() * 900)}`,
@@ -832,8 +905,13 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
         onAddItem={handleAddTierItem}
         parents={tierItems.map((i) => ({ id: i.id, title: i.title, tier: i.tier }))}
         currentUser={user}
-        deptUsers={SEED_USERS
-          .filter((u) => u.departments?.some((d) => (user.departments ?? []).includes(d)))
+        // BUG-04 fix: dùng danh sách user từ backend (`directoryUsers`) thay vì SEED_USERS.
+        // Filter theo cùng phòng ban của user hiện tại — admin (departments=[]) thấy hết.
+        deptUsers={directoryUsers
+          .filter((u) => {
+            if (user.departments.length === 0) return true; // admin sentinel
+            return u.departments?.some((d) => user.departments.includes(d));
+          })
           .map((u) => ({ username: u.username, fullname: u.fullname }))}
       />
 
