@@ -36,12 +36,11 @@ router.get('/', (req, res) => {
     visible = all;
   } else if (req.user.role === 'manager') {
     // Manager chỉ thấy help_requests của user cùng department.
-    // Lookup sender_user_id → check user_departments. Đã JOIN users nên dùng trực tiếp
-    // sender.username; tuy nhiên dept của sender không có sẵn trong row này,
-    // nên giữ logic filter cũ bằng getUserById cho đúng.
+    // Fix ISS-002: dùng getUserDepartments (trả mảng) thay vì getUserById
+    // (không có departments → filter fail → manager thấy 0 help requests).
     visible = all.filter((r) => {
-      const sender = stmt.getUserById.get(r.sender_user_id);
-      return sender && sender.departments?.some((d) => inDepartment(req.user, d));
+      const senderDepts = stmt.getUserDepartments.all(r.sender_user_id);
+      return senderDepts.some((d) => inDepartment(req.user, d.department_code));
     });
   } else {
     visible = all.filter((r) => r.sender_user_id === req.user.id);

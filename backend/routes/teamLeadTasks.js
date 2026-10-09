@@ -58,8 +58,10 @@ router.post('/', (req, res) => {
   const owner = stmt.getUserById.get(Number(body.owner_user_id));
   if (!owner) return res.status(404).json({ error: 'owner_not_found' });
 
-  // Department guard
-  const taskDept = body.department_code ?? owner.departments?.[0] ?? null;
+  // Department guard — dùng getUserDepartments.all() (trả mảng) thay vì
+  // owner.departments?.[0] (sẽ là 'Q' nếu departments = CSV "QLDA,KTTC")
+  const ownerDepts = stmt.getUserDepartments.all(owner.id).map((d) => d.department_code);
+  const taskDept = body.department_code ?? ownerDepts[0] ?? null;
   if (req.user.role === 'manager' && !inDepartment(req.user, taskDept)) {
     return res.status(403).json({ error: 'forbidden' });
   }

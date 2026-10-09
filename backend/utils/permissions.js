@@ -16,10 +16,16 @@ import { db } from '../db.js';
  * @property {string} departments - CSV string from user_departments (e.g. "QLDA,KTTC")
  */
 
-/** Parse departments CSV → array. */
-function parseDepartments(csv) {
-  if (!csv) return [];
-  return csv.split(',').filter(Boolean);
+/**
+ * Normalize departments → array. Accept cả 2 format:
+ *   - Array: ['QLDA', 'KTTC']
+ *   - CSV string: "QLDA,KTTC" (backward-compat với SQL GROUP_CONCAT)
+ *   - null/undefined → []
+ */
+function parseDepartments(depts) {
+  if (!depts) return [];
+  if (Array.isArray(depts)) return depts.filter(Boolean);
+  return String(depts).split(',').filter(Boolean);
 }
 
 /** User thuộc department hay không. Admin (không có dept) = all-access. */

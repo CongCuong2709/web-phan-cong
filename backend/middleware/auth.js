@@ -56,9 +56,12 @@ export function requireAuth(req, res, next) {
     if (!user) {
       return res.status(401).json({ error: 'user_inactive', message: 'Tài khoản đã bị vô hiệu hoá.' });
     }
-    // Attach departments CSV for RBAC checks
+    // Attach departments as ARRAY for RBAC checks (đồng nhất với /api/auth/login
+    // route trả về array, không phải CSV string như trước). Nhiều route phía dưới
+    // (employeeTasks.js:90, teamLeadTasks.js:62) dùng `req.user.departments?.[0]`
+    // — chỉ work nếu là array. Fix bug ISS-001 phát hiện bởi integration tests.
     const deptRows = stmt.getUserDepartments.all(user.id);
-    user.departments = deptRows.map((d) => d.department_code).join(',');
+    user.departments = deptRows.map((d) => d.department_code);
     req.user = user;
     req.sessionId = payload.jti;
     next();

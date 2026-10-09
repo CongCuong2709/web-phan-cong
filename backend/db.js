@@ -76,6 +76,9 @@ export const stmt = {
   getUserByUsername: db.prepare(
     'SELECT * FROM users WHERE username = ? COLLATE NOCASE AND is_active = 1'
   ),
+  // Sau khi fix ISS-001 (middleware trả array) và ISS-002 (helpRequests filter
+  // thiếu dept), getUserById trả về user KHÔNG có departments. Consumers cần
+  // dùng stmt.getUserDepartments.all(user.id) riêng.
   getUserById: db.prepare(
     'SELECT id, username, fullname, email, role, initial, avatar_url FROM users WHERE id = ? AND is_active = 1'
   ),

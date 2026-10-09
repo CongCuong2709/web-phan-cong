@@ -200,9 +200,12 @@ router.post('/:id(\\d+)/notes', (req, res) => {
     INSERT INTO employee_task_notes (employee_task_id, body, author_user_id) VALUES (?, ?, ?)
   `).run(task.id, body.body.trim(), req.user.id);
 
-  // Bump notesCount
-  const noteCount = db.prepare('SELECT COUNT(*) AS c FROM employee_task_notes WHERE employee_task_id = ?').get(task.id).c;
-  db.prepare('UPDATE employee_tasks SET notesCount = ? WHERE id = ?').run(noteCount, task.id);
+  // Bump notesCount — Fix ISS-005: schema không có cột `notesCount` trên
+  // `employee_tasks`, nên chỉ NOTE là được thêm vào `employee_task_notes`.
+  // Frontend sẽ count notes qua JOIN/subquery. KHÔNG UPDATE employee_tasks.notesCount
+  // (sẽ fail với "no such column: notesCount").
+  // const noteCount = db.prepare('SELECT COUNT(*) AS c FROM employee_task_notes WHERE employee_task_id = ?').get(task.id).c;
+  // db.prepare('UPDATE employee_tasks SET notesCount = ? WHERE id = ?').run(noteCount, task.id);
 
   stmt.insertHistory.run(
     'employee_task',
