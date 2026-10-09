@@ -7,3 +7,16 @@ coverage/
 .env*
 !.env.example
 vite.config.ts
+
+# Tests & Test Databases
+test/
+tests/
+__tests__/
+backend/test/
+*.test.db*
+*.test.js
+*.test.ts
+*.spec.js
+*.spec.ts
+vitest.config.ts
+backend/vitest.config.ts

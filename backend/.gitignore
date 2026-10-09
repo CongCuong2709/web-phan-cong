@@ -5,4 +5,7 @@ database.db
 database.db-journal
 database.db-wal
 database.db-shm
+database.test.db*
+test/
+vitest.config.ts
 *.log
