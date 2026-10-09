@@ -65,9 +65,9 @@ let __logSeq = 0;
 let __historySeq = 0;
 
 // FIX #1: Bỏ hoàn toàn Date.now() — ID thuần sequential, deterministic
-const idProject     = () => `proj-${++__projectSeq}`;
+const idProject = () => `proj-${++__projectSeq}`;
 const idDeliverable = () => `del-${++__deliverableSeq}`;
-const idPhase       = () => `phase-${++__phaseSeq}`;
+const idPhase = () => `phase-${++__phaseSeq}`;
 
 // FIX #3 / #4: trả về { id, seq } để code dùng cùng số, không tăng counter lần 2
 const idBundle = (): { id: string; seq: number } => {
@@ -79,8 +79,8 @@ const idTask = (): { id: string; seq: number } => {
   return { id: `task-${seq}`, seq };
 };
 
-const idSub     = () => `sub-${++__subtaskSeq}`;
-const idLog     = () => `log-${++__logSeq}`;
+const idSub = () => `sub-${++__subtaskSeq}`;
+const idLog = () => `log-${++__logSeq}`;
 const idHistory = () => `hist-${++__historySeq}`;
 
 // Pad "001" / "0001" cho code
@@ -98,17 +98,18 @@ interface UserRef {
 }
 
 const U: Record<string, UserRef> = {
-  admin:  { id: 'u-001', username: 'admin',  fullname: 'Quản trị hệ thống', role: 'admin',    departments: ['ĐH', 'QLDA', 'KTTC', 'TC'] },
-  khanh:  { id: 'u-002', username: 'khanh',  fullname: 'Khánh — Điều hành', role: 'director', departments: ['ĐH'] },
-  nam:    { id: 'u-003', username: 'nam',    fullname: 'Nam — Điều hành',   role: 'director', departments: ['ĐH'] },
-  hung:   { id: 'u-004', username: 'hung',   fullname: 'Hùng — TP.QLDA',   role: 'manager',  departments: ['QLDA'] },
-  hong:   { id: 'u-005', username: 'hong',   fullname: 'Hồng — NV.QLDA',   role: 'employee', departments: ['QLDA'] },
-  cuong:  { id: 'u-006', username: 'cuong',  fullname: 'Cường — TP.KTTC',  role: 'manager',  departments: ['KTTC'] },
+  admin: { id: 'u-001', username: 'admin', fullname: 'Quản trị hệ thống', role: 'admin', departments: ['ĐH', 'QLDA', 'KTTC', 'TC'] },
+  khanh: { id: 'u-002', username: 'khanh', fullname: 'Khánh — Điều hành', role: 'director', departments: ['ĐH'] },
+  nam: { id: 'u-003', username: 'nam', fullname: 'Nam — Điều hành', role: 'director', departments: ['ĐH'] },
+  hung: { id: 'u-004', username: 'hung', fullname: 'Hùng — TP.QLDA', role: 'manager', departments: ['QLDA'] },
+  hong: { id: 'u-005', username: 'hong', fullname: 'Hồng — NV.QLDA', role: 'employee', departments: ['QLDA'] },
+  cuong: { id: 'u-006', username: 'cuong', fullname: 'Cường — TP.KTTC', role: 'manager', departments: ['KTTC'] },
   nguyet: { id: 'u-007', username: 'nguyet', fullname: 'Nguyệt — NV.KTTC', role: 'employee', departments: ['KTTC'] },
-  hang:   { id: 'u-008', username: 'hang',   fullname: 'Hằng — NV.KTTC',   role: 'employee', departments: ['KTTC'] },
-  tu:     { id: 'u-009', username: 'tu',     fullname: 'Tú — NV.KTTC',     role: 'employee', departments: ['KTTC'] },
-  thanh:  { id: 'u-010', username: 'thanh',  fullname: 'Thành — TP.TC',    role: 'manager',  departments: ['TC'] },
-  ngoc:   { id: 'u-011', username: 'ngoc',   fullname: 'Ngọc — NV.TC',     role: 'employee', departments: ['TC'] },
+  hang: { id: 'u-008', username: 'hang', fullname: 'Hằng — NV.KTTC', role: 'employee', departments: ['KTTC'] },
+  tu: { id: 'u-009', username: 'tu', fullname: 'Tú — NV.KTTC', role: 'employee', departments: ['KTTC'] },
+  nhi: { id: 'u-010', username: 'nhi', fullname: 'Nhi — NV.KTTC', role: 'employee', departments: ['KTTC'] },
+  thanh: { id: 'u-011', username: 'thanh', fullname: 'Thành — TP.TC', role: 'manager', departments: ['TC'] },
+  ngoc: { id: 'u-012', username: 'ngoc', fullname: 'Ngọc — NV.TC', role: 'employee', departments: ['TC'] },
 };
 
 const TIER_NAME: Record<TierLevel, string> = {
@@ -176,7 +177,7 @@ const makeProject = (
       description: `${desc}\n📍 ${address} • 💰 ${(budget / 1_000_000_000).toFixed(2)} tỷ VNĐ`,
       deliverables: [
         { id: idDeliverable(), title: 'Bàn giao công trình cho khách hàng', completed: status === 'completed' },
-        { id: idDeliverable(), title: 'Hồ sơ quyết toán đã phê duyệt',     completed: status === 'completed' },
+        { id: idDeliverable(), title: 'Hồ sơ quyết toán đã phê duyệt', completed: status === 'completed' },
       ],
       managementNotes: `Quản lý bởi ${mgr.fullname}. Mã dự án: ${code}.`,
       gantt: {
@@ -224,7 +225,7 @@ const makePhase = (
       managementNotes: `Giai đoạn ${seq} – ${status === 'completed' ? 'đã hoàn tất' : status === 'in_progress' ? 'đang triển khai' : 'chưa khởi động'}.`,
       gantt: {
         startWeek: Math.max(1, Math.min(4, 1 + (s_offset + 60) / 60)),
-        endWeek:   Math.max(1, Math.min(4, 1 + (e_offset + 60) / 60)),
+        endWeek: Math.max(1, Math.min(4, 1 + (e_offset + 60) / 60)),
         label: `${shiftDays(s_offset)} → ${shiftDays(e_offset)}`,
         barColor: status === 'completed' ? '#006243' : status === 'pending' ? '#94a3b8' : '#004ac6',
       },
@@ -239,6 +240,7 @@ interface BundleOpts {
   ownerKey: keyof typeof U;
   dept: Department;
   desc: string;
+  result?: string;
   start_offset: number;
   due_offset: number;
   status: 'assigned' | 'in_progress' | 'closed';
@@ -276,36 +278,38 @@ const makeBundle = (opts: BundleOpts): BuildResult => {
         opts.status === 'closed'
           ? 'Đã xong'
           : opts.status === 'in_progress'
-          ? 'Đang chạy'
-          : 'Lên lịch',
+            ? 'Đang chạy'
+            : 'Lên lịch',
       statusBadgeColor:
         opts.status === 'closed'
           ? 'bg-emerald-100 text-emerald-800'
           : opts.status === 'in_progress'
-          ? 'bg-primary/10 text-primary'
-          : 'bg-slate-200 text-slate-800',
+            ? 'bg-primary/10 text-primary'
+            : 'bg-slate-200 text-slate-800',
       priority:
         opts.priority === 'high' || opts.priority === 'critical'
           ? 'Cao (Critical Path)'
           : 'Trung bình',
       description: opts.desc,
       deliverables: [
-        { id: idDeliverable(), title: `Hoàn tất gói "${opts.desc}"`, completed: opts.status === 'closed' },
+        { id: idDeliverable(), title: opts.result ? `Kết quả: ${opts.result}` : `Hoàn tất gói "${opts.desc}"`, completed: opts.status === 'closed' },
       ],
       managementNotes:
-        opts.collab_depts && opts.collab_depts.length
-          ? `Phối hợp: ${opts.collab_depts.join(', ')}.`
-          : 'Gói việc độc lập.',
+        opts.result
+          ? `Kết quả đầu ra: ${opts.result}`
+          : opts.collab_depts && opts.collab_depts.length
+            ? `Phối hợp: ${opts.collab_depts.join(', ')}.`
+            : 'Gói việc độc lập.',
       gantt: {
         startWeek: Math.max(1, Math.min(4, 1 + (opts.start_offset + 60) / 60)),
-        endWeek:   Math.max(1, Math.min(4, 1 + (opts.due_offset   + 60) / 60)),
+        endWeek: Math.max(1, Math.min(4, 1 + (opts.due_offset + 60) / 60)),
         label: `${shiftDays(opts.start_offset)} → ${shiftDays(opts.due_offset)}`,
         barColor:
           opts.status === 'closed'
             ? '#006243'
             : opts.status === 'in_progress'
-            ? '#004ac6'
-            : '#94a3b8',
+              ? '#004ac6'
+              : '#94a3b8',
       },
       collapsed: false,
     },
@@ -356,24 +360,24 @@ const makeTask = (opts: TaskOpts): BuildResult => {
         opts.status === 'completed'
           ? 'Đã xong'
           : opts.status === 'in_progress'
-          ? 'Đang làm'
-          : opts.status === 'blocked'
-          ? 'Đang nghẽn'
-          : 'Lên lịch',
+            ? 'Đang làm'
+            : opts.status === 'blocked'
+              ? 'Đang nghẽn'
+              : 'Lên lịch',
       statusBadgeColor:
         opts.status === 'completed'
           ? 'bg-emerald-100 text-emerald-800'
           : opts.status === 'in_progress'
-          ? 'bg-primary/10 text-primary'
-          : opts.status === 'blocked'
-          ? 'bg-amber-100 text-amber-800'
-          : 'bg-slate-200 text-slate-800',
+            ? 'bg-primary/10 text-primary'
+            : opts.status === 'blocked'
+              ? 'bg-amber-100 text-amber-800'
+              : 'bg-slate-200 text-slate-800',
       priority:
         opts.priority === 'high' || opts.priority === 'critical'
           ? 'Cao (Critical Path)'
           : opts.priority === 'low'
-          ? 'Thấp'
-          : 'Trung bình',
+            ? 'Thấp'
+            : 'Trung bình',
       description: opts.name,
       deliverables: [
         {
@@ -385,14 +389,14 @@ const makeTask = (opts: TaskOpts): BuildResult => {
       managementNotes: opts.notes || (opts.results ? `Kết quả: ${opts.results}` : '—'),
       gantt: {
         startWeek: Math.max(1, Math.min(4, 1 + (opts.start_offset + 60) / 60)),
-        endWeek:   Math.max(1, Math.min(4, 1 + (opts.end_offset   + 60) / 60)),
+        endWeek: Math.max(1, Math.min(4, 1 + (opts.end_offset + 60) / 60)),
         label: `${opts.progress}%`,
         barColor:
           opts.status === 'completed'
             ? '#006243'
             : opts.status === 'blocked'
-            ? '#ba1a1a'
-            : '#2563eb',
+              ? '#ba1a1a'
+              : '#2563eb',
       },
     },
   };
@@ -482,152 +486,141 @@ const dailyLogs: DailyLog[] = [];  // FIX #5: sẽ được populate bên dướ
 const history: HistoryEntry[] = [];
 
 // -----------------------------------------------------------------------
-// DỰ ÁN: Nhà ở Xã hội khu Bắc Ninh (DA-NOTX-001)
-// Chủ trì theo từng task: QLDA → hong, KTTC → nguyet/hang/tu, TC → ngoc.
+// DỰ ÁN: Hoàn thiện thanh quyết toán công trình CT12 (DA-CT12-001)
+// Thời gian: 01/10/2026 - 15/10/2026 (-1 đến +13 ngày)
 // -----------------------------------------------------------------------
 {
-  // FIX #2 + #7: makeProject tự set item.id → không cần p.item.id = p.id
   const p = makeProject(
-    'DA-NOTX-001',
-    'Nhà ở Xã hội khu Bắc Ninh',
-    'Dự án nhà ở xã hội phục vụ công nhân và người thu nhập thấp tại khu Bắc Ninh.',
-    'Khu Bắc Ninh, TP. Bắc Ninh',
+    'DA-CT12-001',
+    'Hoàn thiện thanh quyết toán công trình CT12',
+    'Dự án hoàn thiện thanh quyết toán công trình CT12 từ 01/10/2026 đến 15/10/2026.',
+    'Công trình CT12, TP. Hà Nội',
     'khanh',
-    -10, 55,
+    -1, 13,
     'in_progress',
-    250_000_000_000,
-    'Q4/2026 - Q1/2027',
+    150_000_000_000,
+    '01/10/2026 - 15/10/2026',
   );
   tierItems.push(p.item);
   history.push(makeHistory('project', p.id, `Tạo dự án "${p.item.title}"`, 'khanh'));
 
-  // Helper: T2 + 1 T3 wrapper + N T4 tasks trong cùng phase.
-  // FIX #5 + #7: builder tự set id; subtask & dailyLog được tạo cho mọi task có progress > 0
   const addPhase = (
     seq: number,
     title: string,
-    bundleDesc: string,
     ownerKey: keyof typeof U,
     dept: Department,
     s: number, e: number,
-    tasks: Array<{
-      name: string; results: string;
-      assigneeKey: keyof typeof U;
+    bundles: Array<{
+      name: string;
+      dept: Department;
+      ownerKey: keyof typeof U;
+      results: string;
       s: number; e: number;
-      progress: number; status: TaskStatus;
+      progress: number;
+      status: 'assigned' | 'in_progress' | 'closed';
     }>,
   ) => {
     const ph = makePhase(p.id, seq, title, 'in_progress', s, e);
-    // Chỉ override owner/department cho phase — item.id đã được set bởi makePhase
     ph.item.owner = { name: U[ownerKey].fullname, role: `TP.${dept}`, initial: U[ownerKey].fullname.charAt(0) };
     ph.item.ownerUsername = ownerKey;
     ph.item.department = dept;
     tierItems.push(ph.item);
 
-    const b = makeBundle({
-      projectId: p.id, phaseId: ph.id, ownerKey, dept,
-      desc: bundleDesc,
-      start_offset: s, due_offset: e,
-      status: 'in_progress', progress: 0, priority: 'high',
-    });
-    tierItems.push(b.item);
-
-    for (const t of tasks) {
-      const task = makeTask({
-        bundleId: b.id, projectId: p.id, dept,
-        assigneeKey: t.assigneeKey, name: t.name,
-        start_offset: t.s, end_offset: t.e,
-        progress: t.progress, status: t.status, priority: 'high',
-        results: t.results,
+    for (const bOpts of bundles) {
+      const b = makeBundle({
+        projectId: p.id,
+        phaseId: ph.id,
+        ownerKey: bOpts.ownerKey,
+        dept: bOpts.dept,
+        desc: bOpts.name,
+        result: bOpts.results,
+        start_offset: bOpts.s,
+        due_offset: bOpts.e,
+        status: bOpts.status,
+        progress: bOpts.progress,
+        priority: 'high',
       });
-      tierItems.push(task.item);
-
-      // FIX #5: tạo subtask thực cho mọi task có progress > 0
-      if (t.progress > 0) {
-        const sub = makeSubTask({
-          taskId: task.id,
-          assigneeKey: t.assigneeKey,
-          name: `Chi tiết: ${t.name}`,
-          start_offset: t.s,
-          end_offset: t.e,
-          progress: t.progress,
-          status: t.status,
-          priority: 'high',
-          results: t.results,
-        });
-        subtasks.push(sub);
-
-        // Daily logs tương ứng theo trạng thái task
-        if (t.status === 'in_progress') {
-          dailyLogs.push(makeDailyLog({
-            subtaskId: sub.id,
-            userKey: t.assigneeKey,
-            days_offset: -1,
-            desc: `Cập nhật tiến độ: ${t.name}`,
-            result: `Hoàn thành ${t.progress}% khối lượng`,
-            progress: t.progress,
-          }));
-          dailyLogs.push(makeDailyLog({
-            subtaskId: sub.id,
-            userKey: t.assigneeKey,
-            days_offset: 0,
-            desc: `Tiếp tục triển khai: ${t.name}`,
-            result: 'Đang tiến hành, dự kiến đúng tiến độ',
-            progress: t.progress,
-          }));
-        } else if (t.status === 'completed') {
-          dailyLogs.push(makeDailyLog({
-            subtaskId: sub.id,
-            userKey: t.assigneeKey,
-            days_offset: t.e,
-            desc: `Hoàn thành: ${t.name}`,
-            result: t.results,
-            progress: 100,
-          }));
-        }
-      }
+      tierItems.push(b.item);
     }
   };
 
   // === GIAI ĐOẠN 1: THIẾT KẾ VÀ HOÀN THIỆN PHÁP LÝ XÂY DỰNG (Phòng QLDA) ===
-  addPhase(1, 'Giai đoạn 1: THIẾT KẾ VÀ HOÀN THIỆN PHÁP LÝ XÂY DỰNG',
-    'Khảo sát, thiết kế, thẩm tra và xin phép xây dựng dự án', 'hung', 'QLDA',
-    -5, 15,
-    [
-      { name: '1.1 Khảo sát địa chất, địa hình bổ sung',                                            assigneeKey: 'hong', s: -10, e:  -3, progress: 100, status: 'completed',   results: 'Báo cáo khảo sát đã nghiệm thu' },
-      { name: '1.2 Lập nhiệm vụ thiết kế, yêu cầu kỹ thuật, tiêu chuẩn vật liệu',                 assigneeKey: 'hong', s:  -5, e:   5, progress:  60, status: 'in_progress', results: 'Nhiệm vụ thiết kế được duyệt' },
-      { name: '1.3 Thiết kế kỹ thuật / bản vẽ thi công (kiến trúc, kết cấu, MEP, PCCC, hạ tầng)', assigneeKey: 'hong', s:   0, e:  10, progress:  30, status: 'in_progress', results: 'Bộ hồ sơ thiết kế' },
-      { name: '1.4 Thẩm tra thiết kế, quy chuẩn & tiêu chuẩn kỹ thuật',                             assigneeKey: 'hong', s:   5, e:  12, progress:   0, status: 'not_started', results: 'Báo cáo thẩm tra' },
-      { name: '1.5 Xin cấp giấy phép xây dựng & hoàn thiện thủ tục pháp lý',                       assigneeKey: 'hong', s:   8, e:  15, progress:   0, status: 'not_started', results: 'Giấy phép xây dựng được cấp' },
-    ],
-  );
+  addPhase(1, 'GIAI ĐOẠN 1: THIẾT KẾ VÀ HOÀN THIỆN PHÁP LÝ XÂY DỰNG', 'hung', 'QLDA', -1, 4, [
+    { name: 'Khảo sát địa chất, địa hình bổ sung (nếu cần)', dept: 'QLDA', ownerKey: 'hung', results: 'Báo cáo khảo sát đã nghiệm thu', s: -1, e: 1, progress: 100, status: 'closed' },
+    { name: 'Lập nhiệm vụ thiết kế, yêu cầu kỹ thuật, tiêu chuẩn vật liệu và hoàn thiện theo định vị sản phẩm', dept: 'QLDA', ownerKey: 'hung', results: 'Nhiệm vụ thiết kế được duyệt', s: -1, e: 2, progress: 100, status: 'closed' },
+    { name: 'Thiết kế kỹ thuật / bản vẽ thi công (kiến trúc, kết cấu, MEP, PCCC, hạ tầng)', dept: 'QLDA', ownerKey: 'hung', results: 'Bộ hồ sơ thiết kế', s: 0, e: 3, progress: 70, status: 'in_progress' },
+    { name: 'Thẩm tra thiết kế, dự toán', dept: 'QLDA', ownerKey: 'hung', results: 'Báo cáo thẩm tra', s: 1, e: 3, progress: 50, status: 'in_progress' },
+    { name: 'Lập và phê duyệt dự toán, tổng mức đầu tư điều chỉnh (nếu có)', dept: 'QLDA', ownerKey: 'hung', results: 'Dự toán được duyệt, làm giá gói thầu', s: 2, e: 4, progress: 20, status: 'in_progress' },
+  ]);
 
-  // === GIAI ĐOẠN 2: ĐẦU TƯ TÀI CHÍNH, ĐẤU THẦU VÀ BẢO LÃNH (Phòng KTTC) ===
-  addPhase(2, 'Giai đoạn 2: ĐẦU TƯ TÀI CHÍNH, ĐẤU THẦU VÀ BẢO LÃNH',
-    'Lập kế hoạch tài chính, hồ sơ mời thầu, thẩm định bảo lãnh và giải ngân', 'cuong', 'KTTC',
-    10, 30,
-    [
-      { name: '2.1 Lập kế hoạch tài chính & dự toán chi tiết dự án',                               assigneeKey: 'nguyet', s: 10, e: 16, progress:  50, status: 'in_progress', results: 'Kế hoạch tài chính đã phê duyệt' },
-      { name: '2.2 Lập hồ sơ mời thầu & đánh giá hồ sơ dự thầu các gói thầu',                     assigneeKey: 'hang',   s: 12, e: 20, progress:  20, status: 'in_progress', results: 'Bộ HSMT được phát hành' },
-      { name: '2.3 Thẩm định bảo lãnh thực hiện hợp đồng, bảo lãnh tạm ứng',                      assigneeKey: 'nguyet', s: 18, e: 25, progress:   0, status: 'not_started', results: 'Thư bảo lãnh hợp lệ' },
-      { name: '2.4 Kế hoạch giải ngân, mua sắm vật tư & quản lý dòng tiền dự án',                 assigneeKey: 'tu',     s: 20, e: 28, progress:   0, status: 'not_started', results: 'Dự toán giải ngân và dòng tiền' },
-      { name: '2.5 Thủ tục tạm ứng hợp đồng & mua bảo hiểm công trình',                            assigneeKey: 'tu',     s: 22, e: 30, progress:   0, status: 'not_started', results: 'Chứng từ giải ngân & bảo hiểm' },
-    ],
-  );
+  // === GIAI ĐOẠN 2: LỰA CHỌN NHÀ THẦU VÀ KÝ HỢP ĐỒNG (Phòng QLDA) ===
+  addPhase(2, 'GIAI ĐOẠN 2: LỰA CHỌN NHÀ THẦU VÀ KÝ HỢP ĐỒNG', 'hung', 'QLDA', 1, 6, [
+    { name: 'Lập kế hoạch phân chia gói thầu: phần ngầm, phần thân, hoàn thiện, MEP, thang máy, hạ tầng, cảnh quan, vật tư CĐT cấp', dept: 'QLDA', ownerKey: 'hung', results: 'Kế hoạch lựa chọn nhà thầu', s: 1, e: 3, progress: 80, status: 'in_progress' },
+    { name: 'Lập hồ sơ mời thầu / yêu cầu báo giá', dept: 'QLDA', ownerKey: 'hung', results: 'HSMT được duyệt', s: 2, e: 4, progress: 60, status: 'in_progress' },
+    { name: 'Tổ chức mời thầu, đánh giá hồ sơ dự thầu (kỹ thuật và tài chính)', dept: 'QLDA', ownerKey: 'hung', results: 'Báo cáo đánh giá', s: 3, e: 5, progress: 30, status: 'in_progress' },
+    { name: 'Nhận bảo lãnh thực hiện hợp đồng, bảo lãnh tạm ứng', dept: 'KTTC', ownerKey: 'cuong', results: 'Bảo lãnh hợp lệ', s: 3, e: 5, progress: 40, status: 'in_progress' },
+    { name: 'Lập kế hoạch mua sắm vật tư, thiết bị do chủ đầu tư cấp', dept: 'QLDA', ownerKey: 'hung', results: 'Kế hoạch mua sắm và dòng tiền', s: 4, e: 6, progress: 10, status: 'in_progress' },
+  ]);
 
-  // === GIAI ĐOẠN 3: CHUẨN BỊ VÀ CHỈ ĐẠO THI CÔNG CÔNG TRƯỜNG (Phòng TC) ===
-  addPhase(3, 'Giai đoạn 3: CHUẨN BỊ VÀ CHỈ ĐẠO THI CÔNG CÔNG TRƯỜNG',
-    'Bàn giao mặt bằng, tổ chức công trường, an toàn lao động, nghiệm thu', 'thanh', 'TC',
-    25, 55,
-    [
-      { name: '3.1 Bàn giao mặt bằng, mốc định vị, cao độ cho nhà thầu',                               assigneeKey: 'ngoc', s: 25, e: 28, progress:  80, status: 'in_progress', results: 'Biên bản bàn giao mặt bằng' },
-      { name: '3.2 Thành lập Ban Chỉ huy công trường, quy chế phối hợp CĐT – TVGS – nhà thầu',         assigneeKey: 'ngoc', s: 25, e: 30, progress:  40, status: 'in_progress', results: 'Sơ đồ tổ chức công trường, quy chế' },
-      { name: '3.3 Phê duyệt biện pháp thi công, tiến độ tổng thể và chi tiết',                        assigneeKey: 'ngoc', s: 28, e: 38, progress:   0, status: 'not_started', results: 'Biện pháp và tiến độ được duyệt' },
-      { name: '3.4 Kế hoạch an toàn lao động, vệ sinh môi trường, PCCC công trường',                   assigneeKey: 'ngoc', s: 30, e: 40, progress:   0, status: 'not_started', results: 'Kế hoạch ATLĐ – VSMT' },
-      { name: '3.5 Chuẩn bị lán trại, điện nước thi công, hàng rào, biển báo',                        assigneeKey: 'ngoc', s: 32, e: 42, progress:   0, status: 'not_started', results: 'Công trường đủ điều kiện' },
-      { name: '3.6 Lập quy trình quản lý hồ sơ chất lượng, biểu mẫu nghiệm thu',                     assigneeKey: 'ngoc', s: 35, e: 45, progress:   0, status: 'not_started', results: 'Bộ biểu mẫu thống nhất' },
-    ],
-  );
+  // === GIAI ĐOẠN 3: CHUẨN BỊ KHỞI CÔNG (Phòng TC) ===
+  addPhase(3, 'GIAI ĐOẠN 3: CHUẨN BỊ KHỞI CÔNG', 'thanh', 'TC', 3, 8, [
+    { name: 'Bàn giao mặt bằng, mốc định vị, cao độ cho nhà thầu', dept: 'TC', ownerKey: 'thanh', results: 'Biên bản bàn giao mặt bằng', s: 3, e: 5, progress: 60, status: 'in_progress' },
+    { name: 'Thành lập Ban Chỉ huy công trường, quy chế phối hợp CĐT – TVGS – nhà thầu', dept: 'TC', ownerKey: 'thanh', results: 'Sơ đồ tổ chức công trường, quy chế', s: 4, e: 6, progress: 50, status: 'in_progress' },
+    { name: 'Phê duyệt biện pháp thi công, tiến độ tổng thể và chi tiết', dept: 'TC', ownerKey: 'thanh', results: 'Biện pháp và tiến độ được duyệt', s: 4, e: 6, progress: 40, status: 'in_progress' },
+    { name: 'Kế hoạch an toàn lao động, vệ sinh môi trường, PCCC công trường', dept: 'TC', ownerKey: 'thanh', results: 'Kế hoạch ATLĐ – VSMT', s: 4, e: 7, progress: 20, status: 'in_progress' },
+    { name: 'Mua bảo hiểm công trình, bảo hiểm con người', dept: 'KTTC', ownerKey: 'cuong', results: 'Hợp đồng bảo hiểm', s: 4, e: 7, progress: 30, status: 'in_progress' },
+    { name: 'Chuẩn bị lán trại, điện nước thi công, hàng rào, biển báo', dept: 'TC', ownerKey: 'thanh', results: 'Công trường đủ điều kiện', s: 5, e: 7, progress: 10, status: 'in_progress' },
+    { name: 'Lập quy trình quản lý hồ sơ chất lượng, biểu mẫu nghiệm thu', dept: 'QLDA', ownerKey: 'hung', results: 'Bộ biểu mẫu thống nhất', s: 5, e: 8, progress: 0, status: 'assigned' },
+    { name: 'Tạm ứng hợp đồng', dept: 'KTTC', ownerKey: 'cuong', results: 'Chứng từ tạm ứng', s: 5, e: 8, progress: 0, status: 'assigned' },
+  ]);
+
+  // === GIAI ĐOẠN 4: THI CÔNG XÂY DỰNG (Phòng TC) ===
+  addPhase(4, 'GIAI ĐOẠN 4: THI CÔNG XÂY DỰNG', 'thanh', 'TC', 5, 11, [
+    { name: 'Kiểm soát vật liệu đầu vào: phê duyệt mẫu, chứng chỉ, thí nghiệm', dept: 'TC', ownerKey: 'thanh', results: 'Biên bản duyệt mẫu, kết quả thí nghiệm', s: 5, e: 8, progress: 20, status: 'in_progress' },
+    { name: 'Nghiệm thu công việc, bộ phận, giai đoạn (cốt thép, cốp pha, bê tông, xây tô…)', dept: 'TC', ownerKey: 'thanh', results: 'Biên bản nghiệm thu', s: 6, e: 9, progress: 0, status: 'assigned' },
+    { name: 'Quản lý tiến độ: báo cáo ngày, tuần, tháng; cảnh báo chậm trễ', dept: 'TC', ownerKey: 'thanh', results: 'Báo cáo tiến độ', s: 6, e: 9, progress: 0, status: 'assigned' },
+    { name: 'Giao ban công trường định kỳ', dept: 'TC', ownerKey: 'thanh', results: 'Biên bản giao ban', s: 6, e: 10, progress: 0, status: 'assigned' },
+    { name: 'Quản lý thay đổi thiết kế, phát sinh khối lượng', dept: 'QLDA', ownerKey: 'hung', results: 'Phụ lục hợp đồng, phê duyệt phát sinh', s: 7, e: 10, progress: 0, status: 'assigned' },
+    { name: 'Giám sát an toàn lao động, môi trường, PCCC', dept: 'TC', ownerKey: 'thanh', results: 'Nhật ký an toàn, biên bản xử lý vi phạm', s: 7, e: 10, progress: 0, status: 'assigned' },
+    { name: 'Quản lý giao nhận vật tư CĐT cấp, đối chiếu tồn kho', dept: 'TC', ownerKey: 'thanh', results: 'Phiếu nhập xuất, biên bản đối chiếu', s: 7, e: 10, progress: 0, status: 'assigned' },
+    { name: 'Quản lý nhân công khoán (nếu có): chấm công, xác nhận khối lượng', dept: 'TC', ownerKey: 'thanh', results: 'Bảng khối lượng, chấm công', s: 8, e: 10, progress: 0, status: 'assigned' },
+    { name: 'Cập nhật nhật ký thi công, bản vẽ hoàn công từng phần', dept: 'TC', ownerKey: 'thanh', results: 'Nhật ký, bản vẽ hoàn công từng phần', s: 8, e: 11, progress: 0, status: 'assigned' },
+    { name: 'Nghiệm thu khối lượng hoàn thành theo đợt', dept: 'TC', ownerKey: 'thanh', results: 'Bảng xác nhận khối lượng', s: 8, e: 11, progress: 0, status: 'assigned' },
+    { name: 'Thanh toán theo đợt, thu hồi tạm ứng, giữ lại tiền bảo hành', dept: 'KTTC', ownerKey: 'cuong', results: 'Hồ sơ thanh toán đợt', s: 8, e: 11, progress: 0, status: 'assigned' },
+    { name: 'Báo cáo tài chính dự án: kế hoạch và thực tế dòng tiền', dept: 'KTTC', ownerKey: 'cuong', results: 'Báo cáo dòng tiền', s: 8, e: 11, progress: 0, status: 'assigned' },
+  ]);
+
+  // === GIAI ĐOẠN 5: NGHIỆM THU HOÀN THÀNH VÀ HOÀN CÔNG (Phòng TC) ===
+  addPhase(5, 'GIAI ĐOẠN 5: NGHIỆM THU HOÀN THÀNH VÀ HOÀN CÔNG', 'thanh', 'TC', 9, 13, [
+    { name: 'Chạy thử đơn động, liên động hệ thống MEP, thang máy, PCCC', dept: 'TC', ownerKey: 'thanh', results: 'Biên bản chạy thử', s: 9, e: 11, progress: 0, status: 'assigned' },
+    { name: 'Kiểm định thiết bị có yêu cầu nghiêm ngặt về an toàn (thang máy, bình áp lực…)', dept: 'TC', ownerKey: 'thanh', results: 'Giấy chứng nhận kiểm định', s: 9, e: 12, progress: 0, status: 'assigned' },
+    { name: 'Lập bản vẽ hoàn công tổng thể', dept: 'TC', ownerKey: 'thanh', results: 'Bộ bản vẽ hoàn công', s: 10, e: 12, progress: 0, status: 'assigned' },
+    { name: 'Tập hợp hồ sơ chất lượng công trình', dept: 'QLDA', ownerKey: 'hung', results: 'Hồ sơ hoàn thành công trình', s: 10, e: 12, progress: 0, status: 'assigned' },
+    { name: 'Đấu nối hạ tầng: điện, nước, thoát nước, viễn thông', dept: 'TC', ownerKey: 'thanh', results: 'Hợp đồng và biên bản đấu nối', s: 10, e: 12, progress: 0, status: 'assigned' },
+    { name: 'Nghiệm thu hoàn thành hạng mục hoặc công trình đưa vào sử dụng', dept: 'QLDA', ownerKey: 'hung', results: 'Biên bản nghiệm thu hoàn thành', s: 11, e: 13, progress: 0, status: 'assigned' },
+  ]);
+
+  // === GIAI ĐOẠN 6: BÀN GIAO (Phòng QLDA) ===
+  addPhase(6, 'GIAI ĐOẠN 6: BÀN GIAO', 'hung', 'QLDA', 11, 15, [
+    { name: 'Kiểm tra hoàn thiện từng căn/sản phẩm, lập danh sách lỗi và khắc phục', dept: 'TC', ownerKey: 'thanh', results: 'Checklist bàn giao từng căn', s: 11, e: 13, progress: 0, status: 'assigned' },
+    { name: 'Lập quy trình bảo trì công trình', dept: 'QLDA', ownerKey: 'hung', results: 'Quy trình bảo trì được duyệt', s: 11, e: 13, progress: 0, status: 'assigned' },
+    { name: 'Bàn giao hồ sơ, tài liệu kỹ thuật cho đơn vị quản lý vận hành', dept: 'QLDA', ownerKey: 'hung', results: 'Biên bản bàn giao hồ sơ', s: 12, e: 14, progress: 0, status: 'assigned' },
+    { name: 'Bàn giao công trình, thiết bị cho đơn vị quản lý vận hành, đào tạo vận hành', dept: 'TC', ownerKey: 'thanh', results: 'Biên bản bàn giao', s: 12, e: 14, progress: 0, status: 'assigned' },
+    { name: 'Thu tiền đợt cuối, kinh phí bảo trì (nếu có) theo hợp đồng mua bán', dept: 'KTTC', ownerKey: 'cuong', results: 'Chứng từ thu', s: 12, e: 14, progress: 0, status: 'assigned' },
+    { name: 'Theo dõi, xử lý bảo hành trong thời gian bảo hành', dept: 'TC', ownerKey: 'thanh', results: 'Sổ theo dõi bảo hành', s: 13, e: 15, progress: 0, status: 'assigned' },
+  ]);
+
+  // === GIAI ĐOẠN 7: THANH QUYẾT TOÁN (Phòng KTTC) ===
+  addPhase(7, 'GIAI ĐOẠN 7: THANH QUYẾT TOÁN', 'cuong', 'KTTC', 11, 15, [
+    { name: 'Tổng hợp khối lượng hoàn thành theo hoàn công từng gói thầu', dept: 'QLDA', ownerKey: 'hung', results: 'Bảng khối lượng quyết toán', s: 11, e: 13, progress: 0, status: 'assigned' },
+    { name: 'Đối chiếu phát sinh, phụ lục, khấu trừ (vật tư CĐT cấp, điện nước, phạt vi phạm)', dept: 'KTTC', ownerKey: 'cuong', results: 'Biên bản đối chiếu', s: 12, e: 14, progress: 0, status: 'assigned' },
+    { name: 'Thẩm tra quyết toán hợp đồng (nội bộ hoặc thuê kiểm toán)', dept: 'KTTC', ownerKey: 'cuong', results: 'Báo cáo thẩm tra', s: 12, e: 14, progress: 0, status: 'assigned' },
+    { name: 'Thanh toán phần còn lại, giữ bảo hành hoặc nhận bảo lãnh bảo hành', dept: 'KTTC', ownerKey: 'cuong', results: 'Chứng từ thanh toán', s: 13, e: 15, progress: 0, status: 'assigned' },
+    { name: 'Hoàn trả tiền bảo hành, giải tỏa bảo lãnh khi hết hạn', dept: 'KTTC', ownerKey: 'cuong', results: 'Chứng từ hoàn trả', s: 13, e: 15, progress: 0, status: 'assigned' },
+    { name: 'Quyết toán tổng chi phí đầu tư dự án', dept: 'KTTC', ownerKey: 'cuong', results: 'Báo cáo quyết toán dự án', s: 13, e: 15, progress: 0, status: 'assigned' },
+    { name: 'Quyết toán thuế, nghĩa vụ tài chính với Nhà nước liên quan dự án', dept: 'KTTC', ownerKey: 'cuong', results: 'Hồ sơ thuế', s: 14, e: 15, progress: 0, status: 'assigned' },
+    { name: 'Lưu trữ hồ sơ dự án', dept: 'QLDA', ownerKey: 'hung', results: 'Kho hồ sơ số hóa', s: 14, e: 15, progress: 0, status: 'assigned' },
+  ]);
 }
 
 // ===========================================================================
@@ -705,16 +698,17 @@ for (const proj of tierItems) {
 const userTaskCounts = new Map<string, { active: number; total: number }>();
 const byUser = new Map<string, TierItem[]>();
 for (const item of tierItems) {
-  if (item.tier !== 4 || !item.ownerUsername) continue;
-  if (!byUser.has(item.ownerUsername)) byUser.set(item.ownerUsername, []);
-  byUser.get(item.ownerUsername)!.push(item);
+  if ((item.tier === 3 || item.tier === 4) && item.ownerUsername) {
+    if (!byUser.has(item.ownerUsername)) byUser.set(item.ownerUsername, []);
+    byUser.get(item.ownerUsername)!.push(item);
+  }
 }
 for (const [username, items] of byUser.entries()) {
   const active = items.filter((i) => i.progress < 100 && i.progress >= 0).length;
   userTaskCounts.set(username, { active, total: items.length });
 }
 
-const teamMembers: TeamMember[] = (['khanh', 'nam', 'hung', 'hong', 'cuong', 'nguyet', 'hang', 'tu', 'thanh', 'ngoc'] as const)
+const teamMembers: TeamMember[] = (['khanh', 'nam', 'hung', 'hong', 'cuong', 'nguyet', 'hang', 'tu', 'nhi', 'thanh', 'ngoc'] as const)
   .map((key) => {
     const u = U[key];
     const counts = userTaskCounts.get(u.username) || { active: 0, total: 0 };
@@ -733,26 +727,22 @@ const teamMembers: TeamMember[] = (['khanh', 'nam', 'hung', 'hong', 'cuong', 'ng
     } satisfies TeamMember;
   });
 
-// D1 fix: tăng slice từ 12 → 20 để đảm bảo mọi phòng ban (đặc biệt TC) đều có
-// task hiển thị trong view Trưởng phòng. Sắp xếp theo department để mỗi phòng
-// ban được ưu tiên round-robin thay vì bị bỏ sót cuối danh sách.
 const teamLeadTasks: TeamLeadTask[] = (() => {
   const candidates = tierItems
-    .filter((t) => t.tier === 4 && t.progress < 100)
+    .filter((t) => (t.tier === 3 || t.tier === 4) && t.progress < 100)
     .sort((a, b) => {
-      // Ưu tiên round-robin theo department để TC/KTTC/QLDA đều có mặt.
       const order = (d?: string) =>
         d === 'TC' ? 0 : d === 'KTTC' ? 1 : d === 'QLDA' ? 2 : 3;
       return order(a.department) - order(b.department);
     })
-    .slice(0, 20);
+    .slice(0, 30);
   return candidates.map((t) => {
     const status: TeamLeadTask['status'] =
       t.status === 'Đang nghẽn' || t.status === 'Điểm nghẽn'
         ? 'need_help'
         : t.progress === 100
-        ? 'done'
-        : 'in_progress';
+          ? 'done'
+          : 'in_progress';
     return {
       id: `tlt-${t.id}`,
       code: t.code,
@@ -772,10 +762,9 @@ const teamLeadTasks: TeamLeadTask[] = (() => {
   });
 })();
 
-// D1 fix: tăng slice từ 10 → 16 để đảm bảo nhân viên TC (ngoc) có task hiển thị.
 const employeeTasks: EmployeeTask[] = tierItems
-  .filter((t) => t.tier === 4 && t.ownerUsername && ['hong', 'nguyet', 'hang', 'tu', 'ngoc'].includes(t.ownerUsername))
-  .slice(0, 16)
+  .filter((t) => (t.tier === 3 || t.tier === 4) && t.ownerUsername && ['hong', 'nguyet', 'hang', 'tu', 'nhi', 'ngoc'].includes(t.ownerUsername))
+  .slice(0, 30)
   .map((t) => ({
     id: `emp-${t.id}`,
     code: t.code,
@@ -789,7 +778,7 @@ const employeeTasks: EmployeeTask[] = tierItems
     deadline: t.deadline,
     isToday: t.progress > 0 && t.progress < 100,
     status:
-      t.status === 'Đã xong' ? 'done' : t.status === 'Đang làm' ? 'doing' : 'pending',
+      t.status === 'Đã xong' ? 'done' : t.status === 'Đang chạy' || t.status === 'Đang làm' ? 'doing' : 'pending',
     manager: { name: '—', role: '—', avatar: '' },
     notesCount: 2,
     notes: [],

@@ -133,6 +133,13 @@ function buildSeedUsers(): User[] {
     role: 'employee',
     departments: ['KTTC'],
   });
+  U.nhi = createUser({
+    username: 'nhi',
+    fullname: 'Nhi — NV.KTTC',
+    password: '123456',
+    role: 'employee',
+    departments: ['KTTC'],
+  });
 
   // TC — Trưởng phòng + Nhân viên
   U.thanh = createUser({
