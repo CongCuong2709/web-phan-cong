@@ -40,12 +40,17 @@ const TIER_BADGES: Record<TierLevel, string> = {
 
 /**
  * Map 1 row tier_items từ backend → TierItem shape frontend.
+ * Schema 2026-10: start_date/end_date là source of truth, daysRemaining derive từ endDate.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function apiToTierItem(api: any): TierItem {
   const tier = (api.tier as TierLevel) || 4;
   const ownerFullname = (api.owner_fullname as string) || '—';
   const department = (api.department_code as string) || undefined;
+  const endDate = String(api.end_date || '');
+
+  // daysRemaining: compute runtime từ endDate (DB không còn lưu nữa)
+  const daysRemaining = endDate ? computeDaysRemaining(endDate) : undefined;
 
   return {
     id: String(api.id),
@@ -63,8 +68,9 @@ export function apiToTierItem(api: any): TierItem {
     },
     ownerUsername: (api.owner_username_str as string) || undefined,
     department: department as TierItem['department'],
-    deadline: String(api.deadline || ''),
-    daysRemaining: api.days_remaining != null ? Number(api.days_remaining) : undefined,
+    startDate: String(api.start_date || ''),
+    endDate,
+    daysRemaining,
     progress: Number(api.progress ?? 0),
     status: (api.status as TierItem['status']) || 'Chuẩn bị',
     priority: (api.priority as TierItem['priority']) || 'Trung bình',
@@ -75,11 +81,24 @@ export function apiToTierItem(api: any): TierItem {
     gantt: {
       startWeek: Number(api.start_week ?? 1),
       endWeek: Number(api.end_week ?? 1),
-      label: (api.gantt_label as string) || undefined,
-      barColor: (api.gantt_bar_color as string) || undefined,
     },
-    collapsed: Boolean(api.collapsed),
   };
+}
+
+/**
+ * Tính số ngày còn lại từ hôm nay đến endDate.
+ * endDate ở format ISO 'YYYY-MM-DD'.
+ * Trả về số âm nếu quá hạn.
+ */
+function computeDaysRemaining(endDateIso: string): number {
+  // Parse strict ISO date — tránh timezone issue.
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(endDateIso);
+  if (!m) return 0;
+  const end = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const diffMs = end.getTime() - now.getTime();
+  return Math.round(diffMs / 86400000);
 }
 
 // ─────────────────────────────────────────────────────────────────────

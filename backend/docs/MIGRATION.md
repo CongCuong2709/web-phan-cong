@@ -289,6 +289,51 @@ POST   /api/tier-items              → Create
 PATCH  /api/tier-items/:id          → Update
 DELETE /api/tier-items/:id          → Admin only
 
+---
+
+## Schema change 2026-10 — tier_items: thêm start_date + cleanup
+
+### Changes
+
+| Column | Action | Lý do |
+|---|---|---|
+| `start_date TEXT NOT NULL` | **ADD** | User yêu cầu nhập "Ngày bắt đầu" khi tạo item (gap thật, không chỉ frontend) |
+| `deadline` | **RENAME → `end_date`** | Đồng bộ với `start_date` + pattern của `subtasks` |
+| `days_remaining INTEGER` | **DROP** | Derived runtime từ `end_date - today()` |
+| `gantt_label TEXT` | **DROP** | Display-only, derive từ `title + progress` |
+| `gantt_bar_color TEXT` | **DROP** | Display-only, derive từ `tier + status` |
+| `is_blocked INTEGER` | **DROP** | Duplicate với `status='Đang nghẽn'` (1 source of truth) |
+| `idx_tier_start_date` | **ADD** | Query timeline range nhanh |
+| `idx_tier_end_date` | **ADD** | Query timeline range nhanh |
+
+### Run migration
+
+```bash
+cd backend
+sqlite3 database.db < sql/migrations/001_tier_items_start_date.sql
+```
+
+Hoặc từ Node.js:
+```ts
+import { db } from './db.js';
+import fs from 'node:fs';
+db.exec(fs.readFileSync('./sql/migrations/001_tier_items_start_date.sql', 'utf8'));
+```
+
+### Backfill
+- `start_date` cho data cũ = `end_date - 14 ngày` (default 2-tuần duration)
+- `is_blocked` 1 → `status='Đang nghẽn'`
+- `gantt_label`, `gantt_bar_color` không backfill (display info dễ reconstruct)
+
+### Rollback
+Không có auto-rollback. Nếu cần revert, restore DB backup hoặc DROP+CREATE table thủ công.
+
+### Frontend impact
+- `TierItem.deadline` → `TierItem.endDate` (bắt buộc update consumer)
+- `TierItem.startDate` mới (required)
+- `TierItem.daysRemaining` compute runtime trong `transforms.ts`
+- `TierItem.gantt.label/barColor` không còn từ backend (component derive)
+
 GET    /api/tier-items/:id/deliverables → [Deliverable]
 POST   /api/tier-items/:id/deliverables → Create
 PATCH  /api/deliverables/:id

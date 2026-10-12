@@ -11,6 +11,27 @@ interface NewItemModalProps {
   deptUsers?: { username: string; fullname: string }[];
 }
 
+/** Format Date → 'YYYY-MM-DD' (local time, tránh UTC shift). */
+function fmtIsoDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * Derive gantt.startWeek/endWeek từ startDate/endDate.
+ * Logic: 
+ *   - startWeek = 1 + (days from first day of month containing startDate) / 7
+ *   - endWeek   = startWeek + durationDays / 7
+ * Chỉ dùng cho month view; quarter/year view dùng date trực tiếp.
+ */
+function deriveWeekIndex(isoDate: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
+  if (!m) return 1;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const firstOfMonth = new Date(d.getFullYear(), d.getMonth(), 1);
+  const dayOfMonth = d.getDate();
+  return 1 + (dayOfMonth - 1) / 7;
+}
+
 export const NewItemModal: React.FC<NewItemModalProps> = ({
   isOpen,
   onClose,
@@ -37,29 +58,34 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
   const [title, setTitle] = useState('');
   const [parentId, setParentId] = useState('');
   const [ownerUsername, setOwnerUsername] = useState(currentUser.username);
-  // MI-03: default 30 ngày tới, format ISO YYYY-MM-DD để native date picker hoạt động.
-  const [deadline, setDeadline] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 30);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  });
+
+  // MI-03 + 2026-10: dùng startDate + endDate (ISO 'YYYY-MM-DD').
+  // Default: startDate = today, endDate = +30 ngày.
+  const today = new Date();
+  const todayIso = fmtIsoDate(today);
+  const in30Days = new Date(today);
+  in30Days.setDate(in30Days.getDate() + 30);
+  const in30Iso = fmtIsoDate(in30Days);
+
+  const [startDate, setStartDate] = useState(todayIso);
+  const [endDate, setEndDate] = useState(in30Iso);
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<TierItem['priority']>('Trung bình');
 
+  // Validation: startDate <= endDate
+  const dateRangeError = startDate > endDate;
+
   // A11 fix: reset toàn bộ form state mỗi khi modal đóng/mở.
-  // Trước đây modal đóng → state giữ nguyên → lần mở sau hiển thị tier cũ,
-  // dễ chọn nhầm tier (vd: BGĐ từng tạo T1, mở lại modal mà quên chọn lại).
   useEffect(() => {
     if (isOpen) {
       setTier(defaultTier);
       setTitle('');
       setParentId('');
       setOwnerUsername(currentUser.username);
-      setDeadline(() => {
-        const d = new Date();
-        d.setDate(d.getDate() + 30);
-        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      });
+      setStartDate(fmtIsoDate(new Date()));
+      const future = new Date();
+      future.setDate(future.getDate() + 30);
+      setEndDate(fmtIsoDate(future));
       setDescription('');
       setPriority('Trung bình');
     }
@@ -71,6 +97,7 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) return;
+    if (dateRangeError) return; // form đã show lỗi
 
     // Resolve owner from selected username
     const ownerUser = deptUsers.find((u) => u.username === ownerUsername) ??
@@ -94,6 +121,10 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
       : tier === 3 ? `GOI-${Math.floor(10 + Math.random() * 90)}`
       : `NV-${Math.floor(100 + Math.random() * 900)}`;
 
+    // Derive startWeek/endWeek từ startDate/endDate (month-view index 1..N)
+    const sw = deriveWeekIndex(startDate);
+    const ew = deriveWeekIndex(endDate);
+
     onAddItem({
       code,
       tier,
@@ -108,7 +139,8 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
       },
       ownerUsername: ownerUser.username,
       department: currentUser.departments[0],
-      deadline,
+      startDate,
+      endDate,
       progress: 0,
       status: 'Chuẩn bị',
       priority,
@@ -116,9 +148,8 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
       deliverables: [{ id: `del-${Date.now()}`, title: 'Hoàn tất bàn giao', completed: false }],
       managementNotes: `Mới tạo bởi ${currentUser.fullname}, đang chờ phân bổ chi tiết.`,
       gantt: {
-        startWeek: 2,
-        endWeek: 3.5,
-        barColor: tier === 1 ? '#0F172A' : tier === 2 ? '#004ac6' : tier === 3 ? '#0284c7' : '#006243',
+        startWeek: sw,
+        endWeek: Math.max(sw + 0.1, ew),
       },
     });
 
@@ -214,7 +245,7 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
             </div>
           )}
 
-          {/* Owner & Deadline */}
+          {/* Owner & Date range */}
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
               <label className="text-[12px] font-bold text-[#0b1c30]">
@@ -242,15 +273,33 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
 
             <div className="flex flex-col gap-1.5">
               <label className="text-[12px] font-bold text-[#0b1c30]">
-                Hạn hoàn thành
+                Ngày bắt đầu <span className="text-[10px] font-normal text-[#737686]">(tuỳ chọn)</span>
               </label>
               <input
                 type="date"
-                value={deadline}
-                onChange={(e) => setDeadline(e.target.value)}
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
                 className="w-full h-10 px-3 rounded-lg bg-[#eff4ff] text-[#0b1c30] text-[13px] border border-[#dce9ff] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#004ac6]"
               />
             </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[12px] font-bold text-[#0b1c30]">
+              Hạn hoàn thành <span className="text-[#ba1a1a]">*</span>
+            </label>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              required
+              className="w-full h-10 px-3 rounded-lg bg-[#eff4ff] text-[#0b1c30] text-[13px] border border-[#dce9ff] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#004ac6]"
+            />
+            {dateRangeError && (
+              <span className="text-[11px] text-[#ba1a1a] font-semibold mt-0.5">
+                ⚠ Ngày bắt đầu phải trước hoặc bằng hạn hoàn thành.
+              </span>
+            )}
           </div>
 
           {/* Description */}

@@ -165,8 +165,9 @@ const makeProject = (
       },
       ownerUsername: mgr.username,
       department: mgr.departments[0],
-      deadline: shiftDays(e_offset),
-      daysRemaining: Math.max(0, e_offset),
+      // 2026-10: dùng startDate/endDate ISO, daysRemaining compute runtime
+      startDate: shiftDaysISO(_s_offset),
+      endDate: shiftDaysISO(e_offset),
       progress: 0,
       status: status === 'completed' ? 'Đã xong' : status === 'pending' ? 'Lên lịch' : 'Đang chạy',
       statusBadgeColor:
@@ -183,10 +184,7 @@ const makeProject = (
       gantt: {
         startWeek: 1,
         endWeek: 4,
-        label: ganttLabel,
-        barColor: status === 'completed' ? '#006243' : '#0F172A',
       },
-      collapsed: false,
     },
   };
 };
@@ -213,8 +211,9 @@ const makePhase = (
       title: name,
       owner: { name: '—', role: '—', initial: '—' },
       department: undefined,
-      deadline: shiftDays(e_offset),
-      daysRemaining: Math.max(0, e_offset),
+      // 2026-10: startDate/endDate ISO
+      startDate: shiftDaysISO(s_offset),
+      endDate: shiftDaysISO(e_offset),
       progress: status === 'completed' ? 100 : status === 'pending' ? 0 : 50,
       status: status === 'completed' ? 'Đã xong' : status === 'pending' ? 'Lên lịch' : 'Đang chạy',
       statusBadgeColor:
@@ -226,10 +225,7 @@ const makePhase = (
       gantt: {
         startWeek: Math.max(1, Math.min(4, 1 + (s_offset + 60) / 60)),
         endWeek: Math.max(1, Math.min(4, 1 + (e_offset + 60) / 60)),
-        label: `${shiftDays(s_offset)} → ${shiftDays(e_offset)}`,
-        barColor: status === 'completed' ? '#006243' : status === 'pending' ? '#94a3b8' : '#004ac6',
       },
-      collapsed: false,
     },
   };
 };
@@ -271,8 +267,9 @@ const makeBundle = (opts: BundleOpts): BuildResult => {
       },
       ownerUsername: owner.username,
       department: opts.dept,
-      deadline: shiftDays(opts.due_offset),
-      daysRemaining: Math.max(0, opts.due_offset),
+      // 2026-10: startDate/endDate ISO
+      startDate: shiftDaysISO(opts.start_offset),
+      endDate: shiftDaysISO(opts.due_offset),
       progress: opts.progress,
       status:
         opts.status === 'closed'
@@ -303,15 +300,7 @@ const makeBundle = (opts: BundleOpts): BuildResult => {
       gantt: {
         startWeek: Math.max(1, Math.min(4, 1 + (opts.start_offset + 60) / 60)),
         endWeek: Math.max(1, Math.min(4, 1 + (opts.due_offset + 60) / 60)),
-        label: `${shiftDays(opts.start_offset)} → ${shiftDays(opts.due_offset)}`,
-        barColor:
-          opts.status === 'closed'
-            ? '#006243'
-            : opts.status === 'in_progress'
-              ? '#004ac6'
-              : '#94a3b8',
       },
-      collapsed: false,
     },
   };
 };
@@ -353,8 +342,9 @@ const makeTask = (opts: TaskOpts): BuildResult => {
       },
       ownerUsername: owner.username,
       department: opts.dept,
-      deadline: shiftDays(opts.end_offset),
-      daysRemaining: Math.max(0, opts.end_offset),
+      // 2026-10: startDate/endDate ISO
+      startDate: shiftDaysISO(opts.start_offset),
+      endDate: shiftDaysISO(opts.end_offset),
       progress: opts.progress,
       status:
         opts.status === 'completed'
@@ -390,13 +380,6 @@ const makeTask = (opts: TaskOpts): BuildResult => {
       gantt: {
         startWeek: Math.max(1, Math.min(4, 1 + (opts.start_offset + 60) / 60)),
         endWeek: Math.max(1, Math.min(4, 1 + (opts.end_offset + 60) / 60)),
-        label: `${opts.progress}%`,
-        barColor:
-          opts.status === 'completed'
-            ? '#006243'
-            : opts.status === 'blocked'
-              ? '#ba1a1a'
-              : '#2563eb',
       },
     },
   };
@@ -754,7 +737,7 @@ const teamLeadTasks: TeamLeadTask[] = (() => {
       ownerUsername: t.ownerUsername,
       department: t.department,
       submittedAt: shiftDays(-2),
-      deadline: t.deadline,
+      deadline: t.endDate,
       status,
       priority: t.priority === 'Cao (Critical Path)' ? 'Cao' : 'Thường',
       progressText: `${t.progress}%`,
@@ -775,7 +758,7 @@ const employeeTasks: EmployeeTask[] = tierItems
     description: t.description,
     currentDeliverable: t.managementNotes,
     lastUpdated: 'Cập nhật trong hệ thống',
-    deadline: t.deadline,
+    deadline: t.endDate,
     isToday: t.progress > 0 && t.progress < 100,
     status:
       t.status === 'Đã xong' ? 'done' : t.status === 'Đang chạy' || t.status === 'Đang làm' ? 'doing' : 'pending',

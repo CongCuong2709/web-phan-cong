@@ -22,6 +22,16 @@ import { canEditTierItem, inDepartment, uid } from '../utils/permissions.js';
 const router = Router();
 router.use(requireAuth);
 
+/**
+ * Trừ N ngày từ 1 date string (ISO 'YYYY-MM-DD').
+ * Dùng Date object (tính theo local timezone) để tránh sai số khi qua múi giờ DST.
+ */
+function dateMinusDays(isoDate, days) {
+  const d = new Date(isoDate + 'T00:00:00');
+  d.setDate(d.getDate() - days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 /** Quyết định xem user có thấy 1 tier item không (mirror frontend). */
 function canSee(user, item) {
   if (user.role === 'admin' || user.role === 'director') return true;
@@ -83,7 +93,11 @@ router.post('/', requireTierCreatePermission, (req, res) => {
       body.parent_id ? Number(body.parent_id) : null,
       body.department ?? null,
       body.owner_user_id ? Number(body.owner_user_id) : req.user.id,
-      body.deadline || '2099-12-31',
+      // start_date: nhận từ body, fallback = end_date - 14 ngày, fallback = today
+      body.start_date
+        || (body.end_date ? dateMinusDays(body.end_date, 14) : null)
+        || new Date().toISOString().slice(0, 10),
+      body.end_date || '2099-12-31',
       Number(body.progress ?? 0),
       body.status || 'Chuẩn bị',
       body.priority || 'Trung bình',
@@ -91,8 +105,6 @@ router.post('/', requireTierCreatePermission, (req, res) => {
       body.management_notes || '',
       Number(body.start_week ?? 1),
       Number(body.end_week ?? 2),
-      body.gantt_label || null,
-      body.gantt_bar_color || '#004ac6',
     );
     lastId = Number(info.lastInsertRowid);
 
@@ -132,15 +144,13 @@ router.patch('/:id(\\d+)', (req, res) => {
       Number(body.progress ?? item.progress),
       body.status ?? item.status,
       body.priority ?? item.priority,
-      body.deadline ?? item.deadline,
+      body.start_date ?? item.start_date,
+      body.end_date ?? item.end_date,
       body.description ?? item.description,
       body.management_notes ?? item.management_notes,
       body.blocker_alert ?? item.blocker_alert ?? null,
-      body.is_blocked ? 1 : 0,
       Number(body.start_week ?? item.start_week),
       Number(body.end_week ?? item.end_week),
-      body.gantt_label ?? item.gantt_label ?? null,
-      body.gantt_bar_color ?? item.gantt_bar_color ?? '#004ac6',
       item.id,
     );
 

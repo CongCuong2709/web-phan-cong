@@ -91,6 +91,18 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
     setNewLogDraft(null);
   }, [item]);
 
+  // 2026-10: re-compute daysRemaining khi endDate thay đổi (transforms.ts chỉ tính
+  // lúc load; user thủ công đổi date trong form cần update real-time).
+  const liveDaysRemaining = useMemo(() => {
+    if (!formData?.endDate) return undefined;
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(formData.endDate);
+    if (!m) return undefined;
+    const end = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    return Math.round((end.getTime() - now.getTime()) / 86400000);
+  }, [formData?.endDate]);
+
   const itemSubtasks = useMemo(() => {
     if (!formData || formData.tier !== 4) return [];
     return subtasks.filter((s) => s.taskId === formData.id);
@@ -233,21 +245,40 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
             </div>
           </div>
 
-          {/* 2. Deadline */}
+          {/* 2. Lịch trình (start → end) */}
           <div className="bg-white p-3.5 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
             <label className="text-[11px] font-semibold text-[#565e74] uppercase tracking-wider block mb-1.5">
-              2. Thời hạn hoàn thành
+              2. Lịch trình
             </label>
-            <div className="flex items-center justify-between">
-              <span className="font-mono text-[14px] font-bold text-[#0b1c30]">
-                {formData.deadline}
-              </span>
-              <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-emerald-50 text-[#006243] border border-emerald-200">
-                {formData.daysRemaining !== undefined
-                  ? formData.daysRemaining === 0
-                    ? 'Đến hạn hôm nay'
-                    : `Còn ${formData.daysRemaining} ngày`
-                  : 'Đúng hạn'}
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="flex items-center gap-2 text-[12px] text-[#434655]">
+                <span className="text-[10px] font-semibold text-[#737686] uppercase">Từ</span>
+                <span className="font-mono font-semibold text-[#0b1c30]">
+                  {formData.startDate || '—'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 text-[12px] text-[#434655]">
+                <span className="text-[10px] font-semibold text-[#737686] uppercase">Đến</span>
+                <span className="font-mono font-bold text-[14px] text-[#0b1c30]">
+                  {formData.endDate || '—'}
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center justify-end">
+              <span
+                className={`text-[11px] font-semibold px-2 py-0.5 rounded border ${
+                  liveDaysRemaining !== undefined && liveDaysRemaining < 0
+                    ? 'bg-red-50 text-[#ba1a1a] border-red-200'
+                    : 'bg-emerald-50 text-[#006243] border-emerald-200'
+                }`}
+              >
+                {liveDaysRemaining === undefined
+                  ? 'Đúng hạn'
+                  : liveDaysRemaining === 0
+                  ? 'Đến hạn hôm nay'
+                  : liveDaysRemaining < 0
+                  ? `Quá hạn ${Math.abs(liveDaysRemaining)} ngày`
+                  : `Còn ${liveDaysRemaining} ngày`}
               </span>
             </div>
           </div>

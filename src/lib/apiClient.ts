@@ -142,7 +142,9 @@ export interface TierItemDto {
   parent_id?: number | null;
   department_code?: string | null;
   owner_user_id?: number | null;
-  deadline?: string;
+  /** ISO date 'YYYY-MM-DD'. Schema 2026-10 thay thế `deadline`. */
+  start_date?: string;
+  end_date?: string;
   progress?: number;
   status?: string;
   priority?: string;
@@ -150,8 +152,6 @@ export interface TierItemDto {
   management_notes?: string;
   start_week?: number;
   end_week?: number;
-  gantt_label?: string | null;
-  gantt_bar_color?: string | null;
 }
 
 export interface DailyLogDto {

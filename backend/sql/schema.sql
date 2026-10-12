@@ -85,29 +85,33 @@ CREATE TABLE tier_items (
   parent_id INTEGER REFERENCES tier_items(id) ON DELETE CASCADE,
   department_code TEXT REFERENCES departments(code) ON DELETE SET NULL,
   owner_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  deadline TEXT NOT NULL,            -- ISO date 'YYYY-MM-DD' hoặc display string
-  days_remaining INTEGER,
+  -- Lịch trình (date range, source of truth cho Gantt chart).
+  -- start_date / end_date là ISO 'YYYY-MM-DD'. Frontend render ra gantt.startWeek/endWeek runtime.
+  start_date TEXT NOT NULL DEFAULT (date('now')),
+  end_date TEXT NOT NULL,            -- ISO date 'YYYY-MM-DD' hoặc display string
   progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
-  status TEXT NOT NULL,              -- 'Đang chạy' | 'Sắp xong' | 'Đã xong' | ...
+  status TEXT NOT NULL,              -- 'Đang chạy' | 'Sắp xong' | 'Đã xong' | 'Đang nghẽn' | ...
+  -- Trạng thái nghẽn được derive từ status IN ('Đang nghẽn','Điểm nghẽn'); không cần cột is_blocked riêng.
   priority TEXT NOT NULL,            -- 'Cao (Critical Path)' | 'Trung bình' | 'Thấp'
   description TEXT NOT NULL DEFAULT '',
   management_notes TEXT NOT NULL DEFAULT '',
   blocker_alert TEXT,
-  start_week REAL NOT NULL DEFAULT 1,  -- Gantt: 1..4 (có thể 2.5)
+  -- Week index là denormalized cho performance Gantt render (computed từ start_date/end_date).
+  -- Có thể sync qua app code thay vì trigger (đơn giản hơn). Mặc định 1..4 mapping.
+  start_week REAL NOT NULL DEFAULT 1,
   end_week REAL NOT NULL DEFAULT 1,
-  gantt_label TEXT,
-  gantt_bar_color TEXT,
-  is_blocked INTEGER NOT NULL DEFAULT 0 CHECK (is_blocked IN (0,1)),
   collapsed INTEGER NOT NULL DEFAULT 0 CHECK (collapsed IN (0,1)),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX idx_tier_parent   ON tier_items(parent_id);
-CREATE INDEX idx_tier_dept     ON tier_items(department_code);
-CREATE INDEX idx_tier_owner    ON tier_items(owner_user_id);
-CREATE INDEX idx_tier_tier     ON tier_items(tier);
-CREATE INDEX idx_tier_code     ON tier_items(code);  -- Cho search nhanh
+CREATE INDEX idx_tier_parent     ON tier_items(parent_id);
+CREATE INDEX idx_tier_dept       ON tier_items(department_code);
+CREATE INDEX idx_tier_owner      ON tier_items(owner_user_id);
+CREATE INDEX idx_tier_tier       ON tier_items(tier);
+CREATE INDEX idx_tier_code       ON tier_items(code);  -- Cho search nhanh
+CREATE INDEX idx_tier_start_date ON tier_items(start_date);  -- Query timeline range
+CREATE INDEX idx_tier_end_date   ON tier_items(end_date);    -- Query timeline range
 
 -- =============================================================================
 -- 3. DELIVERABLES (Kết quả bàn giao — con của TierItem, thường T4)

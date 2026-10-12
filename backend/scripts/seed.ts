@@ -84,6 +84,34 @@ function tx(fn: () => unknown): unknown {
   }
 }
 
+/**
+ * Derive start_date ISO từ deadline + startWeek (week-index 1..4).
+ * Dùng cho backfill khi frontend seed cũ không có start_date.
+ * Logic: deadline là ngày cuối tuần endWeek, startDate = deadline - (endWeek-startWeek)*7 ngày.
+ */
+function deriveStartFromDeadline(deadline: string, startWeek: number): string {
+  // Parse deadline "dd/MM" hoặc "dd/MM/yyyy" hoặc ISO
+  let endDate: Date;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(deadline)) {
+    endDate = new Date(deadline + 'T00:00:00');
+  } else {
+    // "dd/MM/yyyy" hoặc "dd/MM"
+    const m = deadline.match(/^(\d{2})\/(\d{2})(?:\/(\d{4}))?$/);
+    if (!m) return new Date().toISOString().slice(0, 10);
+    const dd = Number(m[1]);
+    const mm = Number(m[2]) - 1;
+    const yyyy = m[3] ? Number(m[3]) : new Date().getFullYear();
+    endDate = new Date(yyyy, mm, dd);
+  }
+  // startWeek = 1 → start_date = end_date - 14 ngày (giả định end_week = 3, duration 2 tuần)
+  // startWeek = 2 → start_date = end_date - 7 ngày
+  // startWeek = 3 → start_date = end_date
+  const offsetDays = (3 - startWeek) * 7;
+  const startDate = new Date(endDate);
+  startDate.setDate(startDate.getDate() - Math.max(0, offsetDays));
+  return `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
+}
+
 // ============================================================================
 // Prepared statements
 // ============================================================================
@@ -97,9 +125,9 @@ const insertUserDept = db.prepare(
 
 const insertTier = db.prepare(`
   INSERT INTO tier_items (code, tier, title, parent_id, department_code, owner_user_id,
-    deadline, progress, status, priority, description, management_notes,
-    start_week, end_week, gantt_label, gantt_bar_color)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    start_date, end_date, progress, status, priority, description, management_notes,
+    start_week, end_week)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const insertDeliverable = db.prepare(
@@ -182,7 +210,10 @@ tx(() => {
       parentDbId,
       t.department ?? null,
       ownerDbId,
-      t.deadline,
+      // 2026-10: dùng endDate (rename từ deadline). Frontend seed đã populate startDate ISO.
+      // Fallback: derive từ endDate nếu chưa có.
+      t.startDate ?? deriveStartFromDeadline(t.endDate, t.gantt.startWeek),
+      t.endDate,
       t.progress,
       t.status,
       t.priority,
@@ -190,8 +221,6 @@ tx(() => {
       t.managementNotes ?? '',
       t.gantt.startWeek,
       t.gantt.endWeek,
-      t.gantt.label ?? null,
-      t.gantt.barColor ?? null,
     );
     tierIdByOldId.set(t.id, Number(info.lastInsertRowid));
   }

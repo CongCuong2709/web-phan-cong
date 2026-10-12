@@ -408,13 +408,13 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
             progress: updated.progress,
             status: updated.status,
             priority: updated.priority,
-            deadline: updated.deadline,
+            // 2026-10: deadline → end_date; thêm start_date
+            start_date: updated.startDate,
+            end_date: updated.endDate,
             description: updated.description,
             management_notes: updated.managementNotes,
             start_week: updated.gantt.startWeek,
             end_week: updated.gantt.endWeek,
-            gantt_label: updated.gantt.label,
-            gantt_bar_color: updated.gantt.barColor,
           }),
           `updateTierItem#${updated.id}`,
       );
@@ -441,7 +441,9 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
       },
       ownerUsername: newItemData.ownerUsername,
       department: newItemData.department ?? user.departments[0],
-      deadline: newItemData.deadline || '31/10/2026',
+      // 2026-10: deadline → end_date; startDate mặc định = today nếu không có
+      startDate: newItemData.startDate || new Date().toISOString().slice(0, 10),
+      endDate: newItemData.endDate || '2099-12-31',
       progress: newItemData.progress || 0,
       status: newItemData.status || 'Chuẩn bị',
       priority: newItemData.priority || 'Trung bình',
@@ -453,7 +455,6 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
       gantt: newItemData.gantt || {
         startWeek: 2,
         endWeek: 3,
-        barColor: '#004ac6',
       },
     };
 
@@ -488,11 +489,11 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
       priority: newItem.priority,
       description: newItem.description,
       management_notes: newItem.managementNotes,
-      deadline: newItem.deadline,
+      // 2026-10: deadline → end_date; thêm start_date
+      start_date: newItem.startDate,
+      end_date: newItem.endDate,
       start_week: newItem.gantt.startWeek,
       end_week: newItem.gantt.endWeek,
-      gantt_label: newItem.gantt.label,
-      gantt_bar_color: newItem.gantt.barColor,
     });
 
     if (result.ok && result.data?.item?.id != null) {

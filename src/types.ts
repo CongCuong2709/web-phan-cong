@@ -71,7 +71,14 @@ export interface TierItem {
   ownerUsername?: string;
   /** Department the item is associated with (used for manager/director scoping). */
   department?: Department;
-  deadline: string; // e.g. "31/10/2026"
+  /**
+   * Lịch trình thực (source of truth cho Gantt chart).
+   * startDate / endDate đều ở format 'YYYY-MM-DD' (ISO).
+   * daysRemaining được compute runtime từ endDate - today() trong transforms.ts.
+   */
+  startDate: string; // 'YYYY-MM-DD'
+  endDate: string;   // 'YYYY-MM-DD'
+  /** Còn lại bao nhiêu ngày tới deadline (compute runtime, có thể âm nếu quá hạn). */
   daysRemaining?: number;
   progress: number; // 0 - 100
   status: 'Đang chạy' | 'Sắp xong' | 'Đã xong' | 'Điểm nghẽn' | 'Đang làm' | 'Đang nghẽn' | 'Lên lịch' | 'Chuẩn bị';
@@ -81,14 +88,15 @@ export interface TierItem {
   deliverables: Deliverable[];
   managementNotes: string;
   blockerAlert?: string;
+  /**
+   * Gantt denormalized data. startWeek/endWeek là week-index trong month view
+   * (1.0..N) — sync từ startDate/endDate runtime, dùng cho performance render.
+   * Display info (color, label) component tự derive từ tier+status+title+progress.
+   */
   gantt: {
-    startWeek: number; // 1 to 4
-    endWeek: number; // 1 to 4 (e.g. 1.5, 2.8, etc.)
-    label?: string;
-    barColor?: string;
-    isBlocked?: boolean;
+    startWeek: number; // 1.0..N tuần trong timeline, hỗ trợ float (vd 1.5, 2.8)
+    endWeek: number; // float; phải >= startWeek
   };
-  collapsed?: boolean;
 }
 
 export interface TeamMember {

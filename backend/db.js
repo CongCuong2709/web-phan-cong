@@ -104,6 +104,7 @@ export const stmt = {
   ),
 
   // --- Tier items ---
+  // Schema 2026-10: tier_items có start_date, end_date; không còn deadline/gantt_label/etc.
   listTierItems: db.prepare(`
     SELECT t.*, u.username AS owner_username_str, u.fullname AS owner_fullname
     FROM tier_items t LEFT JOIN users u ON u.id = t.owner_user_id
@@ -117,16 +118,17 @@ export const stmt = {
   getTierItemByCode: db.prepare('SELECT id FROM tier_items WHERE code = ?'),
   insertTierItem: db.prepare(`
     INSERT INTO tier_items (code, tier, title, parent_id, department_code,
-      owner_user_id, deadline, progress, status, priority, description, management_notes,
-      start_week, end_week, gantt_label, gantt_bar_color)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      owner_user_id, start_date, end_date, progress, status, priority,
+      description, management_notes, start_week, end_week)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
   updateTierItem: db.prepare(`
     UPDATE tier_items SET
       title = ?, progress = ?, status = ?, priority = ?,
-      deadline = ?, description = ?, management_notes = ?,
-      blocker_alert = ?, is_blocked = ?,
-      start_week = ?, end_week = ?, gantt_label = ?, gantt_bar_color = ?
+      start_date = ?, end_date = ?,
+      description = ?, management_notes = ?,
+      blocker_alert = ?,
+      start_week = ?, end_week = ?
     WHERE id = ?
   `),
   deleteTierItem: db.prepare('DELETE FROM tier_items WHERE id = ?'),
