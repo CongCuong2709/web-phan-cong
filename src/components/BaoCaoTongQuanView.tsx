@@ -1,10 +1,19 @@
-import React from 'react';
-import { TierItem, TeamMember, TeamLeadTask } from '../types';
+import React, { useMemo } from 'react';
+import {
+  TierItem,
+  TeamMember,
+  TeamLeadTask,
+  DailyLog,
+  DEPARTMENT_LABEL,
+  Department,
+} from '../types';
 
 interface BaoCaoTongQuanViewProps {
   tierItems: TierItem[];
   teamMembers: TeamMember[];
   teamTasks: TeamLeadTask[];
+  /** Nhật ký thi công (DailyLog) — dùng để tóm tắt hoạt động nhân viên trong ngày. */
+  dailyLogs?: DailyLog[];
   onExport: () => void;
 }
 
@@ -12,6 +21,7 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
   tierItems,
   teamMembers,
   teamTasks,
+  dailyLogs = [],
   onExport,
 }) => {
   const completedTierItems = tierItems.filter((i) => i.progress === 100).length;
@@ -47,6 +57,84 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
   // Bottleneck summary
   const blockedCount = blockedItems.length;
   const firstBlocker = blockedItems[0];
+
+  // === Hoạt động nhân viên hôm nay (Daily Logs) ===
+  // Lọc logs theo ngày hiện tại, group theo phòng ban, tóm tắt per nhân viên.
+  const today = now.toISOString().slice(0, 10);
+  const logsToday = useMemo(
+    () => dailyLogs.filter((l) => l.logDate === today),
+    [dailyLogs, today],
+  );
+
+  const memberByUsername = useMemo(() => {
+    const m = new Map<string, TeamMember>();
+    for (const tm of teamMembers) {
+      if (tm.username) m.set(tm.username.toLowerCase(), tm);
+    }
+    return m;
+  }, [teamMembers]);
+
+  type MemberDailySummary = {
+    username: string;
+    userName: string;
+    role?: string;
+    avatar?: string;
+    department: Department | 'Chưa rõ';
+    logCount: number;
+    avgProgress: number;
+    hasObstacle: boolean;
+  };
+
+  const todaySummaries = useMemo<MemberDailySummary[]>(() => {
+    const acc = new Map<string, MemberDailySummary>();
+    for (const log of logsToday) {
+      const key = log.username.toLowerCase();
+      const tm = memberByUsername.get(key);
+      const dept: Department | 'Chưa rõ' = tm?.department ?? 'Chưa rõ';
+      const existing = acc.get(key);
+      if (existing) {
+        const prevTotal = existing.avgProgress * (existing.logCount - 1);
+        existing.avgProgress = Math.round((prevTotal + log.progress) / existing.logCount);
+        existing.logCount += 1;
+        if (log.obstacle && log.obstacle.trim()) existing.hasObstacle = true;
+      } else {
+        acc.set(key, {
+          username: log.username,
+          userName: log.userName,
+          role: log.userRole,
+          avatar: log.userAvatar,
+          department: dept,
+          logCount: 1,
+          avgProgress: log.progress,
+          hasObstacle: !!(log.obstacle && log.obstacle.trim()),
+        });
+      }
+    }
+    // Ưu tiên người có vướng mắc lên trước; thứ cấp theo số log giảm dần.
+    return Array.from(acc.values()).sort((a, b) => {
+      if (a.hasObstacle !== b.hasObstacle) return a.hasObstacle ? -1 : 1;
+      return b.logCount - a.logCount;
+    });
+  }, [logsToday, memberByUsername]);
+
+  const summariesByDepartment = useMemo(() => {
+    const groups = new Map<Department | 'Chưa rõ', MemberDailySummary[]>();
+    for (const s of todaySummaries) {
+      const arr = groups.get(s.department) ?? [];
+      arr.push(s);
+      groups.set(s.department, arr);
+    }
+    return Array.from(groups.entries());
+  }, [todaySummaries]);
+
+  const todayStats = useMemo(
+    () => ({
+      members: todaySummaries.length,
+      totalLogs: logsToday.length,
+      obstacleMembers: todaySummaries.filter((s) => s.hasObstacle).length,
+    }),
+    [logsToday, todaySummaries],
+  );
 
   return (
     <div className="flex flex-col w-full">
@@ -283,6 +371,128 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
               ))}
             </div>
           </div>
+        </div>
+
+        {/* Hoạt động nhân viên hôm nay — Daily Logs theo phòng ban */}
+        <div className="bg-white p-5 rounded-xl border border-[#e5eeff] shadow-sm flex flex-col gap-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-[20px] text-[#004ac6]">
+                edit_calendar
+              </span>
+              <h3 className="text-[16px] font-bold text-[#0b1c30]">
+                Hoạt động nhân viên hôm nay
+              </h3>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-[11px]">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#eff4ff] text-[#004ac6] font-semibold">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#004ac6]"></span>
+                {todayStats.members} nhân viên đã ghi
+              </span>
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#eff4ff] text-[#004ac6] font-semibold">
+                {todayStats.totalLogs} nhật ký
+              </span>
+              {todayStats.obstacleMembers > 0 && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#ffdad6] text-[#ba1a1a] font-semibold">
+                  <span className="material-symbols-outlined text-[13px]">warning</span>
+                  {todayStats.obstacleMembers} có vướng mắc
+                </span>
+              )}
+            </div>
+          </div>
+
+          {todayStats.totalLogs === 0 ? (
+            <div className="flex items-center gap-2.5 p-4 rounded-lg bg-[#eff4ff]/40 border border-dashed border-[#c3c6d7]">
+              <span className="material-symbols-outlined text-[20px] text-[#565e74]">
+                inbox
+              </span>
+              <p className="text-[13px] text-[#565e74]">
+                Chưa có nhân viên nào ghi nhật ký hôm nay ({today}).
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {summariesByDepartment.map(([dept, members]) => (
+                <div
+                  key={dept}
+                  className="rounded-lg border border-[#eff4ff] bg-[#f8f9ff] overflow-hidden"
+                >
+                  <div className="flex items-center justify-between px-3.5 py-2 bg-white border-b border-[#eff4ff]">
+                    <span className="text-[12px] font-bold text-[#0b1c30] tracking-tight">
+                      {dept === 'Chưa rõ' ? dept : `${dept} · ${DEPARTMENT_LABEL[dept as Department]}`}
+                    </span>
+                    <span className="text-[11px] text-[#565e74] font-mono">
+                      {members.length} người
+                    </span>
+                  </div>
+                  <ul className="divide-y divide-[#eff4ff]">
+                    {members.map((m) => (
+                      <li
+                        key={m.username}
+                        className="flex items-start gap-3 px-3.5 py-2.5 hover:bg-white transition-colors"
+                      >
+                        <div className="w-9 h-9 rounded-full bg-[#eff4ff] flex items-center justify-center text-[#004ac6] font-bold text-[13px] shrink-0">
+                          {m.avatar ? (
+                            <img
+                              src={m.avatar}
+                              alt={m.userName}
+                              className="w-9 h-9 rounded-full object-cover"
+                            />
+                          ) : (
+                            m.userName.charAt(0).toUpperCase()
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[13px] font-semibold text-[#0b1c30] truncate">
+                              {m.userName}
+                            </span>
+                            <span className="font-mono text-[10px] text-[#565e74]">
+                              @{m.username}
+                            </span>
+                            {m.hasObstacle && (
+                              <span
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#ffdad6] text-[#ba1a1a] text-[10px] font-bold"
+                                title="Có vướng mắc được ghi nhận hôm nay"
+                              >
+                                <span className="material-symbols-outlined text-[11px]">
+                                  warning
+                                </span>
+                                Vướng mắc
+                              </span>
+                            )}
+                          </div>
+                          {m.role && (
+                            <p className="text-[11px] text-[#565e74] truncate mt-0.5">
+                              {m.role}
+                            </p>
+                          )}
+                          <div className="flex items-center gap-3 mt-1 text-[11px] text-[#434655]">
+                            <span className="inline-flex items-center gap-1">
+                              <span className="material-symbols-outlined text-[12px] text-[#004ac6]">
+                                description
+                              </span>
+                              <span className="font-semibold">{m.logCount}</span>
+                              <span className="text-[#565e74]">nhật ký</span>
+                            </span>
+                            <span className="inline-flex items-center gap-1">
+                              <span className="material-symbols-outlined text-[12px] text-[#006243]">
+                                trending_up
+                              </span>
+                              <span className="font-semibold">TB</span>
+                              <span className="font-mono font-bold text-[#006243]">
+                                {m.avgProgress}%
+                              </span>
+                            </span>
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

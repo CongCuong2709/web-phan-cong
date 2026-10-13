@@ -790,6 +790,7 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
               tierItems={visibleTierItems}
               teamMembers={visibleTeamMembers}
               teamTasks={visibleTeamTasks}
+              dailyLogs={dailyLogs}
               onExport={() => setIsExportModalOpen(true)}
             />
           ))}

@@ -294,6 +294,23 @@ export const api = {
     return r;
   },
 
+  /**
+   * POST /api/auth/change-password — Public endpoint (không cần auth).
+   * Dùng từ trang Login: user nhập username + mật khẩu cũ + mật khẩu mới.
+   * Trả 204 nếu thành công; 400/401 nếu input invalid / sai mật khẩu cũ.
+   */
+  async changePassword(
+    username: string,
+    currentPassword: string,
+    newPassword: string
+  ) {
+    return request('POST', '/api/auth/change-password', {
+      username,
+      currentPassword,
+      newPassword,
+    });
+  },
+
   /** GET /api/health — dùng để check backend lên hay chưa */
   async health() {
     return request<{ ok: boolean; time: string }>('GET', '/api/health');

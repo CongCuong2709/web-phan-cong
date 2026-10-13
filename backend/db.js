@@ -90,6 +90,11 @@ export const stmt = {
   getUserDepartments: db.prepare(
     'SELECT department_code FROM user_departments WHERE user_id = ?'
   ),
+  // Update password_hash cho user (trigger users_updated sẽ tự bump updated_at).
+  // Trả về số row affected để caller biết update có thành công không.
+  updateUserPasswordHash: db.prepare(
+    'UPDATE users SET password_hash = ? WHERE id = ?'
+  ),
 
   // --- Sessions ---
   createSession: db.prepare(`
