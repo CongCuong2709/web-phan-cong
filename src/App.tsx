@@ -70,9 +70,8 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     return user.role === 'employee' ? 'viec-cua-toi' : 'cay-gantt-4-tang';
   });
 
-  // Core state — full data store, filtered per render below.
-  // Phase 1+: backend là source of truth duy nhất. Initial state = empty.
-  // Sau khi user login, fetch fresh data từ API xuống (xem useEffect bên dưới).
+  // Core state — backend là source of truth. Initial state = rỗng;
+  // được fill sau login qua useEffect bên dưới.
   const [tierItems, setTierItems] = useState<TierItem[]>([]);
 
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -137,14 +136,13 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
   }, [user.id]);
 
   // Sub-tasks + nhật ký thi công + history (cho DetailsDrawer)
-  // Phase 1+: fetch từ API sau login; không dùng hardcoded fallback nữa.
   const [subtasks, setSubtasks] = useState<SubTask[]>([]);
   const [dailyLogs, setDailyLogs] = useState<DailyLog[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
 
-  // BUG-04 fix: danh sách user thật từ backend (cho dropdown "Người phụ trách" trong NewItemModal).
-  // Admin thấy tất cả; Manager thấy user cùng phòng; Employee bị 403 (không cần cho tab này).
-  // Ban đầu = SEED_USERS để không flash "rỗng" trong lúc fetch; sẽ bị replace ngay khi API trả về.
+  // Danh sách user từ backend (cho dropdown "Người phụ trách" trong NewItemModal).
+  // Admin thấy tất cả; Manager thấy user cùng phòng; Employee bị 403 (skip).
+  // Initial = SEED_USERS để tránh flash rỗng khi đang fetch.
   const [directoryUsers, setDirectoryUsers] = useState<User[]>(SEED_USERS);
 
   /** Fetch /api/users sau khi login. Employee skip (backend 403). */
@@ -182,9 +180,7 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     return () => { cancelled = true; };
   }, [user.id, user.role]);
 
-  // C9 fix: helper ghi HistoryEntry kèm entityType/entityId phù hợp.
-  // Được gọi từ các handler chính (handleUpdateTierItem, handleAddTierItem,
-  // handleAddDailyLog, handleApproveTeamTask, handleResolveHelp, ...).
+  /** Ghi HistoryEntry vào state — được gọi từ các handler chính. */
   const logHistory = (
     entityType: HistoryEntry['entityType'],
     entityId: string,
@@ -324,8 +320,6 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
   const [isNewPersonalTaskOpen, setIsNewPersonalTaskOpen] = useState(false);
 
   // Toast state
-  // Fix Bổ sung-5: showToast giờ nhận type để Toast component hiển thị màu/icon phù hợp
-  // (success/error/warning). Trước đây luôn là success → user không phân biệt được lỗi API.
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastType, setToastType] = useState<'success' | 'error' | 'warning'>('success');
   const showToast = (
@@ -337,9 +331,10 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // Roll-up recalculation helper
-  // Fix Bổ sung-2: pre-group childrenByParent trong 1 pass O(N) thay vì filter 3 lần
-  // trong mỗi tier loop → cũ O(N²), giờ O(N). Quan trọng khi scale lên 500+ items.
+  /**
+   * Tính lại tiến độ cộng dồn: T4→T3→T2→T1.
+   * Pre-group theo parent trong 1 pass O(N) để tránh nested filter O(N²).
+   */
   const recalculateRollup = (items: TierItem[]): TierItem[] => {
     // Explicit Map type — nếu không, TypeScript widen status/progress thành string/number
     // và các phép gán literal bên dưới bị reject.
@@ -390,39 +385,34 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     return Array.from(itemsMap.values());
   };
 
-  // Update item in 4-Tier tree
+  /** Cập nhật 1 item trong cây 4 tầng + recalculate rollup + sync backend. */
   const handleUpdateTierItem = (updated: TierItem) => {
     const newItems = tierItems.map((item) => (item.id === updated.id ? updated : item));
-    const recalculated = recalculateRollup(newItems);
-    setTierItems(recalculated);
+    setTierItems(recalculateRollup(newItems));
     setSelectedItemForDrawer(updated);
-    // C9 fix: ghi lịch sử thao tác.
     logHistory('task', updated.id, `Cập nhật tiến độ ${updated.code} → ${updated.progress}%`);
-    // Dual-write: sync lên backend (fire-and-forget).
-    // TierItem.id ở frontend là 'tier_item-XYZ' nhưng backend dùng INTEGER; nếu
-    // id là số thì sync được, nếu là string seed → skip (Phase 2 sẽ migrate ID).
+    // Sync lên backend nếu id là số (backend dùng INTEGER PK).
     if (typeof updated.id === 'number' || /^\d+$/.test(String(updated.id))) {
       fireAndForget(
         api.updateTierItem(Number(updated.id), {
           title: updated.title,
-            progress: updated.progress,
-            status: updated.status,
-            priority: updated.priority,
-            // 2026-10: deadline → end_date; thêm start_date
-            start_date: updated.startDate,
-            end_date: updated.endDate,
-            description: updated.description,
-            management_notes: updated.managementNotes,
-            start_week: updated.gantt.startWeek,
-            end_week: updated.gantt.endWeek,
-          }),
-          `updateTierItem#${updated.id}`,
+          progress: updated.progress,
+          status: updated.status,
+          priority: updated.priority,
+          start_date: updated.startDate,
+          end_date: updated.endDate,
+          description: updated.description,
+          management_notes: updated.managementNotes,
+          start_week: updated.gantt.startWeek,
+          end_week: updated.gantt.endWeek,
+        }),
+        `updateTierItem#${updated.id}`,
       );
     }
     showToast(`Đã cập nhật tiến độ ${updated.code} lên ${updated.progress}% (Tự động cộng dồn)`);
   };
 
-  // Add new item into 4-Tier tree
+  /** Thêm item mới vào cây 4 tầng: optimistic update trước, rồi sync backend. */
   const handleAddTierItem = async (newItemData: Partial<TierItem>) => {
     const localId = `tier-item-${Date.now()}`;
     const newItem: TierItem = {
@@ -468,11 +458,8 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     );
     showToast(`Đã thêm thành công: ${newItem.title}`);
 
-    // Sync lên backend — đợi response để lấy id thật
-    // Fix TD-02: parentId từ form đã là id (string), chỉ cần Number() trực tiếp.
-    //           KHÔNG lookup theo code (id chứ không phải code mới đúng).
-    // Fix Bổ sung-3: sau khi backend trả về item thật, thay local id bằng backend id
-    //                để các PATCH sau gọi đúng endpoint.
+    // Sync lên backend — đợi response để replace local id bằng backend INTEGER id,
+    // đảm bảo các PATCH sau gọi đúng endpoint.
     const parentNumericId = newItem.parentId
       ? Number(newItem.parentId) || undefined
       : undefined;
@@ -532,8 +519,6 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
       );
     } else {
       console.warn(`[handleAddTierItem] Backend lưu thất bại: ${result.error?.message || 'unknown'}`);
-      // Fix Bổ sung-5: báo lỗi API rõ ràng (toast error) để user biết dữ liệu chỉ
-      // tồn tại local. Trước đây silent → user tưởng backend OK.
       showToast(
         `Đã lưu local nhưng backend lỗi: ${result.error?.message || 'unknown'}`,
         'warning'
@@ -583,8 +568,7 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     showToast('Đã ghi nhận hỗ trợ! Trạng thái chuyển sang: Đang làm bình thường');
   };
 
-  // Toggle Employee Task Done
-  // BUG-03 fix: đồng bộ lên backend POST /api/employee-tasks/:id/toggle (xem employeeTasks.js:155-181).
+  /** Toggle trạng thái done/doing của EmployeeTask — sync backend. */
   const handleToggleEmployeeTask = (taskId: string) => {
     setEmployeeTasks((prev) =>
       prev.map((t) => {
@@ -609,9 +593,7 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     }
   };
 
-  // Start task in employee view
-  // BUG-03 fix: dùng PATCH /api/employee-tasks/:id (chuyển status pending → doing).
-  // Backend toggle endpoint chỉ xử lý done ↔ doing, không cover pending → doing.
+  /** Chuyển task từ pending → doing. Dùng PATCH thay vì toggle (toggle chỉ done↔doing). */
   const handleStartEmployeeTask = (taskId: string) => {
     setEmployeeTasks((prev) =>
       prev.map((t) => (t.id === taskId ? { ...t, status: 'doing' } : t))
@@ -637,11 +619,7 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     showToast('Đã lưu kết quả bàn giao mới!');
   };
 
-  // Fix UI-03: thêm ghi chú vào EmployeeTask — immutable update đúng cách
-  // (trước đây ViecCuaToiView mutate trực tiếp task.notes — vi phạm React).
-  // BUG-02 fix: đồng bộ lên backend POST /api/employee-tasks/:id/notes (xem employeeTasks.js:183-215).
-  // Dual-write: cập nhật local trước (UI mượt), song song fire-and-forget API.
-  // Backend có thể trả 403 nếu user không phải owner — log silent, không block UI.
+  /** Thêm ghi chú vào EmployeeTask — immutable update + fire-and-forget API. */
   const handleAddEmployeeNote = (taskId: string, noteText: string) => {
     setEmployeeTasks((prev) =>
       prev.map((t) =>
@@ -703,13 +681,10 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     showToast(`Lời nhắn đã gửi tới Trưởng phòng phụ trách (phòng ban ${user.departments[0] ?? ''})!`);
   };
 
-  // Add personal task (uses current user info)
+  /** Tạo việc cá nhân (không có trong tier tree). */
   const handleAddPersonalTask = (title: string, deadline: string, notes: string) => {
-    // C4 fix: tìm đúng Trưởng phòng phụ trách thay vì gán chính employee.
-    // BUG-05 fix: ưu tiên dùng `directoryUsers` (từ /api/users nếu manager/admin vừa login)
-    // hoặc `onlineUsers` (từ AuthContext — bao gồm user backend merge vào).
-    // Fallback về SEED_USERS chỉ khi cả 2 nguồn trên rỗng (offline thật sự).
-    // Lưu ý: employee không gọi được /api/users (403), nên thường dùng AuthContext.users.
+    // Ưu tiên directoryUsers (từ /api/users), fallback về onlineUsers rồi SEED_USERS (offline).
+    // Employee không gọi được /api/users (403), thường dùng onlineUsers từ AuthContext.
     const sourceUsers = directoryUsers.length > 0 ? directoryUsers : onlineUsers;
     const manager = findManagerOf(
       user,
@@ -906,11 +881,10 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
         onAddItem={handleAddTierItem}
         parents={tierItems.map((i) => ({ id: i.id, title: i.title, tier: i.tier }))}
         currentUser={user}
-        // BUG-04 fix: dùng danh sách user từ backend (`directoryUsers`) thay vì SEED_USERS.
-        // Filter theo cùng phòng ban của user hiện tại — admin (departments=[]) thấy hết.
+        // Filter theo phòng ban của user; admin (departments=[]) thấy hết.
         deptUsers={directoryUsers
           .filter((u) => {
-            if (user.departments.length === 0) return true; // admin sentinel
+            if (user.departments.length === 0) return true;
             return u.departments?.some((d) => user.departments.includes(d));
           })
           .map((u) => ({ username: u.username, fullname: u.fullname }))}

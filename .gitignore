@@ -13,10 +13,23 @@ test/
 tests/
 __tests__/
 backend/test/
-*.test.db*
+*.test.db
+*.test.db-shm
+*.test.db-wal
 *.test.js
 *.test.ts
 *.spec.js
 *.spec.ts
 vitest.config.ts
 backend/vitest.config.ts
+
+# SQLite WAL temporary files (auto-regenerated, never commit)
+*.db-shm
+*.db-wal
+
+# AI/tool artifacts
+metadata.json
+
+# Debug & one-time scripts (moved to scripts/ but not committed)
+backend/scripts/debug-*.ts
+backend/scripts/verify-*.ts

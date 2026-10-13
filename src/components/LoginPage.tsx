@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../auth/AuthContext';
-import { BRAND_LOGO_URL } from '../data/initialData';
+import { BRAND_LOGO_URL } from '../lib/constants';
 
 const LoginPage: React.FC = () => {
   const { login } = useAuth();
