@@ -47,8 +47,8 @@ export function canCreateTiers(role) {
   }
 }
 
-/** Kiểm tra user có sửa 1 TierItem cụ thể không. */
-export function canEditTierItem(user, item) {
+/** Kiểm tra user có sửa 1 Task cụ thể không (ISS-007: thay canEditTierItem). */
+export function canEditTask(user, item) {
   if (!user || !item) return false;
   if (user.role === 'admin') return true;
   if (user.role === 'director') return false;
@@ -57,8 +57,11 @@ export function canEditTierItem(user, item) {
   return item.tier === 4 && item.owner_username_str === user.username;
 }
 
-/** Tương tự edit cho deliverable. */
-export const canEditDeliverable = canEditTierItem;
+/** Backward-compat alias. */
+export const canEditTierItem = canEditTask;
+
+/** Tương tự edit cho deliverable (inline columns của tasks). */
+export const canEditDeliverable = canEditTask;
 
 /** Quyền edit SubTask. Manager cần parent item trong phòng ban. */
 export function canEditSubtask(user, subtask, parentItem) {
@@ -104,12 +107,15 @@ export function uid(prefix = 'id') {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** Lấy tier item + check quyền edit trong 1 bước. Return null nếu no perm. */
-export function loadTierItemIfEditable(user, itemId) {
+/** Lấy task + check quyền edit trong 1 bước. */
+export function loadTaskIfEditable(user, taskId) {
   const row = db.prepare(`SELECT t.*, u.username AS owner_username_str
-    FROM tier_items t LEFT JOIN users u ON u.id = t.owner_user_id
-    WHERE t.id = ?`).get(itemId);
+    FROM tasks t LEFT JOIN users u ON u.id = t.owner_user_id
+    WHERE t.id = ?`).get(taskId);
   if (!row) return { error: 'not_found' };
-  if (!canEditTierItem(user, row)) return { error: 'forbidden' };
+  if (!canEditTask(user, row)) return { error: 'forbidden' };
   return { item: row };
 }
+
+/** Backward-compat alias. */
+export const loadTierItemIfEditable = loadTaskIfEditable;

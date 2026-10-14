@@ -17,11 +17,8 @@ import './db.js'; // Trigger DB bootstrap (side-effect import)
 
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
-import tierItemRoutes from './routes/tierItems.js';
-import deliverableRoutes from './routes/deliverables.js';
+import taskRoutes from './routes/tasks.js';
 import subtaskRoutes from './routes/subtasks.js';
-import teamLeadTaskRoutes from './routes/teamLeadTasks.js';
-import employeeTaskRoutes from './routes/employeeTasks.js';
 import helpRequestRoutes from './routes/helpRequests.js';
 import historyRoutes from './routes/history.js';
 import teamMemberRoutes from './routes/teamMembers.js';
@@ -53,12 +50,13 @@ app.get('/api/health', (_req, res) => {
 // --- Routes ---
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
-app.use('/api/tier-items', tierItemRoutes);
-app.use('/api', deliverableRoutes);   // /tier-items/:id/deliverables, /deliverables/:id/*
-app.use('/api', subtaskRoutes);       // /tier-items/:id/subtasks, /subtasks/:id/*, /subtasks/:id/logs
-app.use('/api/team-tasks', teamLeadTaskRoutes);
+// ISS-007: unified tasks route — thay thế tier-items, team-tasks, employee-tasks
+app.use('/api/tasks', taskRoutes);
+app.use('/api/tier-items', taskRoutes);  // backward-compat alias
+app.use('/api/team-tasks', taskRoutes);   // backward-compat alias
+app.use('/api/employee-tasks', taskRoutes); // backward-compat alias
+app.use('/api', subtaskRoutes);          // /tasks/:id/subtasks, /subtasks/:id/*, /subtasks/:id/logs
 app.use('/api/team-members', teamMemberRoutes);
-app.use('/api/employee-tasks', employeeTaskRoutes);
 app.use('/api/help-requests', helpRequestRoutes);
 app.use('/api/history', historyRoutes);
 

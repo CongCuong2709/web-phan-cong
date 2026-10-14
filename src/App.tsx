@@ -12,6 +12,35 @@ import {
   DailyLog,
   HistoryEntry,
 } from './types';
+
+// ─────────────────────────────────────────────────────────────────────
+// Helper maps: Tiếng Việt (UI) ↔ enum DB (ISS-007 unified)
+// ─────────────────────────────────────────────────────────────────────
+
+/** Map UI status tiếng Việt → enum DB. */
+export function viStatusToEnum(s: string | undefined): string {
+  switch (s) {
+    case 'Đã xong': return 'done';
+    case 'Đang chạy':
+    case 'Đang làm': return 'doing';
+    case 'Sắp xong': return 'pending_approval';
+    case 'Điểm nghẽn':
+    case 'Đang nghẽn': return 'blocked';
+    case 'Lên lịch':
+    case 'Chuẩn bị':
+    default: return 'pending';
+  }
+}
+
+/** Map UI priority tiếng Việt → enum DB. */
+export function viPriorityToEnum(p: string | undefined): string {
+  switch (p) {
+    case 'Cao (Critical Path)': return 'critical';
+    case 'Thấp': return 'low';
+    case 'Trung bình':
+    default: return 'normal';
+  }
+}
 import { AuthProvider, useAuth } from './auth/AuthContext';
 import { canAddDailyLog, canEditSubtask, findManagerOf, uid } from './auth/permissions';
 import { api, fireAndForget } from './lib/apiClient';
@@ -86,28 +115,20 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // Tier items
-      const tierRes = await api.listTierItems();
-      if (!cancelled && tierRes.ok) {
-        setTierItems(tierRes.data.items.map(apiToTierItem));
+      // ISS-007: Single source of truth — 1 endpoint /api/tasks cho cả 3 view
+      // (Gantt, Giao việc nhóm, Việc của tôi). Transform sang 3 derived types.
+      const tasksRes = await api.listTasks();
+      if (!cancelled && tasksRes.ok) {
+        const items = tasksRes.data.items;
+        setTierItems(items.map(apiToTierItem));
+        setTeamTasks(items.map(apiToTeamLeadTask));
+        setEmployeeTasks(items.map(apiToEmployeeTask));
       }
 
-      // Team members (derive từ backend users + tier items)
+      // Team members (derive từ backend users + tasks)
       const memRes = await api.listTeamMembers();
       if (!cancelled && memRes.ok) {
         setTeamMembers(memRes.data.members.map(apiToTeamMember));
-      }
-
-      // Team tasks
-      const teamRes = await api.listTeamTasks();
-      if (!cancelled && teamRes.ok) {
-        setTeamTasks(teamRes.data.tasks.map(apiToTeamLeadTask));
-      }
-
-      // Employee tasks
-      const empRes = await api.listEmployeeTasks();
-      if (!cancelled && empRes.ok) {
-        setEmployeeTasks(empRes.data.tasks.map(apiToEmployeeTask));
       }
 
       // Help requests
@@ -251,14 +272,14 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
 
       // 2. Walk UP: T4 → T3 → T2 → T1 (parent chain làm read-only context)
       for (const t of myT4) {
-        let cur: string | undefined = t.parentId;
+        let cur: string | undefined = t.parentId ?? undefined;
         while (cur) {
           if (seen.has(cur)) break;
           const parent = tierItems.find((p) => p.id === cur);
           if (!parent) break;
           result.push(parent);
           seen.add(cur);
-          cur = parent.parentId;
+          cur = parent.parentId ?? undefined;
         }
       }
       return result;
@@ -359,13 +380,15 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
         children.reduce((acc, c) => acc + c.progress, 0) / children.length
       );
       parent.progress = avg;
-      if (avg === 100) parent.status = 'Đã xong';
-      else if (avg > 90) parent.status = 'Sắp xong';
+      // ISS-007: TierItem.status là Tiếng Việt (string union). Cast any-string.
+      const status = parent.status as string;
+      if (avg === 100) parent.status = 'Đã xong' as TierItem['status'];
+      else if (avg > 90) parent.status = 'Sắp xong' as TierItem['status'];
       else if (includeRunningStatus && avg > 0 &&
-               (parent.status === 'Đã xong' || parent.status === 'Sắp xong')) {
+               (status === 'Đã xong' || status === 'Sắp xong')) {
         // Tier 1: nếu trước đó đã xong mà progress giảm → revert về 'Đang chạy'.
         // Tránh overwrite 'Chuẩn bị' khi avg = 0.
-        parent.status = 'Đang chạy';
+        parent.status = 'Đang chạy' as TierItem['status'];
       }
     };
 
@@ -394,11 +417,11 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     // Sync lên backend nếu id là số (backend dùng INTEGER PK).
     if (typeof updated.id === 'number' || /^\d+$/.test(String(updated.id))) {
       fireAndForget(
-        api.updateTierItem(Number(updated.id), {
+        api.updateTask(Number(updated.id), {
           title: updated.title,
           progress: updated.progress,
-          status: updated.status,
-          priority: updated.priority,
+          status: viStatusToEnum(updated.status),
+          priority: viPriorityToEnum(updated.priority),
           start_date: updated.startDate,
           end_date: updated.endDate,
           description: updated.description,
@@ -406,7 +429,7 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
           start_week: updated.gantt.startWeek,
           end_week: updated.gantt.endWeek,
         }),
-        `updateTierItem#${updated.id}`,
+        `updateTask#${updated.id}`,
       );
     }
     showToast(`Đã cập nhật tiến độ ${updated.code} lên ${updated.progress}% (Tự động cộng dồn)`);
@@ -429,7 +452,7 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
         initial: user.initial ?? user.fullname.charAt(0),
         avatar: user.avatar,
       },
-      ownerUsername: newItemData.ownerUsername,
+      ownerUsername: newItemData.ownerUsername ?? '',
       department: newItemData.department ?? user.departments[0],
       // 2026-10: deadline → end_date; startDate mặc định = today nếu không có
       startDate: newItemData.startDate || new Date().toISOString().slice(0, 10),
@@ -464,19 +487,20 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
       ? Number(newItem.parentId) || undefined
       : undefined;
 
-    const result = await api.createTierItem({
+    const result = await api.createTask({
       code: newItem.code,
       tier: newItem.tier,
       title: newItem.title,
       parent_id: parentNumericId,
       department_code: newItem.department,
-      owner_user_id: undefined, // backend sẽ default = current user
+      // ISS-006 fix: gửi owner_username thay vì undefined → backend tra cứu ID
+      owner_username: newItem.ownerUsername,
       progress: newItem.progress,
-      status: newItem.status,
-      priority: newItem.priority,
+      // Map status VN → enum DB
+      status: viStatusToEnum(newItem.status),
+      priority: viPriorityToEnum(newItem.priority),
       description: newItem.description,
       management_notes: newItem.managementNotes,
-      // 2026-10: deadline → end_date; thêm start_date
       start_date: newItem.startDate,
       end_date: newItem.endDate,
       start_week: newItem.gantt.startWeek,
@@ -547,7 +571,9 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     );
     logHistory('task', taskId, 'Xử lý yêu cầu hỗ trợ từ nhân viên');
     if (typeof taskId === 'number' || /^\d+$/.test(String(taskId))) {
-      fireAndForget(api.resolveHelp(Number(taskId)), `resolveHelp#${taskId}`);
+      // ISS-007: backend mới dùng /api/tasks/:id/approve (không có resolveHelp riêng).
+      // Đánh dấu task = done để "resolve" help.
+      fireAndForget(api.approveTask(Number(taskId)), `approveTask#${taskId}`);
     }
     // Update the team member who owns this task (by ownerName matching member.name)
     if (task) {

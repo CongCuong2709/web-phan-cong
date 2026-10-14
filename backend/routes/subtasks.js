@@ -1,34 +1,50 @@
 /**
- * routes/subtasks.js — CRUD cho SubTask (T4.5) + DailyLog (nhật ký thi công).
+ * routes/subtasks.js — SubTask + DailyLog CRUD (ISS-007: ref FK sang tasks).
  *
  * Endpoints:
- *   GET    /api/tier-items/:tierId/subtasks                — List subtasks
- *   POST   /api/tier-items/:tierId/subtasks                — Tạo subtask (canEditSubtask)
- *   PATCH  /api/subtasks/:id                               — Update subtask
- *   DELETE /api/subtasks/:id                               — Xoá subtask (manager+)
- *   PATCH  /api/subtasks/:id/progress                      — Quick progress slider
- *   GET    /api/subtasks/:id/logs                          — List daily logs
- *   POST   /api/subtasks/:id/logs                          — Thêm daily log (RBAC check)
+ *   GET    /api/tasks/:taskId/subtasks                — List subtasks
+ *   POST   /api/tasks/:taskId/subtasks                — Tạo subtask
+ *   PATCH  /api/subtasks/:id                          — Update subtask
+ *   DELETE /api/subtasks/:id                          — Xoá subtask (manager+)
+ *   PATCH  /api/subtasks/:id/progress                 — Quick progress slider
+ *   GET    /api/subtasks/:id/logs                     — List daily logs
+ *   POST   /api/subtasks/:id/logs                     — Thêm daily log (RBAC check)
+ *
+ * Backward-compat: giữ cả /api/tier-items/:tierId/subtasks alias cho frontend
+ * cũ. Sau khi frontend update xong, có thể xoá alias.
  */
 
 import { Router } from 'express';
 import { db, stmt, tx } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
-import { canEditSubtask, canAddDailyLog, inDepartment, uid } from '../utils/permissions.js';
+import { canEditSubtask, canAddDailyLog, inDepartment } from '../utils/permissions.js';
 
 const router = Router();
 router.use(requireAuth);
 
-/** GET /api/tier-items/:tierId/subtasks — List subtasks của tier item. */
-router.get('/tier-items/:tierId/subtasks', (req, res) => {
-  const tierItem = stmt.getTierItem.get(Number(req.params.tierId));
-  if (!tierItem) return res.status(404).json({ error: 'not_found' });
-  const items = stmt.getSubtasksByTier.all(tierItem.id);
+/** Backward-compat helper: GET /api/tier-items/:id/subtasks alias. */
+function getTaskOr404(id) {
+  return stmt.getTask.get(Number(id));
+}
+
+/** GET /api/tasks/:taskId/subtasks — List subtasks. */
+router.get('/tasks/:taskId/subtasks', (req, res) => {
+  const task = getTaskOr404(req.params.taskId);
+  if (!task) return res.status(404).json({ error: 'not_found' });
+  const items = stmt.getSubtasksByTask.all(task.id);
   return res.json({ items });
 });
 
-/** GET /api/subtasks — List tất cả subtasks (cho frontend khởi tạo). */
-router.get('/subtasks', (req, res) => {
+/** Backward-compat alias. */
+router.get('/tier-items/:tierId/subtasks', (req, res) => {
+  const task = getTaskOr404(req.params.tierId);
+  if (!task) return res.status(404).json({ error: 'not_found' });
+  const items = stmt.getSubtasksByTask.all(task.id);
+  return res.json({ items });
+});
+
+/** GET /api/subtasks — List tất cả subtasks (bulk fetch). */
+router.get('/subtasks', (_req, res) => {
   const items = stmt.listAllSubtasks.all();
   return res.json({ items });
 });
@@ -47,19 +63,17 @@ router.get('/daily-logs', (_req, res) => {
   return res.json({ items });
 });
 
-/** POST /api/tier-items/:tierId/subtasks — Tạo subtask. */
-router.post('/tier-items/:tierId/subtasks', (req, res) => {
-  const tierItem = stmt.getTierItem.get(Number(req.params.tierId));
-  if (!tierItem) return res.status(404).json({ error: 'not_found' });
-  // Chỉ parent T4 mới có subtask
-  if (tierItem.tier !== 4) {
+/** POST /api/tasks/:taskId/subtasks — Tạo subtask. */
+router.post('/tasks/:taskId/subtasks', (req, res) => {
+  const task = getTaskOr404(req.params.taskId);
+  if (!task) return res.status(404).json({ error: 'not_found' });
+  if (task.tier !== 4) {
     return res.status(400).json({ error: 'invalid_tier', message: 'Chỉ T4 mới có SubTask.' });
   }
-  // Manager: trong cùng phòng ban. Admin: luôn được.
   if (req.user.role === 'director') {
     return res.status(403).json({ error: 'forbidden', message: 'Director không tạo SubTask.' });
   }
-  if (req.user.role === 'manager' && !inDepartment(req.user, tierItem.department_code)) {
+  if (req.user.role === 'manager' && !inDepartment(req.user, task.department_code)) {
     return res.status(403).json({ error: 'forbidden' });
   }
   if (req.user.role === 'employee') {
@@ -72,20 +86,14 @@ router.post('/tier-items/:tierId/subtasks', (req, res) => {
   }
 
   const info = db.prepare(`
-    INSERT INTO subtasks (tier_item_id, name, description, assignee_user_id,
-      start_date, end_date, progress, status, priority, results)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO subtasks (task_id, name, assignee_user_id, progress, status)
+    VALUES (?, ?, ?, ?, ?)
   `).run(
-    tierItem.id,
+    task.id,
     body.name.trim(),
-    body.description ?? null,
     body.assignee_user_id ? Number(body.assignee_user_id) : null,
-    body.start_date ?? new Date().toISOString().slice(0, 10),
-    body.end_date ?? new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString().slice(0, 10),
     Number(body.progress ?? 0),
-    body.status ?? 'not_started',
-    body.priority ?? 'medium',
-    body.results ?? null,
+    body.status ?? 'doing',
   );
 
   stmt.insertHistory.run(
@@ -105,7 +113,7 @@ router.post('/tier-items/:tierId/subtasks', (req, res) => {
 router.patch('/subtasks/:id(\\d+)', (req, res) => {
   const subtask = stmt.getSubtask.get(Number(req.params.id));
   if (!subtask) return res.status(404).json({ error: 'not_found' });
-  const parent = stmt.getTierItem.get(subtask.tier_item_id);
+  const parent = stmt.getTask.get(subtask.task_id);
   if (!canEditSubtask(req.user, subtask, parent)) {
     return res.status(403).json({ error: 'forbidden' });
   }
@@ -113,16 +121,12 @@ router.patch('/subtasks/:id(\\d+)', (req, res) => {
   const body = req.body || {};
   db.prepare(`
     UPDATE subtasks SET
-      name = ?, description = ?, progress = ?, status = ?, priority = ?,
-      results = ?, assignee_user_id = ?
+      name = ?, progress = ?, status = ?, assignee_user_id = ?
     WHERE id = ?
   `).run(
     body.name ?? subtask.name,
-    body.description ?? subtask.description ?? null,
     Number(body.progress ?? subtask.progress),
     body.status ?? subtask.status,
-    body.priority ?? subtask.priority,
-    body.results ?? subtask.results ?? null,
     body.assignee_user_id !== undefined
       ? (body.assignee_user_id ? Number(body.assignee_user_id) : null)
       : subtask.assignee_user_id,
@@ -142,11 +146,11 @@ router.patch('/subtasks/:id(\\d+)', (req, res) => {
   return res.json({ item: updated });
 });
 
-/** PATCH /api/subtasks/:id/progress — Quick progress update (slider). */
+/** PATCH /api/subtasks/:id/progress — Quick progress slider. */
 router.patch('/subtasks/:id(\\d+)/progress', (req, res) => {
   const subtask = stmt.getSubtask.get(Number(req.params.id));
   if (!subtask) return res.status(404).json({ error: 'not_found' });
-  const parent = stmt.getTierItem.get(subtask.tier_item_id);
+  const parent = stmt.getTask.get(subtask.task_id);
   if (!canEditSubtask(req.user, subtask, parent)) {
     return res.status(403).json({ error: 'forbidden' });
   }
@@ -166,18 +170,17 @@ router.patch('/subtasks/:id(\\d+)/progress', (req, res) => {
     req.user.fullname,
   );
 
-  // Auto-rollup parent nếu là T4 → parent.progress = avg(children progress)
+  // Auto-rollup parent (T4 → parent T3, recursive)
   if (parent?.tier === 4) {
-    const children = db.prepare('SELECT progress FROM subtasks WHERE tier_item_id = ?').all(parent.id);
+    const children = db.prepare('SELECT progress FROM subtasks WHERE task_id = ?').all(parent.id);
     if (children.length > 0) {
       const avg = Math.round(children.reduce((acc, c) => acc + c.progress, 0) / children.length);
-      db.prepare('UPDATE tier_items SET progress = ? WHERE id = ?').run(avg, parent.id);
-      // Rollup lên cha của parent
+      db.prepare('UPDATE tasks SET progress = ? WHERE id = ?').run(avg, parent.id);
       if (parent.parent_id) {
-        const grandparentChildren = db.prepare('SELECT progress FROM tier_items WHERE parent_id = ?').all(parent.parent_id);
-        if (grandparentChildren.length > 0) {
-          const gpAvg = Math.round(grandparentChildren.reduce((acc, c) => acc + c.progress, 0) / grandparentChildren.length);
-          db.prepare('UPDATE tier_items SET progress = ? WHERE id = ?').run(gpAvg, parent.parent_id);
+        const gc = db.prepare('SELECT progress FROM tasks WHERE parent_id = ?').all(parent.parent_id);
+        if (gc.length > 0) {
+          const gpAvg = Math.round(gc.reduce((acc, c) => acc + c.progress, 0) / gc.length);
+          db.prepare('UPDATE tasks SET progress = ? WHERE id = ?').run(gpAvg, parent.parent_id);
         }
       }
     }
@@ -208,19 +211,11 @@ router.delete('/subtasks/:id(\\d+)', (req, res) => {
   return res.status(204).send();
 });
 
-/** GET /api/subtasks/:id/logs — List daily logs. */
-router.get('/subtasks/:id(\\d+)/logs', (req, res) => {
-  const subtask = stmt.getSubtask.get(Number(req.params.id));
-  if (!subtask) return res.status(404).json({ error: 'not_found' });
-  const items = stmt.listDailyLogsBySub.all(subtask.id);
-  return res.json({ items });
-});
-
 /** POST /api/subtasks/:id/logs — Thêm daily log. */
 router.post('/subtasks/:id(\\d+)/logs', (req, res) => {
   const subtask = stmt.getSubtask.get(Number(req.params.id));
   if (!subtask) return res.status(404).json({ error: 'not_found' });
-  const parent = stmt.getTierItem.get(subtask.tier_item_id);
+  const parent = stmt.getTask.get(subtask.task_id);
   if (!canAddDailyLog(req.user, subtask, parent)) {
     return res.status(403).json({
       error: 'forbidden',
@@ -238,13 +233,12 @@ router.post('/subtasks/:id(\\d+)/logs', (req, res) => {
     subtask.id,
     body.log_date ?? new Date().toISOString().slice(0, 10),
     body.description.trim(),
-    body.result ?? null,
-    body.obstacle ?? null,
+    body.result ?? '',
+    body.obstacle ?? '',
     progress,
     req.user.id,
   );
 
-  // Update SubTask progress = max(current, new) — never decrease
   if (progress > subtask.progress) {
     stmt.updateSubtaskProgress.run(progress, subtask.id);
   }
@@ -260,10 +254,10 @@ router.post('/subtasks/:id(\\d+)/logs', (req, res) => {
 
   // Rollup parent
   if (parent?.tier === 4) {
-    const children = db.prepare('SELECT progress FROM subtasks WHERE tier_item_id = ?').all(parent.id);
+    const children = db.prepare('SELECT progress FROM subtasks WHERE task_id = ?').all(parent.id);
     if (children.length > 0) {
       const avg = Math.round(children.reduce((acc, c) => acc + c.progress, 0) / children.length);
-      db.prepare('UPDATE tier_items SET progress = ? WHERE id = ?').run(avg, parent.id);
+      db.prepare('UPDATE tasks SET progress = ? WHERE id = ?').run(avg, parent.id);
     }
   }
 

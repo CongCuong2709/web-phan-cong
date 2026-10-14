@@ -5,7 +5,7 @@ import {
   SubTask,
   DailyLog,
   HistoryEntry,
-  TaskStatus,
+  SubtaskStatus,
   User,
 } from '../types';
 import {
@@ -36,7 +36,7 @@ interface DetailsDrawerProps {
   currentUser?: User;
 }
 
-const SUBTASK_STATUS_LABEL: Record<TaskStatus, string> = {
+const SUBTASK_STATUS_LABEL: Record<SubtaskStatus, string> = {
   not_started: 'Chưa bắt đầu',
   in_progress: 'Đang thi công',
   completed: 'Hoàn thành',
@@ -44,7 +44,7 @@ const SUBTASK_STATUS_LABEL: Record<TaskStatus, string> = {
   review: 'Đang nghiệm thu',
 };
 
-const SUBTASK_STATUS_COLOR: Record<TaskStatus, string> = {
+const SUBTASK_STATUS_COLOR: Record<SubtaskStatus, string> = {
   not_started: 'bg-slate-100 text-slate-700',
   in_progress: 'bg-[#004ac6]/10 text-[#004ac6]',
   completed: 'bg-emerald-100 text-emerald-800',

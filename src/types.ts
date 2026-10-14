@@ -53,50 +53,194 @@ export interface Deliverable {
   fileName?: string;
 }
 
-export interface TierItem {
+export interface Deliverable {
+  id: string;
+  title: string;
+  completed: boolean;
+  fileUrl?: string;
+  fileName?: string;
+}
+
+// ============================================================================
+// ISS-007: Unified Task type — single source of truth cho mọi loại "đầu việc".
+// Thay thế 3 bảng backend cũ (tier_items, team_lead_tasks, employee_tasks) và
+// 3 type frontend cũ (TierItem, TeamLeadTask, EmployeeTask).
+// ============================================================================
+
+export type TaskStatus = 'pending' | 'doing' | 'done' | 'pending_approval' | 'blocked';
+export type TaskPriority = 'low' | 'normal' | 'high' | 'critical';
+
+/**
+ * Unified Task — mirror của backend `tasks` table.
+ *
+ * Lifecycle:
+ *   - Tier 1: Dự án (Project)         — root, parent_id = NULL
+ *   - Tier 2: Giai đoạn (Phase)        — parent_id = T1.id
+ *   - Tier 3: Hạng mục (Bundle)       — parent_id = T2.id
+ *   - Tier 4: Đầu việc (Task, leaf)   — parent_id = T3.id, owned by NV
+ *
+ * Mọi view (Gantt 4 tầng, Giao việc nhóm, Việc của tôi) đều dùng chung 1 type này.
+ */
+export interface Task {
   id: string;
   code: string;
-  tier: TierLevel;
-  tierName: string; // "Tầng 1: Dự án" | "Tầng 2: Giai đoạn" | "Tầng 3: Hạng mục giao" | "Tầng 4: Đầu việc"
-  tierBadge: string; // "DỰ ÁN T1" | "GIAI ĐOẠN T2" | "HẠNG MỤC T3" | "VIỆC T4"
   title: string;
-  parentId?: string;
+  description: string;
+
+  // Tree structure
+  parentId?: string | null;
+  tier: TierLevel;
+  collapsed?: boolean;
+
+  // Assignment
+  ownerUserId: string;
+  ownerUsername: string;
+  ownerFullname: string;
+  /** Người giao (manager/admin tạo task cho NV). Null nếu NV tự tạo. */
+  assignedByUserId?: string | null;
+  assignedByUsername?: string | null;
+  assignedByFullname?: string | null;
+
+  // Department
+  department?: Department;
+
+  // Schedule
+  startDate: string;
+  endDate: string;
+  daysRemaining?: number;
+
+  // Progress + Status
+  progress: number; // 0-100
+  status: TaskStatus;
+  priority: TaskPriority;
+
+  // Personal task flags (from employee_tasks)
+  isToday?: boolean;
+  bundleName?: string;
+  lastUpdated?: string;
+
+  // Inline deliverable (from team_lead_tasks)
+  deliverableType?: 'pdf' | 'spreadsheet' | 'text' | 'photo';
+  deliverableText?: string;
+  deliverableCompleted?: boolean;
+  fileName?: string;
+
+  // Inline help message (from team_lead_tasks)
+  helpMessageAuthor?: string;
+  helpMessageBody?: string;
+  helpMessageTimeago?: string;
+
+  // Management
+  managementNotes: string;
+  blockerAlert?: string;
+
+  // Gantt denormalized
+  gantt: {
+    startWeek: number;
+    endWeek: number;
+  };
+
+  // Notes (loaded với `GET /api/tasks/:id`)
+  notesCount?: number;
+  notes?: TaskNote[];
+}
+
+export interface TaskNote {
+  id: string;
+  taskId: string;
+  body: string;
+  authorUserId: string;
+  authorUsername?: string;
+  authorFullname?: string;
+  createdAt: string;
+}
+
+/**
+ * TierItem — DEPRECATED. Use `Task` instead (ISS-007).
+ *
+ * Giữ lại để backward-compat với components đang dùng các field display như
+ * `tierName`, `tierBadge`, `owner` (object thay vì id). Transform runtime ở
+ * transforms.ts sẽ bổ sung các field display.
+ *
+ * Status / Priority giữ lại Tiếng Việt (UI Gantt) — để khớp với code đang
+ * so sánh `v.status === 'Đã xong'` ở components. Transform sẽ convert từ
+ * enum DB sang Tiếng Việt.
+ */
+export interface TierItem extends Omit<Task, 'status' | 'priority' | 'ownerUserId' | 'ownerFullname' | 'ownerUsername'> {
+  tierName: string;
+  tierBadge: string;
+  /** Display object thay vì id+username (UI-friendly). */
   owner: {
     name: string;
     role: string;
     initial: string;
     avatar?: string;
   };
-  /** Username that owns the work item (used for employee visibility). */
-  ownerUsername?: string;
-  /** Department the item is associated with (used for manager/director scoping). */
-  department?: Department;
-  /**
-   * Lịch trình thực (source of truth cho Gantt chart).
-   * startDate / endDate đều ở format 'YYYY-MM-DD' (ISO).
-   * daysRemaining được compute runtime từ endDate - today() trong transforms.ts.
-   */
-  startDate: string; // 'YYYY-MM-DD'
-  endDate: string;   // 'YYYY-MM-DD'
-  /** Còn lại bao nhiêu ngày tới deadline (compute runtime, có thể âm nếu quá hạn). */
-  daysRemaining?: number;
-  progress: number; // 0 - 100
+  // Status / Priority giữ lại dạng Tiếng Việt để UI không phải refactor.
+  // transforms.ts convert enum DB → Tiếng Việt khi parse response.
   status: 'Đang chạy' | 'Sắp xong' | 'Đã xong' | 'Điểm nghẽn' | 'Đang làm' | 'Đang nghẽn' | 'Lên lịch' | 'Chuẩn bị';
-  statusBadgeColor?: string;
   priority: 'Cao (Critical Path)' | 'Trung bình' | 'Thấp';
-  description: string;
+  statusBadgeColor?: string;
   deliverables: Deliverable[];
-  managementNotes: string;
-  blockerAlert?: string;
-  /**
-   * Gantt denormalized data. startWeek/endWeek là week-index trong month view
-   * (1.0..N) — sync từ startDate/endDate runtime, dùng cho performance render.
-   * Display info (color, label) component tự derive từ tier+status+title+progress.
-   */
-  gantt: {
-    startWeek: number; // 1.0..N tuần trong timeline, hỗ trợ float (vd 1.5, 2.8)
-    endWeek: number; // float; phải >= startWeek
+  ownerUsername?: string;
+  ownerUserId?: string;
+  ownerFullname?: string;
+}
+
+/**
+ * TeamLeadTask — DEPRECATED. Use `Task` instead (ISS-007).
+ * Giữ lại để GiaoViecNhomView không phải refactor toàn bộ.
+ * Standalone interface (KHÔNG extends Task) để tránh cascading type errors.
+ */
+export interface TeamLeadTask {
+  id: string;
+  code: string;
+  title: string;
+  category: string;
+  deliverableType: 'pdf' | 'spreadsheet' | 'text' | 'photo';
+  deliverableText: string;
+  fileName?: string;
+  ownerName: string;
+  ownerAvatar?: string;
+  ownerUsername?: string;
+  department?: Department;
+  submittedAt: string;
+  deadline?: string;
+  status: 'pending_approval' | 'need_help' | 'in_progress' | 'done';
+  priority?: 'Cao' | 'Thường';
+  helpMessage?: {
+    author: string;
+    message: string;
+    timeAgo: string;
   };
+  progressText?: string;
+}
+
+/**
+ * EmployeeTask — DEPRECATED. Use `Task` instead (ISS-007).
+ * Giữ lại để ViecCuaToiView không phải refactor toàn bộ.
+ * Standalone interface.
+ */
+export interface EmployeeTask {
+  id: string;
+  code: string;
+  bundleName: string;
+  title: string;
+  description: string;
+  currentDeliverable: string;
+  lastUpdated: string;
+  deadline: string;
+  isToday?: boolean;
+  status: 'doing' | 'done' | 'pending';
+  manager: {
+    name: string;
+    role: string;
+    avatar: string;
+  };
+  notesCount: number;
+  notes?: string[];
+  ownerUsername?: string;
+  department?: Department;
 }
 
 export interface TeamMember {
@@ -180,13 +324,7 @@ export interface QuickHelpRequest {
  * Construction-domain extensions: each T4 task can own several SubTasks
  * (T4.5), and each SubTask can have several Daily Logs (Nhật ký thi công).
  */
-export type TaskStatus =
-  | 'not_started'
-  | 'in_progress'
-  | 'completed'
-  | 'blocked'
-  | 'review';
-
+export type SubtaskStatus = 'not_started' | 'in_progress' | 'completed' | 'blocked' | 'review';
 export type TaskPriorityLevel = 'low' | 'medium' | 'high' | 'critical';
 
 export interface SubTask {
@@ -203,7 +341,7 @@ export interface SubTask {
   startDate: string;
   endDate: string;
   progress: number;
-  status: TaskStatus;
+  status: SubtaskStatus;
   priority: TaskPriorityLevel;
   results?: string;
   notes?: string;

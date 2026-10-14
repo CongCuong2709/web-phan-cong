@@ -138,6 +138,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // 3. 401 từ backend → trả message gốc
         return { ok: false as const, reason: apiResult.error.message ?? 'Sai tài khoản hoặc mật khẩu.' };
       }
+
+      // Unreachable fallback (để TS happy với exhaustive check)
+      return { ok: false as const, reason: 'Lỗi không xác định.' };
     },
     [users]
   );

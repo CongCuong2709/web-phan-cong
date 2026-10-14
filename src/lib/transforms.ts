@@ -39,7 +39,7 @@ const TIER_BADGES: Record<TierLevel, string> = {
 };
 
 /**
- * Map 1 row tier_items từ backend → TierItem shape frontend.
+ * Map 1 row task từ backend (ISS-007: unified) → TierItem shape frontend.
  * Schema 2026-10: start_date/end_date là source of truth, daysRemaining derive từ endDate.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -49,7 +49,7 @@ export function apiToTierItem(api: any): TierItem {
   const department = (api.department_code as string) || undefined;
   const endDate = String(api.end_date || '');
 
-  // daysRemaining: compute runtime từ endDate (DB không còn lưu nữa)
+  // daysRemaining: compute runtime từ endDate
   const daysRemaining = endDate ? computeDaysRemaining(endDate) : undefined;
 
   return {
@@ -72,10 +72,12 @@ export function apiToTierItem(api: any): TierItem {
     endDate,
     daysRemaining,
     progress: Number(api.progress ?? 0),
-    status: (api.status as TierItem['status']) || 'Chuẩn bị',
-    priority: (api.priority as TierItem['priority']) || 'Trung bình',
+    // Map status từ enum DB sang tiếng Việt (UI Gantt đang dùng tiếng Việt).
+    status: statusEnumToVi(api.status != null ? String(api.status) : undefined) as TierItem['status'],
+    // Map priority từ enum sang tiếng Việt.
+    priority: priorityEnumToVi(api.priority) as TierItem['priority'],
     description: String(api.description || ''),
-    deliverables: [], // API trả riêng qua /deliverables endpoint
+    deliverables: [], // ISS-007: chuyển sang inline columns trong tasks table
     managementNotes: String(api.management_notes || ''),
     blockerAlert: api.blocker_alert as string | undefined,
     gantt: {
@@ -83,6 +85,29 @@ export function apiToTierItem(api: any): TierItem {
       endWeek: Number(api.end_week ?? 1),
     },
   };
+}
+
+/** Convert status enum DB → Tiếng Việt (cho Gantt view). */
+function statusEnumToVi(s: string | number | null | undefined): string {
+  switch (String(s)) {
+    case 'done': return 'Đã xong';
+    case 'doing': return 'Đang chạy';
+    case 'pending': return 'Chuẩn bị';
+    case 'pending_approval': return 'Sắp xong';
+    case 'blocked': return 'Điểm nghẽn';
+    default: return String(s || 'Chuẩn bị');
+  }
+}
+
+/** Convert priority enum DB → Tiếng Việt. */
+function priorityEnumToVi(p: string | null | undefined): string {
+  switch (String(p)) {
+    case 'critical':
+    case 'high': return 'Cao (Critical Path)';
+    case 'low': return 'Thấp';
+    case 'normal':
+    default: return 'Trung bình';
+  }
 }
 
 /**
@@ -107,22 +132,32 @@ function computeDaysRemaining(endDateIso: string): number {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function apiToTeamLeadTask(api: any): TeamLeadTask {
+  // ISS-007: backend giờ trả unified Task. T4 có deliverable_*, help_message_*
+  // inline. Status 'in_progress' (old) ↔ 'doing' (new). Map ngược để GiaoViecNhomView
+  // không cần refactor.
+  const statusMap: Record<string, TeamLeadTask['status']> = {
+    'pending': 'in_progress',
+    'doing': 'in_progress',
+    'done': 'done',
+    'pending_approval': 'pending_approval',
+    'blocked': 'need_help',
+  };
   return {
     id: String(api.id),
     code: String(api.code || ''),
     title: String(api.title || ''),
-    category: String(api.category || ''),
+    category: String(api.bundle_name || ''),  // dùng bundle_name thay vì category
     deliverableType: (api.deliverable_type as TeamLeadTask['deliverableType']) || 'text',
     deliverableText: String(api.deliverable_text || ''),
     fileName: (api.file_name as string) || undefined,
     ownerName: String(api.owner_fullname || api.owner_username_str || ''),
     ownerUsername: (api.owner_username_str as string) || undefined,
     department: api.department_code as TeamLeadTask['department'],
-    submittedAt: String(api.submitted_at || ''),
-    deadline: (api.deadline as string) || undefined,
-    status: (api.status as TeamLeadTask['status']) || 'in_progress',
-    priority: (api.priority as TeamLeadTask['priority']) || undefined,
-    progressText: (api.progress_text as string) || undefined,
+    submittedAt: String(api.created_at || ''),  // created_at là proxy submitted_at
+    deadline: (api.end_date as string) || undefined,
+    status: statusMap[String(api.status)] || 'in_progress',
+    priority: priorityEnumToVi(api.priority) as TeamLeadTask['priority'],
+    progressText: api.progress != null ? `${api.progress}%` : undefined,
     helpMessage:
       api.help_message_body && api.help_message_author
         ? {
@@ -140,23 +175,30 @@ export function apiToTeamLeadTask(api: any): TeamLeadTask {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function apiToEmployeeTask(api: any): EmployeeTask {
+  // ISS-007: backend giờ là unified Task. Map status enum sang EmployeeTask enum.
+  const statusMap: Record<string, EmployeeTask['status']> = {
+    'pending': 'pending',
+    'doing': 'doing',
+    'done': 'done',
+    'pending_approval': 'doing',   // pending_approval vẫn đang làm
+    'blocked': 'pending',           // blocked → pending cho personal view
+  };
   return {
     id: String(api.id),
     code: String(api.code || ''),
     bundleName: String(api.bundle_name || '—'),
     title: String(api.title || ''),
     description: String(api.description || ''),
-    currentDeliverable: String(api.current_deliverable || ''),
+    currentDeliverable: String(api.deliverable_text || ''),
     lastUpdated: String(api.last_updated || ''),
-    deadline: String(api.deadline || ''),
+    deadline: String(api.end_date || ''),
     isToday: Boolean(api.is_today),
-    status: (api.status as EmployeeTask['status']) || 'doing',
-    // Fix TD-03: đọc manager_fullname/avatar từ backend JOIN (xem employeeTasks.js:30-44).
-    // Fallback sang owner_fullname nếu chưa gán manager (task tự tạo).
+    status: statusMap[String(api.status)] || 'doing',
+    // Manager = assigned_by (người giao task). ISS-007 lưu đúng field này.
     manager: {
-      name: String(api.manager_fullname ?? api.owner_fullname ?? '—'),
+      name: String(api.assigned_by_fullname ?? api.owner_fullname ?? '—'),
       role: 'Trưởng phòng phụ trách',
-      avatar: String(api.manager_avatar_url ?? ''),
+      avatar: '',
     },
     notesCount: Number(api.notesCount ?? 0),
     notes: [],
@@ -210,22 +252,23 @@ export function apiToTeamMember(api: any): TeamMember {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function apiToSubtask(api: any): SubTask {
+  // ISS-007: subtasks giờ FK `task_id` thay `tier_item_id`. Map ngược cho UI.
   return {
     id: String(api.id),
-    taskId: String(api.tier_item_id),
+    taskId: String(api.task_id ?? api.tier_item_id),
     name: String(api.name || ''),
-    description: api.description ?? undefined,
+    description: undefined,
     assigneeUsername: api.assignee_username_str ?? undefined,
     assigneeName: api.assignee_fullname ?? undefined,
     assigneeRole: undefined,
     assigneeAvatar: undefined,
-    startDate: String(api.start_date || ''),
-    endDate: String(api.end_date || ''),
+    startDate: '',
+    endDate: '',
     progress: Number(api.progress ?? 0),
-    status: (api.status as SubTask['status']) || 'not_started',
-    priority: (api.priority as SubTask['priority']) || 'medium',
-    results: api.results ?? undefined,
-    notes: api.notes ?? undefined,
+    status: (api.status === 'done' ? 'completed' : 'in_progress') as SubTask['status'],
+    priority: 'medium' as SubTask['priority'],
+    results: undefined,
+    notes: undefined,
   };
 }
 

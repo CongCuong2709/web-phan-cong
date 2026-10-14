@@ -60,7 +60,7 @@ router.post('/', (req, res) => {
     body.reason.trim(),
     body.message.trim(),
     'pending',
-    body.related_team_lead_task_id ? Number(body.related_team_lead_task_id) : null,
+    body.related_task_id ? Number(body.related_task_id) : null,
   );
 
   stmt.insertHistory.run(

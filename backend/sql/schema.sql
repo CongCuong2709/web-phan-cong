@@ -1,42 +1,41 @@
--- =============================================================================
--- schema.sql — SQLite schema cho 4-Tier Enterprise Execution System
--- Backend: Express + better-sqlite3 (Node.js)
--- Generated: Sprint 5 — Backend Foundation
---
--- Cách dùng:
---   sqlite3 database.db < schema.sql
---   hoặc từ Node.js:  db.exec(fs.readFileSync('schema.sql', 'utf8'));
--- =============================================================================
+/**
+ * schema.sql — Database schema v2 (2026-10) — UNIFY TASKS
+ *
+ * REFACTOR: Hợp tục 3 bảng `tier_items`, `team_lead_tasks`, `employee_tasks`
+ * (ISS-007 — "ông nói gà bà nói vịt" anti-pattern) thành 1 bảng `tasks` duy nhất.
+ *
+ * Trước ISS-007:
+ *   - tier_items (Gantt 4 tầng view) — có parent_id, management_notes, blocker
+ *   - team_lead_tasks (Giao việc nhóm view) — có deliverable_*, file_name
+ *   - employee_tasks (Việc của tôi view) — có is_today, bundle_name, notes
+ *   → 3 bảng cùng mô tả "task", không có FK, dễ lệch data
+ *
+ * Sau ISS-007:
+ *   - 1 bảng `tasks` với tất cả field (tier ∈ {1,2,3,4} phân biệt cấp độ)
+ *   - 1 bảng `task_notes` (thay employee_task_notes)
+ *   - subtasks giờ FK vào tasks
+ *   - help_requests.related_task_id (thay related_team_lead_task_id)
+ *   - Inline deliverable columns (thay bảng deliverables riêng)
+ *
+ * Status vocab chuẩn hoá: pending|doing|done|pending_approval|blocked
+ * Priority vocab chuẩn hoá: low|normal|high|critical
+ *
+ * Notes:
+ *   - 2026-10 PR #1: ISS-001 add permissions (departments array)
+ *   - 2026-10 PR #2: ISS-006 fix owner_user_id silent fallback
+ *   - 2026-10 PR #3: ISS-007 unify 3 task tables (file này)
+ */
 
--- Bật foreign key enforcement (SQLite mặc định TẮT!)
-PRAGMA foreign_keys = ON;
-PRAGMA journal_mode = WAL;      -- Concurrent read/write tốt hơn
+-- ============================================================================
+-- 1. Users + Departments
+-- ============================================================================
 
--- =============================================================================
--- 1. DEPARTMENTS & USERS (Identity)
--- =============================================================================
-
--- Bảng master cho 4 phòng ban. Đơn giản nhưng cần để FK + label mapping.
-CREATE TABLE departments (
-  code TEXT PRIMARY KEY CHECK (code IN ('ĐH','QLDA','KTTC','TC')),
-  label TEXT NOT NULL,
-  sort_order INTEGER NOT NULL DEFAULT 0
-);
-
--- Seed departments ngay tại schema (idempotent).
-INSERT OR IGNORE INTO departments (code, label, sort_order) VALUES
-  ('ĐH',   'Ban Điều hành',             1),
-  ('QLDA', 'Phòng Quản lý Dự án',       2),
-  ('KTTC', 'Phòng Kế toán – Tài chính', 3),
-  ('TC',   'Phòng Tổ chức – Hành chính',4);
-
--- Users có role nhưng KHÔNG có department ở đây (1 user có thể thuộc nhiều phòng).
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-  password_hash TEXT NOT NULL,        -- bcrypt hash; KHÔNG BAO GIỜ lưu plaintext
+  password_hash TEXT NOT NULL,
   fullname TEXT NOT NULL,
-  email TEXT UNIQUE COLLATE NOCASE,
+  email TEXT,
   role TEXT NOT NULL CHECK (role IN ('admin','director','manager','employee')),
   initial TEXT,
   avatar_url TEXT,
@@ -45,307 +44,261 @@ CREATE TABLE users (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX idx_users_role ON users(role);
-CREATE INDEX idx_users_active ON users(is_active);
+CREATE TABLE IF NOT EXISTS departments (
+  code TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 100
+);
 
--- N:M relationship user ↔ department. Admin có thể thuộc nhiều dept (sentinel).
-CREATE TABLE user_departments (
+CREATE TABLE IF NOT EXISTS user_departments (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   department_code TEXT NOT NULL REFERENCES departments(code) ON DELETE CASCADE,
   PRIMARY KEY (user_id, department_code)
 );
 
-CREATE INDEX idx_user_depts_dept ON user_departments(department_code);
+CREATE INDEX IF NOT EXISTS idx_user_dept_dept ON user_departments(department_code);
 
--- Sessions: track JWT (jti = session id) cho logout-all + audit.
-CREATE TABLE sessions (
-  id TEXT PRIMARY KEY,               -- JWT jti claim
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  expires_at TEXT NOT NULL,
-  ip_address TEXT,
-  user_agent TEXT,
-  revoked_at TEXT                    -- Soft-revoke; null = active
-);
+-- ============================================================================
+-- 2. Unified TASKS table (ISS-007 — thay thế tier_items + team_lead_tasks +
+--    employee_tasks)
+--
+-- tier phân biệt cấp độ trong cây dự án:
+--   tier=1: Dự án (Project)
+--   tier=2: Giai đoạn (Phase)
+--   tier=3: Hạng mục / Gói (Bundle)
+--   tier=4: Đầu việc (Task — leaf)
+-- Tree structure: parent_id tự tham chiếu.
+-- ============================================================================
 
-CREATE INDEX idx_sessions_user ON sessions(user_id, expires_at);
-CREATE INDEX idx_sessions_active ON sessions(expires_at) WHERE revoked_at IS NULL;
-
--- =============================================================================
--- 2. TIER ITEMS (4-Tier Tree)
--- =============================================================================
--- Self-referencing tree: T1 (Dự án) → T2 (Giai đoạn) → T3 (Hạng mục) → T4 (Đầu việc)
--- Roll-up progress được tính bằng app code, không lưu trigger để giữ đơn giản.
-
-CREATE TABLE tier_items (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  code TEXT NOT NULL,                -- Mã hiển thị (DA-001, GD-01, GOI-01, NV-101)
-  tier INTEGER NOT NULL CHECK (tier IN (1,2,3,4)),
-  title TEXT NOT NULL,
-  parent_id INTEGER REFERENCES tier_items(id) ON DELETE CASCADE,
-  department_code TEXT REFERENCES departments(code) ON DELETE SET NULL,
-  owner_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  -- Lịch trình (date range, source of truth cho Gantt chart).
-  -- start_date / end_date là ISO 'YYYY-MM-DD'. Frontend render ra gantt.startWeek/endWeek runtime.
-  start_date TEXT NOT NULL DEFAULT (date('now')),
-  end_date TEXT NOT NULL,            -- ISO date 'YYYY-MM-DD' hoặc display string
-  progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
-  status TEXT NOT NULL,              -- 'Đang chạy' | 'Sắp xong' | 'Đã xong' | 'Đang nghẽn' | ...
-  -- Trạng thái nghẽn được derive từ status IN ('Đang nghẽn','Điểm nghẽn'); không cần cột is_blocked riêng.
-  priority TEXT NOT NULL,            -- 'Cao (Critical Path)' | 'Trung bình' | 'Thấp'
-  description TEXT NOT NULL DEFAULT '',
-  management_notes TEXT NOT NULL DEFAULT '',
-  blocker_alert TEXT,
-  -- Week index là denormalized cho performance Gantt render (computed từ start_date/end_date).
-  -- Có thể sync qua app code thay vì trigger (đơn giản hơn). Mặc định 1..4 mapping.
-  start_week REAL NOT NULL DEFAULT 1,
-  end_week REAL NOT NULL DEFAULT 1,
-  collapsed INTEGER NOT NULL DEFAULT 0 CHECK (collapsed IN (0,1)),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX idx_tier_parent     ON tier_items(parent_id);
-CREATE INDEX idx_tier_dept       ON tier_items(department_code);
-CREATE INDEX idx_tier_owner      ON tier_items(owner_user_id);
-CREATE INDEX idx_tier_tier       ON tier_items(tier);
-CREATE INDEX idx_tier_code       ON tier_items(code);  -- Cho search nhanh
-CREATE INDEX idx_tier_start_date ON tier_items(start_date);  -- Query timeline range
-CREATE INDEX idx_tier_end_date   ON tier_items(end_date);    -- Query timeline range
-
--- =============================================================================
--- 3. DELIVERABLES (Kết quả bàn giao — con của TierItem, thường T4)
--- =============================================================================
-
-CREATE TABLE deliverables (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  tier_item_id INTEGER NOT NULL REFERENCES tier_items(id) ON DELETE CASCADE,
-  title TEXT NOT NULL,
-  completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0,1)),
-  file_url TEXT,
-  file_name TEXT,
-  sort_order INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX idx_deliv_tier ON deliverables(tier_item_id);
-
--- =============================================================================
--- 4. SUBTASKS + DAILY LOGS (Construction-domain: T4.5 + nhật ký thi công)
--- =============================================================================
-
-CREATE TABLE subtasks (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  tier_item_id INTEGER NOT NULL REFERENCES tier_items(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  description TEXT,
-  assignee_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  start_date TEXT NOT NULL,         -- Display 'dd/MM' hoặc ISO
-  end_date TEXT NOT NULL,
-  progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
-  status TEXT NOT NULL DEFAULT 'not_started'
-    CHECK (status IN ('not_started','in_progress','completed','blocked','review')),
-  priority TEXT NOT NULL DEFAULT 'medium'
-    CHECK (priority IN ('low','medium','high','critical')),
-  results TEXT,
-  notes TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX idx_sub_tier     ON subtasks(tier_item_id);
-CREATE INDEX idx_sub_assignee ON subtasks(assignee_user_id);
-
-CREATE TABLE daily_logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  subtask_id INTEGER NOT NULL REFERENCES subtasks(id) ON DELETE CASCADE,
-  log_date TEXT NOT NULL,           -- ISO 'YYYY-MM-DD'
-  description TEXT NOT NULL,
-  result TEXT,
-  obstacle TEXT,
-  progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
-  author_user_id INTEGER NOT NULL REFERENCES users(id),
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX idx_log_sub    ON daily_logs(subtask_id);
-CREATE INDEX idx_log_author ON daily_logs(author_user_id);
-CREATE INDEX idx_log_date   ON daily_logs(log_date DESC);
-
--- =============================================================================
--- 5. TEAM LEAD TASKS (Giao việc nhóm view)
--- =============================================================================
--- Tách riêng khỏi TierItem (frontend hiện derive). Lý do: thực tế Manager giao
--- task cho nhân viên không phải lúc nào cũng map 1-1 với TierItem; tách ra để
--- model đúng nghiệp vụ.
-
-CREATE TABLE team_lead_tasks (
+CREATE TABLE IF NOT EXISTS tasks (
+  -- Identity
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   code TEXT NOT NULL,
   title TEXT NOT NULL,
-  category TEXT,                    -- 'Kế hoạch' | 'Thiết kế' | ...
-  deliverable_type TEXT NOT NULL CHECK (deliverable_type IN ('pdf','spreadsheet','text','photo')),
-  deliverable_text TEXT,
-  file_name TEXT,
-  owner_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  description TEXT NOT NULL DEFAULT '',
+
+  -- Tree structure (Gantt 4-tier)
+  parent_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+  tier INTEGER NOT NULL DEFAULT 4 CHECK (tier IN (1,2,3,4)),
+  -- Hierarchy collapse state for Gantt UI
+  collapsed INTEGER NOT NULL DEFAULT 0 CHECK (collapsed IN (0,1)),
+
+  -- Assignment
+  owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- Người giao (manager/admin). NULL = tự tạo.
+  assigned_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+
+  -- Department
   department_code TEXT REFERENCES departments(code) ON DELETE SET NULL,
-  submitted_at TEXT NOT NULL,
-  deadline TEXT,
-  status TEXT NOT NULL DEFAULT 'in_progress'
-    CHECK (status IN ('pending_approval','need_help','in_progress','done')),
-  priority TEXT CHECK (priority IN ('Cao','Thường')),
-  progress_text TEXT,               -- '60%' (display)
-  -- Help message: inline trong seed, nhưng tách cột để query nhanh.
+
+  -- Schedule (ISO 'YYYY-MM-DD')
+  start_date TEXT,
+  end_date TEXT,
+
+  -- Progress + Status (canonical vocab)
+  progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','doing','done','pending_approval','blocked')),
+  priority TEXT NOT NULL DEFAULT 'normal'
+    CHECK (priority IN ('low','normal','high','critical')),
+
+  -- Personal task flags (from old employee_tasks)
+  is_today INTEGER NOT NULL DEFAULT 0 CHECK (is_today IN (0,1)),
+  bundle_name TEXT,           -- Group label ("Gói thiết kế", "Đợt 3")
+  last_updated TEXT,          -- Display string ("Vừa cập nhật")
+
+  -- Inline deliverable (from old team_lead_tasks + deliverables table)
+  deliverable_type TEXT CHECK (deliverable_type IN ('pdf','spreadsheet','text','photo')),
+  deliverable_text TEXT,
+  deliverable_completed INTEGER NOT NULL DEFAULT 0 CHECK (deliverable_completed IN (0,1)),
+  deliverable_completed_at TEXT,
+  file_name TEXT,
+
+  -- Inline help message (from old team_lead_tasks)
   help_message_author TEXT,
   help_message_body TEXT,
   help_message_timeago TEXT,
+
+  -- Management free-form fields (from old tier_items)
+  management_notes TEXT NOT NULL DEFAULT '',
+  blocker_alert TEXT,
+
+  -- Gantt denormalized fields (week indices for chart rendering)
+  start_week REAL NOT NULL DEFAULT 1,
+  end_week REAL NOT NULL DEFAULT 1,
+
+  -- Audit
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+
+  -- Code unique per dept (tránh trùng code giữa 2 phòng ban)
+  UNIQUE(code, department_code)
 );
 
-CREATE INDEX idx_tlt_owner  ON team_lead_tasks(owner_user_id);
-CREATE INDEX idx_tlt_dept   ON team_lead_tasks(department_code);
-CREATE INDEX idx_tlt_status  ON team_lead_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_owner ON tasks(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_dept ON tasks(department_code);
+CREATE INDEX IF NOT EXISTS idx_tasks_tier ON tasks(tier);
+CREATE INDEX IF NOT EXISTS idx_tasks_assigned_by ON tasks(assigned_by_user_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_today ON tasks(is_today);
+CREATE INDEX IF NOT EXISTS idx_tasks_end_date ON tasks(end_date);
 
--- =============================================================================
--- 6. EMPLOYEE TASKS (Việc của tôi view)
--- =============================================================================
+-- ============================================================================
+-- 3. Task notes (thay employee_task_notes — ISS-007)
+-- ============================================================================
 
-CREATE TABLE employee_tasks (
+CREATE TABLE IF NOT EXISTS task_notes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  code TEXT NOT NULL,
-  bundle_name TEXT,                 -- Tên nhóm việc (VD: 'Đợt 1 — Khảo sát')
-  title TEXT NOT NULL,
-  description TEXT,
-  current_deliverable TEXT,
-  last_updated TEXT,
-  deadline TEXT,
-  is_today INTEGER NOT NULL DEFAULT 0 CHECK (is_today IN (0,1)),
-  status TEXT NOT NULL DEFAULT 'doing'
-    CHECK (status IN ('doing','done','pending')),
-  manager_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  department_code TEXT REFERENCES departments(code) ON DELETE SET NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX idx_et_owner   ON employee_tasks(owner_user_id);
-CREATE INDEX idx_et_status  ON employee_tasks(status);
-CREATE INDEX idx_et_manager ON employee_tasks(manager_user_id);
-
--- Employee task notes (1 employee_task ↔ N notes — hiện đang là string[]).
-CREATE TABLE employee_task_notes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  employee_task_id INTEGER NOT NULL REFERENCES employee_tasks(id) ON DELETE CASCADE,
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   body TEXT NOT NULL,
   author_user_id INTEGER NOT NULL REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX idx_etn_task ON employee_task_notes(employee_task_id);
+CREATE INDEX IF NOT EXISTS idx_task_notes_task ON task_notes(task_id);
 
--- =============================================================================
--- 7. HELP REQUESTS (Xin hỗ trợ từ nhân viên)
--- =============================================================================
+-- ============================================================================
+-- 4. Subtasks (giờ FK vào tasks thay vì tier_items)
+-- ============================================================================
 
-CREATE TABLE help_requests (
+CREATE TABLE IF NOT EXISTS subtasks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  sender_user_id INTEGER NOT NULL REFERENCES users(id),
-  reason TEXT NOT NULL,             -- Lý do ngắn (1 dòng)
-  message TEXT NOT NULL,            -- Nội dung chi tiết
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','resolved')),
-  related_team_lead_task_id INTEGER REFERENCES team_lead_tasks(id) ON DELETE SET NULL,
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  assignee_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
+  status TEXT NOT NULL DEFAULT 'doing'
+    CHECK (status IN ('doing','done')),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  resolved_at TEXT,
-  resolved_by_user_id INTEGER REFERENCES users(id)
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX idx_hr_sender  ON help_requests(sender_user_id);
-CREATE INDEX idx_hr_status  ON help_requests(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_subtasks_task ON subtasks(task_id);
 
--- =============================================================================
--- 8. HISTORY ENTRIES (Audit log — không FK để polymorphic)
--- =============================================================================
--- entity_id là INTEGER (id của bảng tương ứng với entity_type). Vì SQLite không
--- hỗ trợ polymorphic FK, mình KHÔNG tạo FK ở đây — toàn vẹn dữ liệu do app
--- đảm bảo.
-
-CREATE TABLE history_entries (
+CREATE TABLE IF NOT EXISTS daily_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  entity_type TEXT NOT NULL CHECK (entity_type IN ('project','phase','bundle','task','subtask','team_lead_task','employee_task')),
-  entity_id INTEGER NOT NULL,
-  action TEXT NOT NULL,
-  -- Denormalized author info để hiển thị tuy rằng user bị xoá/vô hiệu hoá.
-  author_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  author_username TEXT NOT NULL,
-  author_fullname TEXT NOT NULL,
+  subtask_id INTEGER NOT NULL REFERENCES subtasks(id) ON DELETE CASCADE,
+  log_date TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  result TEXT NOT NULL DEFAULT '',
+  obstacle TEXT NOT NULL DEFAULT '',
+  progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
+  author_user_id INTEGER NOT NULL REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX idx_hist_entity  ON history_entries(entity_type, entity_id);
-CREATE INDEX idx_hist_created ON history_entries(created_at DESC);
-CREATE INDEX idx_hist_author  ON history_entries(author_user_id);
+CREATE INDEX IF NOT EXISTS idx_daily_logs_subtask ON daily_logs(subtask_id);
+CREATE INDEX IF NOT EXISTS idx_daily_logs_date ON daily_logs(log_date);
 
--- =============================================================================
--- 9. MESSAGES (1-1 messaging — future-proof, MessageModal chỉ toast hiện tại)
--- =============================================================================
+-- ============================================================================
+-- 5. Help requests (giờ FK vào tasks thay team_lead_tasks)
+-- ============================================================================
 
-CREATE TABLE messages (
+CREATE TABLE IF NOT EXISTS help_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sender_user_id INTEGER NOT NULL REFERENCES users(id),
+  resolved_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  reason TEXT NOT NULL,
+  message TEXT NOT NULL,
+  related_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','resolved')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  resolved_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_help_requests_sender ON help_requests(sender_user_id);
+CREATE INDEX IF NOT EXISTS idx_help_requests_status ON help_requests(status);
+
+-- ============================================================================
+-- 6. History (simplified — ISS-007: chỉ 1 entity_type = 'task' + 'task_note')
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS history_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_type TEXT NOT NULL CHECK (entity_type IN ('task','task_note','subtask')),
+  entity_id INTEGER NOT NULL,
+  action TEXT NOT NULL,
+  author_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  author_username TEXT,
+  author_fullname TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_history_entity ON history_entries(entity_type, entity_id);
+
+-- ============================================================================
+-- 7. Sessions
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TEXT NOT NULL,
+  revoked_at TEXT,
+  ip_address TEXT,
+  user_agent TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
+-- ============================================================================
+-- 8. Messages (quick help inbox)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   sender_user_id INTEGER NOT NULL REFERENCES users(id),
   recipient_user_id INTEGER NOT NULL REFERENCES users(id),
-  context_type TEXT,                -- 'task'|'subtask'|'team_lead_task'|null
-  context_id INTEGER,
+  context_type TEXT NOT NULL DEFAULT 'help_request'
+    CHECK (context_type IN ('help_request','task_note')),
+  context_id INTEGER NOT NULL,
   body TEXT NOT NULL,
   read_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX idx_msg_recipient_unread ON messages(recipient_user_id, created_at DESC) WHERE read_at IS NULL;
-CREATE INDEX idx_msg_sender ON messages(sender_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient_user_id, read_at);
 
--- =============================================================================
--- 10. ATTACHMENTS (File uploads — future-proof)
--- =============================================================================
+-- ============================================================================
+-- 9. Attachments (polymorphic)
+-- ============================================================================
 
-CREATE TABLE attachments (
+CREATE TABLE IF NOT EXISTS attachments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  owner_type TEXT NOT NULL CHECK (owner_type IN ('deliverable','subtask','team_lead_task','employee_task','message')),
+  owner_type TEXT NOT NULL CHECK (owner_type IN ('task','task_note','message')),
   owner_id INTEGER NOT NULL,
   file_name TEXT NOT NULL,
-  file_url TEXT NOT NULL,           -- local path hoặc S3 URL
+  file_url TEXT,
   mime_type TEXT,
-  file_size INTEGER,
+  size_bytes INTEGER,
   uploaded_by_user_id INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX idx_attach_owner ON attachments(owner_type, owner_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_owner ON attachments(owner_type, owner_id);
 
--- =============================================================================
--- TRIGGERS — auto-update updated_at
--- =============================================================================
+-- ============================================================================
+-- Triggers
+-- ============================================================================
 
-CREATE TRIGGER trg_users_updated AFTER UPDATE ON users
-BEGIN UPDATE users SET updated_at = datetime('now') WHERE id = NEW.id; END;
+CREATE TRIGGER IF NOT EXISTS users_updated AFTER UPDATE ON users
+  BEGIN UPDATE users SET updated_at = datetime('now') WHERE id = NEW.id; END;
 
-CREATE TRIGGER trg_tier_items_updated AFTER UPDATE ON tier_items
-BEGIN UPDATE tier_items SET updated_at = datetime('now') WHERE id = NEW.id; END;
+CREATE TRIGGER IF NOT EXISTS tasks_updated AFTER UPDATE ON tasks
+  BEGIN UPDATE tasks SET updated_at = datetime('now') WHERE id = NEW.id; END;
 
-CREATE TRIGGER trg_subtasks_updated AFTER UPDATE ON subtasks
-BEGIN UPDATE subtasks SET updated_at = datetime('now') WHERE id = NEW.id; END;
+CREATE TRIGGER IF NOT EXISTS subtasks_updated AFTER UPDATE ON subtasks
+  BEGIN UPDATE subtasks SET updated_at = datetime('now') WHERE id = NEW.id; END;
 
-CREATE TRIGGER trg_deliverables_updated AFTER UPDATE ON deliverables
-BEGIN UPDATE deliverables SET updated_at = datetime('now') WHERE id = NEW.id; END;
-
-CREATE TRIGGER trg_team_lead_tasks_updated AFTER UPDATE ON team_lead_tasks
-BEGIN UPDATE team_lead_tasks SET updated_at = datetime('now') WHERE id = NEW.id; END;
-
-CREATE TRIGGER trg_employee_tasks_updated AFTER UPDATE ON employee_tasks
-BEGIN UPDATE employee_tasks SET updated_at = datetime('now') WHERE id = NEW.id; END;
-
--- =============================================================================
--- DONE. Schema đã sẵn sàng. Seed data sẽ insert qua `seed.ts` (xem file riêng).
--- =============================================================================
+CREATE TRIGGER IF NOT EXISTS tasks_progress_rollup AFTER UPDATE OF progress ON tasks
+  WHEN NEW.parent_id IS NOT NULL
+  BEGIN
+    -- Rollup progress lên parent (T3/T2/t1) — average of children
+    UPDATE tasks SET progress = (
+      SELECT CAST(AVG(c.progress) AS INTEGER) FROM tasks c WHERE c.parent_id = NEW.parent_id
+    )
+    WHERE id = NEW.parent_id;
+  END;

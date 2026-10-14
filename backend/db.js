@@ -108,40 +108,67 @@ export const stmt = {
     "UPDATE sessions SET revoked_at = datetime('now') WHERE id = ?"
   ),
 
-  // --- Tier items ---
-  // Schema 2026-10: tier_items có start_date, end_date; không còn deadline/gantt_label/etc.
-  listTierItems: db.prepare(`
-    SELECT t.*, u.username AS owner_username_str, u.fullname AS owner_fullname
-    FROM tier_items t LEFT JOIN users u ON u.id = t.owner_user_id
+  // --- Tasks (ISS-007: unified tier_items + team_lead_tasks + employee_tasks) ---
+  // Schema 2026-10 v2: single `tasks` table với tier ∈ {1,2,3,4}.
+  // Owner = người thực hiện; assigned_by = manager giao (cho 'Việc của tôi' view).
+  listTasks: db.prepare(`
+    SELECT t.*,
+      u.username AS owner_username_str, u.fullname AS owner_fullname,
+      a.username AS assigned_by_username_str, a.fullname AS assigned_by_fullname
+    FROM tasks t
+      LEFT JOIN users u ON u.id = t.owner_user_id
+      LEFT JOIN users a ON a.id = t.assigned_by_user_id
     ORDER BY t.tier, t.code
   `),
-  getTierItem: db.prepare(`
-    SELECT t.*, u.username AS owner_username_str, u.fullname AS owner_fullname
-    FROM tier_items t LEFT JOIN users u ON u.id = t.owner_user_id
+  getTask: db.prepare(`
+    SELECT t.*,
+      u.username AS owner_username_str, u.fullname AS owner_fullname,
+      a.username AS assigned_by_username_str, a.fullname AS assigned_by_fullname
+    FROM tasks t
+      LEFT JOIN users u ON u.id = t.owner_user_id
+      LEFT JOIN users a ON a.id = t.assigned_by_user_id
     WHERE t.id = ?
   `),
-  getTierItemByCode: db.prepare('SELECT id FROM tier_items WHERE code = ?'),
-  insertTierItem: db.prepare(`
-    INSERT INTO tier_items (code, tier, title, parent_id, department_code,
-      owner_user_id, start_date, end_date, progress, status, priority,
-      description, management_notes, start_week, end_week)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  getTaskByCode: db.prepare(
+    'SELECT id FROM tasks WHERE code = ? AND (department_code = ? OR ? IS NULL)'
+  ),
+  insertTask: db.prepare(`
+    INSERT INTO tasks (
+      code, title, description, parent_id, tier,
+      owner_user_id, assigned_by_user_id, department_code,
+      start_date, end_date, progress, status, priority,
+      is_today, bundle_name, last_updated,
+      deliverable_type, deliverable_text, deliverable_completed, file_name,
+      help_message_author, help_message_body, help_message_timeago,
+      management_notes, blocker_alert, start_week, end_week, collapsed
+    ) VALUES (
+      ?, ?, ?, ?, ?,
+      ?, ?, ?,
+      ?, ?, ?, ?, ?,
+      ?, ?, ?,
+      ?, ?, ?, ?,
+      ?, ?, ?,
+      ?, ?, ?, ?, ?
+    )
   `),
-  updateTierItem: db.prepare(`
-    UPDATE tier_items SET
-      title = ?, progress = ?, status = ?, priority = ?,
-      start_date = ?, end_date = ?,
-      description = ?, management_notes = ?,
-      blocker_alert = ?,
-      start_week = ?, end_week = ?
+  updateTask: db.prepare(`
+    UPDATE tasks SET
+      title = ?, description = ?, parent_id = ?,
+      owner_user_id = ?, assigned_by_user_id = ?, department_code = ?,
+      start_date = ?, end_date = ?, progress = ?, status = ?, priority = ?,
+      is_today = ?, bundle_name = ?, last_updated = ?,
+      deliverable_type = ?, deliverable_text = ?, deliverable_completed = ?, file_name = ?,
+      help_message_author = ?, help_message_body = ?, help_message_timeago = ?,
+      management_notes = ?, blocker_alert = ?,
+      start_week = ?, end_week = ?, collapsed = ?
     WHERE id = ?
   `),
-  deleteTierItem: db.prepare('DELETE FROM tier_items WHERE id = ?'),
+  deleteTask: db.prepare('DELETE FROM tasks WHERE id = ?'),
 
   // --- Subtasks + Daily logs ---
   getSubtask: db.prepare('SELECT * FROM subtasks WHERE id = ?'),
-  getSubtasksByTier: db.prepare(
-    'SELECT * FROM subtasks WHERE tier_item_id = ? ORDER BY id'
+  getSubtasksByTask: db.prepare(
+    'SELECT * FROM subtasks WHERE task_id = ? ORDER BY id'
   ),
   listAllSubtasks: db.prepare(`
     SELECT s.*, u.username AS assignee_username_str, u.fullname AS assignee_fullname
@@ -164,15 +191,14 @@ export const stmt = {
     'UPDATE subtasks SET progress = MAX(progress, ?) WHERE id = ?'
   ),
 
-  // --- Deliverables ---
-  listDeliverablesByTier: db.prepare(
-    'SELECT * FROM deliverables WHERE tier_item_id = ? ORDER BY sort_order, id'
-  ),
-  insertDeliverable: db.prepare(
-    'INSERT INTO deliverables (tier_item_id, title, completed, sort_order) VALUES (?, ?, ?, ?)'
-  ),
-  toggleDeliverable: db.prepare(
-    'UPDATE deliverables SET completed = 1 - completed, updated_at = datetime(\'now\') WHERE id = ?'
+  // --- Task notes (ISS-007: thay employee_task_notes) ---
+  listNotesForTask: db.prepare(`
+    SELECT n.*, u.username AS author_username_str, u.fullname AS author_fullname
+    FROM task_notes n LEFT JOIN users u ON u.id = n.author_user_id
+    WHERE n.task_id = ? ORDER BY n.created_at DESC
+  `),
+  insertTaskNote: db.prepare(
+    'INSERT INTO task_notes (task_id, body, author_user_id) VALUES (?, ?, ?)'
   ),
 
   // --- History ---
@@ -185,36 +211,6 @@ export const stmt = {
     ORDER BY created_at DESC LIMIT 100
   `),
 
-  // --- Team lead tasks ---
-  listTeamLeadTasks: db.prepare(`
-    SELECT t.*, u.username AS owner_username_str, u.fullname AS owner_fullname
-    FROM team_lead_tasks t LEFT JOIN users u ON u.id = t.owner_user_id
-    ORDER BY t.created_at DESC
-  `),
-  getTeamLeadTask: db.prepare('SELECT * FROM team_lead_tasks WHERE id = ?'),
-  updateTeamLeadTaskStatus: db.prepare(
-    'UPDATE team_lead_tasks SET status = ?, updated_at = datetime(\'now\') WHERE id = ?'
-  ),
-  insertTeamLeadTask: db.prepare(`
-    INSERT INTO team_lead_tasks (code, title, category, deliverable_type, deliverable_text,
-      file_name, owner_user_id, department_code, submitted_at, deadline, status, priority,
-      progress_text, help_message_author, help_message_body, help_message_timeago)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `),
-
-  // --- Employee tasks ---
-  listEmployeeTasksByOwner: db.prepare(
-    'SELECT * FROM employee_tasks WHERE owner_user_id = ? ORDER BY created_at DESC'
-  ),
-  listEmployeeTasksByDept: db.prepare(
-    'SELECT * FROM employee_tasks WHERE department_code = ? ORDER BY created_at DESC'
-  ),
-  insertEmployeeTask: db.prepare(`
-    INSERT INTO employee_tasks (code, bundle_name, title, description, current_deliverable,
-      last_updated, deadline, is_today, status, manager_user_id, owner_user_id, department_code)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `),
-
   // --- Help requests ---
   listHelpRequestsBySender: db.prepare(
     'SELECT * FROM help_requests WHERE sender_user_id = ? ORDER BY created_at DESC'
@@ -223,7 +219,7 @@ export const stmt = {
     'SELECT * FROM help_requests ORDER BY created_at DESC'
   ),
   insertHelpRequest: db.prepare(`
-    INSERT INTO help_requests (sender_user_id, reason, message, status, related_team_lead_task_id)
+    INSERT INTO help_requests (sender_user_id, reason, message, status, related_task_id)
     VALUES (?, ?, ?, ?, ?)
   `),
   resolveHelpRequest: db.prepare(`
@@ -231,12 +227,12 @@ export const stmt = {
       resolved_by_user_id = ? WHERE id = ?
   `),
 
-  // --- Rollup helper ---
+  // --- Rollup helper (for progress from children) ---
   getChildrenProgress: db.prepare(
-    'SELECT progress FROM tier_items WHERE parent_id = ?'
+    'SELECT progress FROM tasks WHERE parent_id = ?'
   ),
-  getTierParent: db.prepare(
-    'SELECT id, parent_id FROM tier_items WHERE id = ?'
+  getTaskParent: db.prepare(
+    'SELECT id, parent_id FROM tasks WHERE id = ?'
   ),
 };
 

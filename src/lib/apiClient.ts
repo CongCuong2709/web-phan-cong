@@ -142,7 +142,8 @@ export interface TierItemDto {
   parent_id?: number | null;
   department_code?: string | null;
   owner_user_id?: number | null;
-  /** ISO date 'YYYY-MM-DD'. Schema 2026-10 thay thế `deadline`. */
+  owner_username?: string | null; // ISS-006: backend tra cứu ID từ username
+  assigned_by_user_id?: number | null;
   start_date?: string;
   end_date?: string;
   progress?: number;
@@ -150,8 +151,36 @@ export interface TierItemDto {
   priority?: string;
   description?: string;
   management_notes?: string;
+  is_today?: number;
+  bundle_name?: string | null;
+  last_updated?: string | null;
+  deliverable_type?: 'pdf' | 'spreadsheet' | 'text' | 'photo' | null;
+  deliverable_text?: string | null;
+  deliverable_completed?: number;
+  file_name?: string | null;
+  help_message_author?: string | null;
+  help_message_body?: string | null;
+  help_message_timeago?: string | null;
+  blocker_alert?: string | null;
   start_week?: number;
   end_week?: number;
+  collapsed?: number;
+  owner_username_str?: string;
+  owner_fullname?: string;
+  assigned_by_username_str?: string;
+  assigned_by_fullname?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface TaskNoteDto {
+  id: number;
+  task_id: number;
+  body: string;
+  author_user_id: number;
+  author_username_str?: string;
+  author_fullname?: string;
+  created_at: string;
 }
 
 export interface DailyLogDto {
@@ -316,18 +345,88 @@ export const api = {
     return request<{ ok: boolean; time: string }>('GET', '/api/health');
   },
 
-  // --- Tier items ---
+  // --- Tasks (ISS-007: unified, single source of truth) ---
+  /**
+   * GET /api/tasks — List filtered theo role. Backend trả:
+   *   - admin/director: tất cả
+   *   - manager: T1+T2+T3 đọc + T3+T4 trong phòng ban
+   *   - employee: chỉ T4 owned + T1/T2/T3 read-only context
+   */
+  async listTasks() {
+    return request<{ items: TierItemDto[] }>('GET', '/api/tasks');
+  },
+  async getTask(id: number) {
+    return request<{ item: TierItemDto; subtasks?: unknown[]; notes?: TaskNoteDto[] }>(
+      'GET', `/api/tasks/${id}`
+    );
+  },
+  async createTask(item: TierItemDto) {
+    return request<{ item: TierItemDto }>('POST', '/api/tasks', item);
+  },
+  async updateTask(id: number, patch: Partial<TierItemDto>) {
+    return request<{ item: TierItemDto }>('PATCH', `/api/tasks/${id}`, patch);
+  },
+  async deleteTask(id: number) {
+    return request('DELETE', `/api/tasks/${id}`);
+  },
+
+  // --- Sub-resource trên task (notes, approve, help, toggle) ---
+  async addTaskNote(id: number, body: string) {
+    return request<{ noteId: number }>('POST', `/api/tasks/${id}/notes`, { body });
+  },
+  async approveTask(id: number) {
+    return request<{ item: TierItemDto }>('POST', `/api/tasks/${id}/approve`);
+  },
+  async requestHelp(id: number, reason: string, message: string) {
+    return request('POST', `/api/tasks/${id}/help`, { reason, message });
+  },
+  async toggleTask(id: number) {
+    return request<{ item: TierItemDto }>('POST', `/api/tasks/${id}/toggle`);
+  },
+
+  // --- Backward-compat aliases (sẽ bị xoá khi frontend refactor xong) ---
   async listTierItems() {
-    return request<{ items: TierItemDto[] }>('GET', '/api/tier-items');
+    return this.listTasks();
   },
   async createTierItem(item: TierItemDto) {
-    return request<{ item: TierItemDto }>('POST', '/api/tier-items', item);
+    return this.createTask(item);
   },
   async updateTierItem(id: number, patch: Partial<TierItemDto>) {
-    return request('PATCH', `/api/tier-items/${id}`, patch);
+    return this.updateTask(id, patch);
   },
   async deleteTierItem(id: number) {
-    return request('DELETE', `/api/tier-items/${id}`);
+    return this.deleteTask(id);
+  },
+
+  async listTeamTasks() {
+    return this.listTasks();
+  },
+
+  async listEmployeeTasks() {
+    return this.listTasks();
+  },
+  async createEmployeeTask(task: {
+    title: string;
+    description: string;
+    deadline: string;
+  }) {
+    return this.createTask({
+      tier: 4,
+      title: task.title,
+      description: task.description,
+      end_date: task.deadline,
+      priority: 'normal',
+      status: 'pending',
+    });
+  },
+  async addEmployeeNote(id: string | number, body: string) {
+    return this.addTaskNote(Number(id), body);
+  },
+  async toggleEmployeeTask(id: string | number) {
+    return this.toggleTask(Number(id));
+  },
+  async patchEmployeeTaskStatus(id: string | number, status: 'doing' | 'done' | 'pending') {
+    return this.updateTask(Number(id), { status });
   },
 
   // --- Subtasks + Daily logs (Phase 2 — endpoints tồn tại ở backend, chưa patch frontend) ---
@@ -338,49 +437,6 @@ export const api = {
       obstacle: log.obstacle,
       progress: log.progress,
     });
-  },
-
-  // --- Team tasks ---
-  async listTeamTasks() {
-    return request<{ tasks: TeamLeadTaskDto[] }>('GET', '/api/team-tasks');
-  },
-  async approveTask(id: number) {
-    return request('POST', `/api/team-tasks/${id}/approve`);
-  },
-  async resolveHelp(id: number) {
-    return request('POST', `/api/team-tasks/${id}/resolve`);
-  },
-
-  // --- Employee tasks ---
-  async listEmployeeTasks() {
-    return request<{ tasks: EmployeeTaskDto[] }>('GET', '/api/employee-tasks');
-  },
-  async createEmployeeTask(task: {
-    title: string;
-    description: string;
-    deadline: string;
-  }) {
-    return request('POST', '/api/employee-tasks', task);
-  },
-  /**
-   * BUG-02 fix: ghi note mới cho employee task (xem employeeTasks.js:183-215).
-   * @param id frontend task id (string, vd "123") — sẽ convert sang number cho backend.
-   */
-  async addEmployeeNote(id: string | number, body: string) {
-    return request('POST', `/api/employee-tasks/${Number(id)}/notes`, { body });
-  },
-  /**
-   * BUG-03 fix: toggle done ↔ doing (xem employeeTasks.js:155-181).
-   */
-  async toggleEmployeeTask(id: string | number) {
-    return request('POST', `/api/employee-tasks/${Number(id)}/toggle`);
-  },
-  /**
-   * BUG-03 fix: dùng cho "Start task" — chuyển status pending → doing.
-   * Backend có PATCH /api/employee-tasks/:id chấp nhận status (xem employeeTasks.js:117-153).
-   */
-  async patchEmployeeTaskStatus(id: string | number, status: 'doing' | 'done' | 'pending') {
-    return request('PATCH', `/api/employee-tasks/${Number(id)}`, { status });
   },
 
   // --- Users (BUG-04 fix: NewItemModal cần danh sách user thật cho dropdown) ---
