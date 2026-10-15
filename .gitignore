@@ -4,7 +4,11 @@ dist/
 coverage/
 .DS_Store
 *.log
+# Fix C4: file .env chứa JWT_SECRET + config nhạy cảm — KHÔNG commit lên git.
+# (Root .gitignore đã có pattern này; thêm dòng dưới để chắc chắn bao gồm
+# cả backend/.env và root .env.)
 .env*
+backend/.env
 !.env.example
 vite.config.ts
 

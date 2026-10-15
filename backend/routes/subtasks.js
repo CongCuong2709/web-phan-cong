@@ -17,7 +17,8 @@
 import { Router } from 'express';
 import { db, stmt, tx } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
-import { canEditSubtask, canAddDailyLog, inDepartment } from '../utils/permissions.js';
+import { authorize } from '../lib/policies.js';
+import { canAddDailyLog, inDepartment } from '../utils/permissions.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -67,18 +68,9 @@ router.get('/daily-logs', (_req, res) => {
 router.post('/tasks/:taskId/subtasks', (req, res) => {
   const task = getTaskOr404(req.params.taskId);
   if (!task) return res.status(404).json({ error: 'not_found' });
-  if (task.tier !== 4) {
-    return res.status(400).json({ error: 'invalid_tier', message: 'Chỉ T4 mới có SubTask.' });
-  }
-  if (req.user.role === 'director') {
-    return res.status(403).json({ error: 'forbidden', message: 'Director không tạo SubTask.' });
-  }
-  if (req.user.role === 'manager' && !inDepartment(req.user, task.department_code)) {
-    return res.status(403).json({ error: 'forbidden' });
-  }
-  if (req.user.role === 'employee') {
-    return res.status(403).json({ error: 'forbidden' });
-  }
+  // B3: dùng centralized policy.
+  const authz = authorize('subtask:create', req.user, { parent: task });
+  if (!authz.ok) return res.status(authz.status).json(authz);
 
   const body = req.body || {};
   if (!body.name?.trim()) {
@@ -114,9 +106,9 @@ router.patch('/subtasks/:id(\\d+)', (req, res) => {
   const subtask = stmt.getSubtask.get(Number(req.params.id));
   if (!subtask) return res.status(404).json({ error: 'not_found' });
   const parent = stmt.getTask.get(subtask.task_id);
-  if (!canEditSubtask(req.user, subtask, parent)) {
-    return res.status(403).json({ error: 'forbidden' });
-  }
+  // B3: dùng centralized policy.
+  const authz = authorize('subtask:edit', req.user, { subtask, parent });
+  if (!authz.ok) return res.status(authz.status).json(authz);
 
   const body = req.body || {};
   db.prepare(`
@@ -151,9 +143,9 @@ router.patch('/subtasks/:id(\\d+)/progress', (req, res) => {
   const subtask = stmt.getSubtask.get(Number(req.params.id));
   if (!subtask) return res.status(404).json({ error: 'not_found' });
   const parent = stmt.getTask.get(subtask.task_id);
-  if (!canEditSubtask(req.user, subtask, parent)) {
-    return res.status(403).json({ error: 'forbidden' });
-  }
+  // B3: dùng centralized policy.
+  const authz = authorize('subtask:edit', req.user, { subtask, parent });
+  if (!authz.ok) return res.status(authz.status).json(authz);
 
   const newProgress = Number(req.body?.progress);
   if (!Number.isFinite(newProgress) || newProgress < 0 || newProgress > 100) {
@@ -192,9 +184,9 @@ router.patch('/subtasks/:id(\\d+)/progress', (req, res) => {
 
 /** DELETE /api/subtasks/:id — Xoá subtask (admin/manager only). */
 router.delete('/subtasks/:id(\\d+)', (req, res) => {
-  if (req.user.role === 'employee' || req.user.role === 'director') {
-    return res.status(403).json({ error: 'forbidden', message: 'Chỉ admin/manager mới được xoá SubTask.' });
-  }
+  // B3: dùng centralized policy.
+  const authz = authorize('subtask:delete', req.user, {});
+  if (!authz.ok) return res.status(authz.status).json(authz);
   const subtask = stmt.getSubtask.get(Number(req.params.id));
   if (!subtask) return res.status(404).json({ error: 'not_found' });
   tx(() => {
@@ -216,12 +208,9 @@ router.post('/subtasks/:id(\\d+)/logs', (req, res) => {
   const subtask = stmt.getSubtask.get(Number(req.params.id));
   if (!subtask) return res.status(404).json({ error: 'not_found' });
   const parent = stmt.getTask.get(subtask.task_id);
-  if (!canAddDailyLog(req.user, subtask, parent)) {
-    return res.status(403).json({
-      error: 'forbidden',
-      message: 'Chỉ assignee SubTask hoặc manager trong phòng ban mới được ghi nhật ký.',
-    });
-  }
+  // B3: dùng centralized policy.
+  const authz = authorize('daily_log:create', req.user, { subtask, parent });
+  if (!authz.ok) return res.status(authz.status).json(authz);
 
   const body = req.body || {};
   if (!body.description?.trim()) {

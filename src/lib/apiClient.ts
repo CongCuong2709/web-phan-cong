@@ -10,7 +10,9 @@
  *   api.createTierItem({ ... });  // fire-and-forget
  */
 
-const API_BASE = (import.meta.env.VITE_API_URL as string) || 'http://localhost:3001';
+// Fix C3: port backend mặc định là 3000 (xem backend/.env PORT=3000),
+// không phải 3001. Sai port này làm frontend không gọi được API mặc định.
+const API_BASE = (import.meta.env.VITE_API_URL as string) || 'http://localhost:3000';
 const TOKEN_KEY = 'mvp_token';
 
 // ─────────────────────────────────────────────────────────────────────
@@ -345,89 +347,50 @@ export const api = {
     return request<{ ok: boolean; time: string }>('GET', '/api/health');
   },
 
-  // --- Tasks (ISS-007: unified, single source of truth) ---
+  // --- Tasks (Phase C: tier-specific endpoints) ---
   /**
-   * GET /api/tasks — List filtered theo role. Backend trả:
-   *   - admin/director: tất cả
-   *   - manager: T1+T2+T3 đọc + T3+T4 trong phòng ban
-   *   - employee: chỉ T4 owned + T1/T2/T3 read-only context
+   * GET /api/tasks — List filtered theo role. Backend trả TẤT CẢ 4 tier
+   * với field `tier` set sẵn. Frontend dùng TierItemDto (kèm tier) cho cả 4 loại.
    */
   async listTasks() {
     return request<{ items: TierItemDto[] }>('GET', '/api/tasks');
   },
-  async getTask(id: number) {
-    return request<{ item: TierItemDto; subtasks?: unknown[]; notes?: TaskNoteDto[] }>(
-      'GET', `/api/tasks/${id}`
+  /** GET /api/tasks/:tier/:id — tier ∈ {1,2,3,4}. */
+  async getTask(tier: number, id: number) {
+    return request<{ item: TierItemDto; subtasks?: unknown[]; notes?: TaskNoteDto[]; deliverables?: unknown[]; helpMessages?: unknown[] }>(
+      'GET', `/api/tasks/${tier}/${id}`
     );
   },
+  /** POST /api/tasks — body chứa `tier` để dispatch. */
   async createTask(item: TierItemDto) {
     return request<{ item: TierItemDto }>('POST', '/api/tasks', item);
   },
-  async updateTask(id: number, patch: Partial<TierItemDto>) {
-    return request<{ item: TierItemDto }>('PATCH', `/api/tasks/${id}`, patch);
+  /** PATCH /api/tasks/:tier/:id. */
+  async updateTask(tier: number, id: number, patch: Partial<TierItemDto>) {
+    return request<{ item: TierItemDto }>('PATCH', `/api/tasks/${tier}/${id}`, patch);
   },
-  async deleteTask(id: number) {
-    return request('DELETE', `/api/tasks/${id}`);
+  /** DELETE /api/tasks/:tier/:id. */
+  async deleteTask(tier: number, id: number) {
+    return request('DELETE', `/api/tasks/${tier}/${id}`);
   },
 
   // --- Sub-resource trên task (notes, approve, help, toggle) ---
-  async addTaskNote(id: number, body: string) {
-    return request<{ noteId: number }>('POST', `/api/tasks/${id}/notes`, { body });
+  async addTaskNote(tier: number, id: number, body: string) {
+    return request<{ noteId: number }>('POST', `/api/tasks/${tier}/${id}/notes`, { body });
   },
-  async approveTask(id: number) {
-    return request<{ item: TierItemDto }>('POST', `/api/tasks/${id}/approve`);
+  async approveTask(tier: number, id: number) {
+    return request<{ item: TierItemDto }>('POST', `/api/tasks/${tier}/${id}/approve`);
   },
-  async requestHelp(id: number, reason: string, message: string) {
-    return request('POST', `/api/tasks/${id}/help`, { reason, message });
+  async requestHelp(tier: number, id: number, reason: string, message: string) {
+    return request('POST', `/api/tasks/${tier}/${id}/help`, { reason, message });
   },
-  async toggleTask(id: number) {
-    return request<{ item: TierItemDto }>('POST', `/api/tasks/${id}/toggle`);
-  },
-
-  // --- Backward-compat aliases (sẽ bị xoá khi frontend refactor xong) ---
-  async listTierItems() {
-    return this.listTasks();
-  },
-  async createTierItem(item: TierItemDto) {
-    return this.createTask(item);
-  },
-  async updateTierItem(id: number, patch: Partial<TierItemDto>) {
-    return this.updateTask(id, patch);
-  },
-  async deleteTierItem(id: number) {
-    return this.deleteTask(id);
+  async toggleTask(tier: number, id: number) {
+    return request<{ item: TierItemDto }>('POST', `/api/tasks/${tier}/${id}/toggle`);
   },
 
-  async listTeamTasks() {
-    return this.listTasks();
-  },
-
-  async listEmployeeTasks() {
-    return this.listTasks();
-  },
-  async createEmployeeTask(task: {
-    title: string;
-    description: string;
-    deadline: string;
-  }) {
-    return this.createTask({
-      tier: 4,
-      title: task.title,
-      description: task.description,
-      end_date: task.deadline,
-      priority: 'normal',
-      status: 'pending',
-    });
-  },
-  async addEmployeeNote(id: string | number, body: string) {
-    return this.addTaskNote(Number(id), body);
-  },
-  async toggleEmployeeTask(id: string | number) {
-    return this.toggleTask(Number(id));
-  },
-  async patchEmployeeTaskStatus(id: string | number, status: 'doing' | 'done' | 'pending') {
-    return this.updateTask(Number(id), { status });
-  },
+  // B7: backward-compat aliases đã xoá. Frontend giờ chỉ dùng /api/tasks.
+  // TierItem/TeamLeadTask/EmployeeTask DTO types vẫn dùng cho transforms,
+  // nhưng API chỉ có 1 endpoint /api/tasks.
 
   // --- Subtasks + Daily logs (Phase 2 — endpoints tồn tại ở backend, chưa patch frontend) ---
   async addDailyLog(log: DailyLogDto) {

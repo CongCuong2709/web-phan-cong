@@ -1,21 +1,15 @@
 /**
  * db.js — Database connection dùng `node:sqlite` (built-in từ Node 22.5+).
  *
- * Ưu điểm:
- *   - Zero native compilation (npm install không cần build tools)
- *   - API gầnme như better-sqlite3 — chỉ khác một vài chỗ:
- *       • `db.prepare(...)` trả về `StatementSync` (cũng có `.get/.all/.run`)
- *       • KHÔNG có `.pragma()` — dùng `db.exec('PRAGMA ...')` thay bằng raw SQL
- *       • Auto-foreign-key mặc định OFF trong mỗi connection — phải bật explicit
- *       • KHÔNG có `db.transaction(fn)` — tự quản bằng `db.exec('BEGIN')/COMMIT`/`ROLLBACK`
- *   - Sync API (giống better-sqlite3) — không blocking event loop vì native C++
+ * Phase C (2026-10) refactor:
+ *   - Schema đổi từ 1 wide-table `tasks` thành 4 bảng projects/phases/bundles/tasks
+ *   - Mỗi loại entity có stmt cache riêng (insertX, getX, listX)
+ *   - Sub-resource (deliverable, help message) là 1:N với task
+ *   - Audit log đổi tên `history_entries` → `audit_log`, có JSON snapshot
  *
- * Cú pháp parameters:
- *   - Positional: .get(value1, value2)
- *   - Named:      .get({ key: value }) — KHÔNG có prefix @
- *
- * Lưu ý: nếu dùng Node < 22.5.0 thì phải set flag --experimental-sqlite.
- * Xem https://nodejs.org/api/sqlite.html
+ * Phase B:
+ *   - Bỏ JS rollup trùng với trigger (xem stateMachine.js + recomputeRollup trong routes)
+ *   - PRAGMA journal_mode = WAL, foreign_keys = ON
  */
 
 import { DatabaseSync } from 'node:sqlite';
@@ -33,7 +27,6 @@ const isFreshDb = !fs.existsSync(DB_PATH);
 export const db = new DatabaseSync(DB_PATH);
 
 // PRAGMA qua raw SQL (node:sqlite không có method .pragma()).
-// WAL cho phép concurrent read khi write.
 db.exec('PRAGMA journal_mode = WAL;');
 db.exec('PRAGMA foreign_keys = ON;');
 
@@ -49,11 +42,6 @@ if (isFreshDb) {
 
 /**
  * Manual transaction wrapper. node:sqlite không có `db.transaction()` built-in.
- * Nếu `fn` throw, rollback. Ngược lại commit.
- *
- * @template T
- * @param {() => T} fn
- * @returns {T}
  */
 export function tx(fn) {
   db.exec('BEGIN');
@@ -68,17 +56,14 @@ export function tx(fn) {
 }
 
 /**
- * Statement cache. Mỗi statement được prepare 1 lần, gọi nhiều lần.
- * API .get/.all/.run tương tự better-sqlite3.
+ * Statement cache (Phase C: chuẩn hoá theo entity).
+ * Mỗi statement được prepare 1 lần, gọi nhiều lần.
  */
 export const stmt = {
   // --- Users ---
   getUserByUsername: db.prepare(
     'SELECT * FROM users WHERE username = ? COLLATE NOCASE AND is_active = 1'
   ),
-  // Sau khi fix ISS-001 (middleware trả array) và ISS-002 (helpRequests filter
-  // thiếu dept), getUserById trả về user KHÔNG có departments. Consumers cần
-  // dùng stmt.getUserDepartments.all(user.id) riêng.
   getUserById: db.prepare(
     'SELECT id, username, fullname, email, role, initial, avatar_url FROM users WHERE id = ? AND is_active = 1'
   ),
@@ -90,8 +75,6 @@ export const stmt = {
   getUserDepartments: db.prepare(
     'SELECT department_code FROM user_departments WHERE user_id = ?'
   ),
-  // Update password_hash cho user (trigger users_updated sẽ tự bump updated_at).
-  // Trả về số row affected để caller biết update có thành công không.
   updateUserPasswordHash: db.prepare(
     'UPDATE users SET password_hash = ? WHERE id = ?'
   ),
@@ -108,62 +91,175 @@ export const stmt = {
     "UPDATE sessions SET revoked_at = datetime('now') WHERE id = ?"
   ),
 
-  // --- Tasks (ISS-007: unified tier_items + team_lead_tasks + employee_tasks) ---
-  // Schema 2026-10 v2: single `tasks` table với tier ∈ {1,2,3,4}.
-  // Owner = người thực hiện; assigned_by = manager giao (cho 'Việc của tôi' view).
+  // --- Projects (Tier 1) ---
+  listProjects: db.prepare(`
+    SELECT p.*, u.username AS owner_username_str, u.fullname AS owner_fullname
+    FROM projects p LEFT JOIN users u ON u.id = p.owner_user_id
+    ORDER BY p.code
+  `),
+  getProject: db.prepare(`
+    SELECT p.*, u.username AS owner_username_str, u.fullname AS owner_fullname
+    FROM projects p LEFT JOIN users u ON u.id = p.owner_user_id
+    WHERE p.id = ?
+  `),
+  insertProject: db.prepare(`
+    INSERT INTO projects (code, title, description, owner_user_id, start_date, end_date, status, collapsed)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `),
+  updateProject: db.prepare(`
+    UPDATE projects SET
+      title = ?, description = ?, owner_user_id = ?,
+      start_date = ?, end_date = ?, status = ?, collapsed = ?
+    WHERE id = ?
+  `),
+  deleteProject: db.prepare('DELETE FROM projects WHERE id = ?'),
+
+  // --- Phases (Tier 2) ---
+  listPhases: db.prepare(`
+    SELECT ph.*, u.username AS owner_username_str, u.fullname AS owner_fullname
+    FROM phases ph LEFT JOIN users u ON u.id = ph.owner_user_id
+    ORDER BY ph.code
+  `),
+  getPhasesByProject: db.prepare(`
+    SELECT ph.*, u.username AS owner_username_str, u.fullname AS owner_fullname
+    FROM phases ph LEFT JOIN users u ON u.id = ph.owner_user_id
+    WHERE ph.project_id = ? ORDER BY ph.code
+  `),
+  getPhase: db.prepare(`
+    SELECT ph.*, u.username AS owner_username_str, u.fullname AS owner_fullname
+    FROM phases ph LEFT JOIN users u ON u.id = ph.owner_user_id
+    WHERE ph.id = ?
+  `),
+  insertPhase: db.prepare(`
+    INSERT INTO phases (project_id, code, title, description, owner_user_id,
+      start_date, end_date, status, management_notes, blocker_alert, collapsed)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `),
+  updatePhase: db.prepare(`
+    UPDATE phases SET
+      title = ?, description = ?, owner_user_id = ?,
+      start_date = ?, end_date = ?, status = ?,
+      management_notes = ?, blocker_alert = ?, collapsed = ?
+    WHERE id = ?
+  `),
+  deletePhase: db.prepare('DELETE FROM phases WHERE id = ?'),
+
+  // --- Bundles (Tier 3) ---
+  listBundles: db.prepare(`
+    SELECT b.*, u.username AS owner_username_str, u.fullname AS owner_fullname,
+      ph.project_id AS project_id
+    FROM bundles b
+      LEFT JOIN users u ON u.id = b.owner_user_id
+      LEFT JOIN phases ph ON ph.id = b.phase_id
+    ORDER BY b.code
+  `),
+  getBundlesByPhase: db.prepare(`
+    SELECT b.*, u.username AS owner_username_str, u.fullname AS owner_fullname
+    FROM bundles b LEFT JOIN users u ON u.id = b.owner_user_id
+    WHERE b.phase_id = ? ORDER BY b.code
+  `),
+  getBundle: db.prepare(`
+    SELECT b.*, u.username AS owner_username_str, u.fullname AS owner_fullname
+    FROM bundles b LEFT JOIN users u ON u.id = b.owner_user_id
+    WHERE b.id = ?
+  `),
+  insertBundle: db.prepare(`
+    INSERT INTO bundles (phase_id, code, title, description, owner_user_id,
+      start_date, end_date, status, collapsed)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `),
+  updateBundle: db.prepare(`
+    UPDATE bundles SET
+      title = ?, description = ?, owner_user_id = ?,
+      start_date = ?, end_date = ?, status = ?, collapsed = ?
+    WHERE id = ?
+  `),
+  deleteBundle: db.prepare('DELETE FROM bundles WHERE id = ?'),
+
+  // --- Tasks (Tier 4) ---
   listTasks: db.prepare(`
     SELECT t.*,
       u.username AS owner_username_str, u.fullname AS owner_fullname,
-      a.username AS assigned_by_username_str, a.fullname AS assigned_by_fullname
+      a.username AS assigned_by_username_str, a.fullname AS assigned_by_fullname,
+      b.phase_id AS phase_id, ph.project_id AS project_id
     FROM tasks t
       LEFT JOIN users u ON u.id = t.owner_user_id
       LEFT JOIN users a ON a.id = t.assigned_by_user_id
-    ORDER BY t.tier, t.code
+      LEFT JOIN bundles b ON b.id = t.bundle_id
+      LEFT JOIN phases ph ON ph.id = b.phase_id
+    ORDER BY t.code
   `),
   getTask: db.prepare(`
     SELECT t.*,
       u.username AS owner_username_str, u.fullname AS owner_fullname,
-      a.username AS assigned_by_username_str, a.fullname AS assigned_by_fullname
+      a.username AS assigned_by_username_str, a.fullname AS assigned_by_fullname,
+      b.phase_id AS phase_id, ph.project_id AS project_id
     FROM tasks t
       LEFT JOIN users u ON u.id = t.owner_user_id
       LEFT JOIN users a ON a.id = t.assigned_by_user_id
+      LEFT JOIN bundles b ON b.id = t.bundle_id
+      LEFT JOIN phases ph ON ph.id = b.phase_id
     WHERE t.id = ?
   `),
-  getTaskByCode: db.prepare(
-    'SELECT id FROM tasks WHERE code = ? AND (department_code = ? OR ? IS NULL)'
-  ),
+  getTasksByBundle: db.prepare(`
+    SELECT t.*, u.username AS owner_username_str, u.fullname AS owner_fullname
+    FROM tasks t LEFT JOIN users u ON u.id = t.owner_user_id
+    WHERE t.bundle_id = ? ORDER BY t.code
+  `),
   insertTask: db.prepare(`
-    INSERT INTO tasks (
-      code, title, description, parent_id, tier,
-      owner_user_id, assigned_by_user_id, department_code,
-      start_date, end_date, progress, status, priority,
-      is_today, bundle_name, last_updated,
-      deliverable_type, deliverable_text, deliverable_completed, file_name,
-      help_message_author, help_message_body, help_message_timeago,
-      management_notes, blocker_alert, start_week, end_week, collapsed
-    ) VALUES (
-      ?, ?, ?, ?, ?,
-      ?, ?, ?,
-      ?, ?, ?, ?, ?,
-      ?, ?, ?,
-      ?, ?, ?, ?,
-      ?, ?, ?,
-      ?, ?, ?, ?, ?
-    )
+    INSERT INTO tasks (bundle_id, code, title, description, owner_user_id, assigned_by_user_id,
+      department_code, start_date, end_date, progress, status, priority, is_today, collapsed)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
   updateTask: db.prepare(`
     UPDATE tasks SET
-      title = ?, description = ?, parent_id = ?,
-      owner_user_id = ?, assigned_by_user_id = ?, department_code = ?,
-      start_date = ?, end_date = ?, progress = ?, status = ?, priority = ?,
-      is_today = ?, bundle_name = ?, last_updated = ?,
-      deliverable_type = ?, deliverable_text = ?, deliverable_completed = ?, file_name = ?,
-      help_message_author = ?, help_message_body = ?, help_message_timeago = ?,
-      management_notes = ?, blocker_alert = ?,
-      start_week = ?, end_week = ?, collapsed = ?
+      title = ?, description = ?, owner_user_id = ?, assigned_by_user_id = ?,
+      department_code = ?, start_date = ?, end_date = ?,
+      progress = ?, status = ?, priority = ?, is_today = ?, collapsed = ?
     WHERE id = ?
   `),
   deleteTask: db.prepare('DELETE FROM tasks WHERE id = ?'),
+  getChildrenProgress: db.prepare(
+    'SELECT progress FROM tasks WHERE bundle_id = ?'
+  ),
+  getTaskBundlePhase: db.prepare(`
+    SELECT t.bundle_id, b.phase_id, ph.project_id
+    FROM tasks t LEFT JOIN bundles b ON b.id = t.bundle_id
+      LEFT JOIN phases ph ON ph.id = b.phase_id
+    WHERE t.id = ?
+  `),
+
+  // --- Task Deliverables (1:N) ---
+  listDeliverablesByTask: db.prepare(`
+    SELECT * FROM task_deliverables WHERE task_id = ? ORDER BY sort_order, id
+  `),
+  insertDeliverable: db.prepare(`
+    INSERT INTO task_deliverables (task_id, type, text, file_name, file_url, mime_type, size_bytes, completed, completed_at, sort_order)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `),
+  updateDeliverable: db.prepare(`
+    UPDATE task_deliverables SET
+      type = ?, text = ?, file_name = ?, file_url = ?, mime_type = ?, size_bytes = ?,
+      completed = ?, completed_at = ?, sort_order = ?
+    WHERE id = ?
+  `),
+  deleteDeliverable: db.prepare('DELETE FROM task_deliverables WHERE id = ?'),
+  getDeliverable: db.prepare('SELECT * FROM task_deliverables WHERE id = ?'),
+
+  // --- Task Help Messages (1:N) ---
+  listHelpMessagesByTask: db.prepare(`
+    SELECT m.*, u.username AS author_username_str, u.fullname AS author_fullname
+    FROM task_help_messages m LEFT JOIN users u ON u.id = m.author_user_id
+    WHERE m.task_id = ? ORDER BY m.created_at DESC
+  `),
+  insertHelpMessage: db.prepare(`
+    INSERT INTO task_help_messages (task_id, author_user_id, body, is_resolved)
+    VALUES (?, ?, ?, 0)
+  `),
+  resolveHelpMessage: db.prepare(`
+    UPDATE task_help_messages SET is_resolved = 1, resolved_by_user_id = ?, resolved_at = datetime('now')
+    WHERE id = ?
+  `),
 
   // --- Subtasks + Daily logs ---
   getSubtask: db.prepare('SELECT * FROM subtasks WHERE id = ?'),
@@ -175,9 +271,11 @@ export const stmt = {
     FROM subtasks s LEFT JOIN users u ON u.id = s.assignee_user_id
     ORDER BY s.id
   `),
-  listDailyLogsBySub: db.prepare(
-    'SELECT * FROM daily_logs WHERE subtask_id = ? ORDER BY log_date DESC, id DESC'
-  ),
+  listDailyLogsBySub: db.prepare(`
+    SELECT l.*, u.username AS user_username_str, u.fullname AS user_fullname
+    FROM daily_logs l LEFT JOIN users u ON u.id = l.author_user_id
+    WHERE l.subtask_id = ? ORDER BY l.log_date DESC, l.id DESC
+  `),
   listAllDailyLogs: db.prepare(`
     SELECT l.*, u.username AS user_username_str, u.fullname AS user_fullname
     FROM daily_logs l LEFT JOIN users u ON u.id = l.author_user_id
@@ -191,7 +289,7 @@ export const stmt = {
     'UPDATE subtasks SET progress = MAX(progress, ?) WHERE id = ?'
   ),
 
-  // --- Task notes (ISS-007: thay employee_task_notes) ---
+  // --- Task notes ---
   listNotesForTask: db.prepare(`
     SELECT n.*, u.username AS author_username_str, u.fullname AS author_fullname
     FROM task_notes n LEFT JOIN users u ON u.id = n.author_user_id
@@ -201,13 +299,15 @@ export const stmt = {
     'INSERT INTO task_notes (task_id, body, author_user_id) VALUES (?, ?, ?)'
   ),
 
-  // --- History ---
-  insertHistory: db.prepare(`
-    INSERT INTO history_entries (entity_type, entity_id, action,
-      author_user_id, author_username, author_fullname) VALUES (?, ?, ?, ?, ?, ?)
+  // --- Audit log (Phase D — old schema: history_entries; new: audit_log) ---
+  insertAuditLog: db.prepare(`
+    INSERT INTO audit_log (entity_type, entity_id, action,
+      old_values, new_values,
+      actor_user_id, actor_username, actor_ip, actor_user_agent)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
-  listHistoryByEntity: db.prepare(`
-    SELECT * FROM history_entries WHERE entity_type = ? AND entity_id = ?
+  listAuditByEntity: db.prepare(`
+    SELECT * FROM audit_log WHERE entity_type = ? AND entity_id = ?
     ORDER BY created_at DESC LIMIT 100
   `),
 
@@ -226,14 +326,6 @@ export const stmt = {
     UPDATE help_requests SET status = 'resolved', resolved_at = datetime('now'),
       resolved_by_user_id = ? WHERE id = ?
   `),
-
-  // --- Rollup helper (for progress from children) ---
-  getChildrenProgress: db.prepare(
-    'SELECT progress FROM tasks WHERE parent_id = ?'
-  ),
-  getTaskParent: db.prepare(
-    'SELECT id, parent_id FROM tasks WHERE id = ?'
-  ),
 };
 
 export default db;

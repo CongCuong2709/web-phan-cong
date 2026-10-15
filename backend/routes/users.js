@@ -9,6 +9,7 @@
 import { Router } from 'express';
 import { db, stmt } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { authorize } from '../lib/policies.js';
 import { inDepartment } from '../utils/permissions.js';
 
 const router = Router();
@@ -18,20 +19,9 @@ router.use(requireAuth);
 /** GET /api/users — Tất cả user, hoặc filter theo department. */
 router.get('/', (req, res) => {
   const { department } = req.query;
-
-  // Admin: thấy tất cả. Manager: chỉ phòng ban mình.
-  if (req.user.role === 'employee') {
-    return res.status(403).json({
-      error: 'forbidden',
-      message: 'Employee không có quyền list users.',
-    });
-  }
-  if (department && !inDepartment(req.user, department)) {
-    return res.status(403).json({
-      error: 'forbidden',
-      message: `Bạn không thuộc phòng ban '${department}'.`,
-    });
-  }
+  // B3: dùng centralized policy.
+  const authz = authorize('user:list', req.user, { department });
+  if (!authz.ok) return res.status(authz.status).json(authz);
   let users = stmt.listUsers.all();
   if (department) {
     users = users.filter((u) => {
@@ -47,20 +37,11 @@ router.get('/', (req, res) => {
 router.get('/:username', (req, res) => {
   const u = stmt.getUserByUsername.get(req.params.username);
   if (!u) return res.status(404).json({ error: 'not_found' });
-  if (req.user.role !== 'admin' && req.user.role !== 'director') {
-    // Manager chỉ xem user cùng phòng.
-    // Fix ISS-004: getUserByUsername KHÔNG trả `departments` → phải fetch riêng
-    // bằng stmt.getUserDepartments.all() (trả mảng). Trước đây u.departments
-    // = undefined → check inDepartment(req.user, '') trả true → manager cross-dept
-    // VẪN xem được user dept khác (BUG, test/users.test.ts phát hiện).
-    const targetDepts = stmt.getUserDepartments.all(u.id).map((d) => d.department_code);
-    const isInSameDept = targetDepts.some((d) => inDepartment(req.user, d));
-    if (!isInSameDept) {
-      return res.status(403).json({ error: 'forbidden' });
-    }
-  }
-  // Attach departments (array) cho response — đồng nhất với /api/auth/login.
+  // B3: dùng centralized policy. Truyền targetDepts để check overlap.
   const targetDepts = stmt.getUserDepartments.all(u.id).map((d) => d.department_code);
+  const authz = authorize('user:read', req.user, { targetDepts });
+  if (!authz.ok) return res.status(authz.status).json(authz);
+  // Attach departments (array) cho response — đồng nhất với /api/auth/login.
   const { password_hash: _ph, ...safeUser } = u;
   return res.json({ user: { ...safeUser, departments: targetDepts } });
 });

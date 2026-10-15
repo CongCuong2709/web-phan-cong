@@ -1,30 +1,18 @@
-/**
- * schema.sql — Database schema v2 (2026-10) — UNIFY TASKS
- *
- * REFACTOR: Hợp tục 3 bảng `tier_items`, `team_lead_tasks`, `employee_tasks`
- * (ISS-007 — "ông nói gà bà nói vịt" anti-pattern) thành 1 bảng `tasks` duy nhất.
- *
- * Trước ISS-007:
- *   - tier_items (Gantt 4 tầng view) — có parent_id, management_notes, blocker
- *   - team_lead_tasks (Giao việc nhóm view) — có deliverable_*, file_name
- *   - employee_tasks (Việc của tôi view) — có is_today, bundle_name, notes
- *   → 3 bảng cùng mô tả "task", không có FK, dễ lệch data
- *
- * Sau ISS-007:
- *   - 1 bảng `tasks` với tất cả field (tier ∈ {1,2,3,4} phân biệt cấp độ)
- *   - 1 bảng `task_notes` (thay employee_task_notes)
- *   - subtasks giờ FK vào tasks
- *   - help_requests.related_task_id (thay related_team_lead_task_id)
- *   - Inline deliverable columns (thay bảng deliverables riêng)
- *
- * Status vocab chuẩn hoá: pending|doing|done|pending_approval|blocked
- * Priority vocab chuẩn hoá: low|normal|high|critical
- *
- * Notes:
- *   - 2026-10 PR #1: ISS-001 add permissions (departments array)
- *   - 2026-10 PR #2: ISS-006 fix owner_user_id silent fallback
- *   - 2026-10 PR #3: ISS-007 unify 3 task tables (file này)
- */
+-- =============================================================================
+-- schema.sql — Database schema v3 (2026-10) — NORMALIZED
+--
+-- REFACTOR (Phase C — comprehensive):
+--   Trước v2: 1 bảng `tasks` wide-table 25+ cột, với tier (1-4) chỉ là cột int.
+--             Trộn field của T1 (management_notes) với T4 (deliverable_*)
+--             → 1NF vi phạm nhiều chỗ, khó query, khó mở rộng.
+--   Sau v3:   Tách thành 4 bảng projects/phases/bundles/tasks + 2 bảng con
+--             task_deliverables, task_help_messages (1:N).
+--             Mỗi bảng chỉ chứa field đúng nghĩa nghiệp vụ.
+--
+-- Status vocab chuẩn hoá (Phase B): pending|doing|done|pending_approval|blocked
+-- Priority vocab chuẩn hoá: low|normal|high|critical
+-- State machine định nghĩa ở backend/lib/stateMachine.js
+-- =============================================================================
 
 -- ============================================================================
 -- 1. Users + Departments
@@ -59,107 +47,143 @@ CREATE TABLE IF NOT EXISTS user_departments (
 CREATE INDEX IF NOT EXISTS idx_user_dept_dept ON user_departments(department_code);
 
 -- ============================================================================
--- 2. Unified TASKS table (ISS-007 — thay thế tier_items + team_lead_tasks +
---    employee_tasks)
+-- 2. Project Hierarchy (4 bảng tách riêng — Phase C chuẩn hoá)
 --
--- tier phân biệt cấp độ trong cây dự án:
---   tier=1: Dự án (Project)
---   tier=2: Giai đoạn (Phase)
---   tier=3: Hạng mục / Gói (Bundle)
---   tier=4: Đầu việc (Task — leaf)
--- Tree structure: parent_id tự tham chiếu.
+-- Tier 1 = projects    (Dự án)         — có owner, dates
+-- Tier 2 = phases      (Giai đoạn)     — có project_id, management_notes, blocker_alert
+-- Tier 3 = bundles     (Hạng mục)      — có phase_id
+-- Tier 4 = tasks       (Đầu việc)      — có bundle_id, is_today
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS tasks (
-  -- Identity
+CREATE TABLE IF NOT EXISTS projects (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  start_date TEXT,
+  end_date TEXT,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','doing','done','pending_approval','blocked')),
+  progress_rollup INTEGER NOT NULL DEFAULT 0 CHECK (progress_rollup BETWEEN 0 AND 100),
+  collapsed INTEGER NOT NULL DEFAULT 0 CHECK (collapsed IN (0,1)),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+
+CREATE TABLE IF NOT EXISTS phases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   code TEXT NOT NULL,
   title TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
-
-  -- Tree structure (Gantt 4-tier)
-  parent_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
-  tier INTEGER NOT NULL DEFAULT 4 CHECK (tier IN (1,2,3,4)),
-  -- Hierarchy collapse state for Gantt UI
-  collapsed INTEGER NOT NULL DEFAULT 0 CHECK (collapsed IN (0,1)),
-
-  -- Assignment
-  owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  -- Người giao (manager/admin). NULL = tự tạo.
-  assigned_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-
-  -- Department
-  department_code TEXT REFERENCES departments(code) ON DELETE SET NULL,
-
-  -- Schedule (ISO 'YYYY-MM-DD')
+  owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   start_date TEXT,
   end_date TEXT,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','doing','done','pending_approval','blocked')),
+  progress_rollup INTEGER NOT NULL DEFAULT 0 CHECK (progress_rollup BETWEEN 0 AND 100),
+  -- Chỉ phase mới có management_notes + blocker_alert
+  management_notes TEXT NOT NULL DEFAULT '',
+  blocker_alert TEXT,
+  collapsed INTEGER NOT NULL DEFAULT 0 CHECK (collapsed IN (0,1)),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(project_id, code)
+);
+CREATE INDEX IF NOT EXISTS idx_phases_project ON phases(project_id);
+CREATE INDEX IF NOT EXISTS idx_phases_owner ON phases(owner_user_id);
 
-  -- Progress + Status (canonical vocab)
+CREATE TABLE IF NOT EXISTS bundles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  phase_id INTEGER NOT NULL REFERENCES phases(id) ON DELETE CASCADE,
+  code TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  start_date TEXT,
+  end_date TEXT,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','doing','done','pending_approval','blocked')),
+  progress_rollup INTEGER NOT NULL DEFAULT 0 CHECK (progress_rollup BETWEEN 0 AND 100),
+  collapsed INTEGER NOT NULL DEFAULT 0 CHECK (collapsed IN (0,1)),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(phase_id, code)
+);
+CREATE INDEX IF NOT EXISTS idx_bundles_phase ON bundles(phase_id);
+CREATE INDEX IF NOT EXISTS idx_bundles_owner ON bundles(owner_user_id);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  bundle_id INTEGER REFERENCES bundles(id) ON DELETE CASCADE,
+  code TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  assigned_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  department_code TEXT REFERENCES departments(code) ON DELETE SET NULL,
+  start_date TEXT,
+  end_date TEXT,
   progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending','doing','done','pending_approval','blocked')),
   priority TEXT NOT NULL DEFAULT 'normal'
     CHECK (priority IN ('low','normal','high','critical')),
-
-  -- Personal task flags (from old employee_tasks)
+  -- Chỉ T4 (tasks) mới có is_today (employee view flag)
   is_today INTEGER NOT NULL DEFAULT 0 CHECK (is_today IN (0,1)),
-  bundle_name TEXT,           -- Group label ("Gói thiết kế", "Đợt 3")
-  last_updated TEXT,          -- Display string ("Vừa cập nhật")
-
-  -- Inline deliverable (from old team_lead_tasks + deliverables table)
-  deliverable_type TEXT CHECK (deliverable_type IN ('pdf','spreadsheet','text','photo')),
-  deliverable_text TEXT,
-  deliverable_completed INTEGER NOT NULL DEFAULT 0 CHECK (deliverable_completed IN (0,1)),
-  deliverable_completed_at TEXT,
-  file_name TEXT,
-
-  -- Inline help message (from old team_lead_tasks)
-  help_message_author TEXT,
-  help_message_body TEXT,
-  help_message_timeago TEXT,
-
-  -- Management free-form fields (from old tier_items)
-  management_notes TEXT NOT NULL DEFAULT '',
-  blocker_alert TEXT,
-
-  -- Gantt denormalized fields (week indices for chart rendering)
-  start_week REAL NOT NULL DEFAULT 1,
-  end_week REAL NOT NULL DEFAULT 1,
-
-  -- Audit
+  collapsed INTEGER NOT NULL DEFAULT 0 CHECK (collapsed IN (0,1)),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-
-  -- Code unique per dept (tránh trùng code giữa 2 phòng ban)
-  UNIQUE(code, department_code)
+  UNIQUE(bundle_id, code)
 );
-
+CREATE INDEX IF NOT EXISTS idx_tasks_bundle ON tasks(bundle_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_owner ON tasks(owner_user_id);
-CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_dept ON tasks(department_code);
-CREATE INDEX IF NOT EXISTS idx_tasks_tier ON tasks(tier);
 CREATE INDEX IF NOT EXISTS idx_tasks_assigned_by ON tasks(assigned_by_user_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_today ON tasks(is_today);
 CREATE INDEX IF NOT EXISTS idx_tasks_end_date ON tasks(end_date);
 
 -- ============================================================================
--- 3. Task notes (thay employee_task_notes — ISS-007)
+-- 3. Sub-resources (1:N — thay vì inline columns)
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS task_notes (
+-- 1 task có N deliverables (giải quyết 1NF violation: trước đây chỉ 1 deliverable/task)
+CREATE TABLE IF NOT EXISTS task_deliverables (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  body TEXT NOT NULL,
-  author_user_id INTEGER NOT NULL REFERENCES users(id),
+  type TEXT CHECK (type IN ('pdf','spreadsheet','text','photo')),
+  text TEXT,
+  file_name TEXT,
+  file_url TEXT,
+  mime_type TEXT,
+  size_bytes INTEGER,
+  completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0,1)),
+  completed_at TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_task_deliv_task ON task_deliverables(task_id);
 
-CREATE INDEX IF NOT EXISTS idx_task_notes_task ON task_notes(task_id);
+-- 1 task có N help messages (lưu lịch sử, không overwrite)
+CREATE TABLE IF NOT EXISTS task_help_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  author_user_id INTEGER NOT NULL REFERENCES users(id),
+  body TEXT NOT NULL,
+  is_resolved INTEGER NOT NULL DEFAULT 0 CHECK (is_resolved IN (0,1)),
+  resolved_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  resolved_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_task_help_task ON task_help_messages(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_help_author ON task_help_messages(author_user_id);
 
 -- ============================================================================
--- 4. Subtasks (giờ FK vào tasks thay vì tier_items)
+-- 4. SubTask + DailyLog (giữ nguyên cấu trúc, ref FK đúng)
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS subtasks (
@@ -173,7 +197,6 @@ CREATE TABLE IF NOT EXISTS subtasks (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-
 CREATE INDEX IF NOT EXISTS idx_subtasks_task ON subtasks(task_id);
 
 CREATE TABLE IF NOT EXISTS daily_logs (
@@ -187,12 +210,24 @@ CREATE TABLE IF NOT EXISTS daily_logs (
   author_user_id INTEGER NOT NULL REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-
 CREATE INDEX IF NOT EXISTS idx_daily_logs_subtask ON daily_logs(subtask_id);
 CREATE INDEX IF NOT EXISTS idx_daily_logs_date ON daily_logs(log_date);
 
 -- ============================================================================
--- 5. Help requests (giờ FK vào tasks thay team_lead_tasks)
+-- 5. Task notes (ghi chú trên task, không phải daily log)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS task_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  body TEXT NOT NULL,
+  author_user_id INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_task_notes_task ON task_notes(task_id);
+
+-- ============================================================================
+-- 6. Help requests (giữ — 1 user gửi 1 help request linked 1 task)
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS help_requests (
@@ -207,29 +242,32 @@ CREATE TABLE IF NOT EXISTS help_requests (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   resolved_at TEXT
 );
-
 CREATE INDEX IF NOT EXISTS idx_help_requests_sender ON help_requests(sender_user_id);
 CREATE INDEX IF NOT EXISTS idx_help_requests_status ON help_requests(status);
 
 -- ============================================================================
--- 6. History (simplified — ISS-007: chỉ 1 entity_type = 'task' + 'task_note')
+-- 7. Audit log (Phase D — upgrade: thêm old_values, new_values, IP, UA)
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS history_entries (
+CREATE TABLE IF NOT EXISTS audit_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  entity_type TEXT NOT NULL CHECK (entity_type IN ('task','task_note','subtask')),
+  entity_type TEXT NOT NULL CHECK (entity_type IN ('project','phase','bundle','task','subtask','task_note','task_deliverable','task_help_message','help_request','user')),
   entity_id INTEGER NOT NULL,
-  action TEXT NOT NULL,
-  author_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  author_username TEXT,
-  author_fullname TEXT,
+  action TEXT NOT NULL CHECK (action IN ('create','update','delete','status_change','login','logout','resolve')),
+  old_values TEXT,  -- JSON snapshot trước
+  new_values TEXT,  -- JSON snapshot sau
+  actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  actor_username TEXT,  -- snapshot (giữ lại kể cả user bị xoá)
+  actor_ip TEXT,
+  actor_user_agent TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-
-CREATE INDEX IF NOT EXISTS idx_history_entity ON history_entries(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);
 
 -- ============================================================================
--- 7. Sessions
+-- 8. Sessions + Messages + Attachments (giữ nguyên, ít dùng)
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -241,12 +279,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   user_agent TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
-
--- ============================================================================
--- 8. Messages (quick help inbox)
--- ============================================================================
 
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -259,16 +292,11 @@ CREATE TABLE IF NOT EXISTS messages (
   read_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-
 CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient_user_id, read_at);
-
--- ============================================================================
--- 9. Attachments (polymorphic)
--- ============================================================================
 
 CREATE TABLE IF NOT EXISTS attachments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  owner_type TEXT NOT NULL CHECK (owner_type IN ('task','task_note','message')),
+  owner_type TEXT NOT NULL CHECK (owner_type IN ('task','task_note','message','task_deliverable')),
   owner_id INTEGER NOT NULL,
   file_name TEXT NOT NULL,
   file_url TEXT,
@@ -277,28 +305,26 @@ CREATE TABLE IF NOT EXISTS attachments (
   uploaded_by_user_id INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-
 CREATE INDEX IF NOT EXISTS idx_attachments_owner ON attachments(owner_type, owner_id);
 
 -- ============================================================================
--- Triggers
+-- 9. Triggers (auto-rollup progress — Phase B đã loại bỏ JS rollup trùng)
 -- ============================================================================
 
 CREATE TRIGGER IF NOT EXISTS users_updated AFTER UPDATE ON users
   BEGIN UPDATE users SET updated_at = datetime('now') WHERE id = NEW.id; END;
+
+CREATE TRIGGER IF NOT EXISTS projects_updated AFTER UPDATE ON projects
+  BEGIN UPDATE projects SET updated_at = datetime('now') WHERE id = NEW.id; END;
+
+CREATE TRIGGER IF NOT EXISTS phases_updated AFTER UPDATE ON phases
+  BEGIN UPDATE phases SET updated_at = datetime('now') WHERE id = NEW.id; END;
+
+CREATE TRIGGER IF NOT EXISTS bundles_updated AFTER UPDATE ON bundles
+  BEGIN UPDATE bundles SET updated_at = datetime('now') WHERE id = NEW.id; END;
 
 CREATE TRIGGER IF NOT EXISTS tasks_updated AFTER UPDATE ON tasks
   BEGIN UPDATE tasks SET updated_at = datetime('now') WHERE id = NEW.id; END;
 
 CREATE TRIGGER IF NOT EXISTS subtasks_updated AFTER UPDATE ON subtasks
   BEGIN UPDATE subtasks SET updated_at = datetime('now') WHERE id = NEW.id; END;
-
-CREATE TRIGGER IF NOT EXISTS tasks_progress_rollup AFTER UPDATE OF progress ON tasks
-  WHEN NEW.parent_id IS NOT NULL
-  BEGIN
-    -- Rollup progress lên parent (T3/T2/t1) — average of children
-    UPDATE tasks SET progress = (
-      SELECT CAST(AVG(c.progress) AS INTEGER) FROM tasks c WHERE c.parent_id = NEW.parent_id
-    )
-    WHERE id = NEW.parent_id;
-  END;

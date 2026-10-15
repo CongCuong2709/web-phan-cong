@@ -53,6 +53,8 @@ import {
   apiToDailyLog,
   apiToTeamMember,
   apiToHistoryEntry,
+  extractBackendId,
+  toCompositeId,
 } from './lib/transforms';
 import { SEED_USERS } from './data/users';
 import { Header } from './components/Header';
@@ -408,16 +410,20 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     return Array.from(itemsMap.values());
   };
 
-  /** Cập nhật 1 item trong cây 4 tầng + recalculate rollup + sync backend. */
+  /** Cập nhật 1 item trong cây 4 tầng + sync backend (backend tự rollup). */
   const handleUpdateTierItem = (updated: TierItem) => {
+    // B9: bỏ dual-write rollup ở FE — backend giờ tự tính qua trigger + recomputeRollup.
+    // FE chỉ giữ optimistic update cho UX mượt; backend là source of truth.
     const newItems = tierItems.map((item) => (item.id === updated.id ? updated : item));
-    setTierItems(recalculateRollup(newItems));
+    setTierItems(newItems);
     setSelectedItemForDrawer(updated);
     logHistory('task', updated.id, `Cập nhật tiến độ ${updated.code} → ${updated.progress}%`);
-    // Sync lên backend nếu id là số (backend dùng INTEGER PK).
-    if (typeof updated.id === 'number' || /^\d+$/.test(String(updated.id))) {
+    // Sync lên backend nếu id là của row thật (không phải local placeholder).
+    // ID frontend giờ là composite "<tier>-<num>" (vd "4-1"); extract số để gọi API.
+    const numId = extractBackendId(updated.id);
+    if (Number.isFinite(numId)) {
       fireAndForget(
-        api.updateTask(Number(updated.id), {
+        api.updateTask(updated.tier, numId, {
           title: updated.title,
           progress: updated.progress,
           status: viStatusToEnum(updated.status),
@@ -426,13 +432,11 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
           end_date: updated.endDate,
           description: updated.description,
           management_notes: updated.managementNotes,
-          start_week: updated.gantt.startWeek,
-          end_week: updated.gantt.endWeek,
         }),
         `updateTask#${updated.id}`,
       );
     }
-    showToast(`Đã cập nhật tiến độ ${updated.code} lên ${updated.progress}% (Tự động cộng dồn)`);
+    showToast(`Đã cập nhật tiến độ ${updated.code} lên ${updated.progress}%`);
   };
 
   /** Thêm item mới vào cây 4 tầng: optimistic update trước, rồi sync backend. */
@@ -483,9 +487,10 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
 
     // Sync lên backend — đợi response để replace local id bằng backend INTEGER id,
     // đảm bảo các PATCH sau gọi đúng endpoint.
+    // parentId giờ là composite "<tier>-<num>" → extract numeric cho backend.
     const parentNumericId = newItem.parentId
-      ? Number(newItem.parentId) || undefined
-      : undefined;
+      ? extractBackendId(newItem.parentId)
+      : NaN;
 
     const result = await api.createTask({
       code: newItem.code,
@@ -508,7 +513,8 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     });
 
     if (result.ok && result.data?.item?.id != null) {
-      const backendId = String(result.data.item.id);
+      // Replace local id bằng composite id mới từ backend (giữ tier để walk cây đúng).
+      const backendCompositeId = toCompositeId(newItem.tier, result.data.item.id);
       // Replace local id bằng backend id trong state (fix Bổ sung-3)
       // Đồng thời cập nhật code nếu backend đã generate lại (vd: NEW-XXXXXX)
       const backendItem = result.data.item;
@@ -517,7 +523,7 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
           t.id === localId
             ? {
                 ...t,
-                id: backendId,
+                id: backendCompositeId,
                 code: backendItem.code ?? t.code,
                 // Sync các field từ backend để khớp với DB.
                 // Cast progress/status vì TierItemDto dùng string/number thay vì literal union.
@@ -537,7 +543,7 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
             newItem.tier === 2 ? 'phase' :
             newItem.tier === 3 ? 'bundle' : 'task'
           )
-            ? { ...h, entityId: backendId }
+            ? { ...h, entityId: backendCompositeId }
             : h
         )
       );
@@ -556,9 +562,13 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
       prev.map((t) => (t.id === taskId ? { ...t, status: 'done' as const } : t))
     );
     logHistory('task', taskId, 'Nghiệm thu & duyệt hoàn thành');
-    // Dual-write: sync lên backend (nếu id là số).
-    if (typeof taskId === 'number' || /^\d+$/.test(String(taskId))) {
-      fireAndForget(api.approveTask(Number(taskId)), `approveTask#${taskId}`);
+    // Dual-write: sync lên backend (id là composite "<tier>-<num>").
+    const numId = extractBackendId(taskId);
+    if (Number.isFinite(numId)) {
+      // Phase C: cần tier để dispatch; tìm trong tierItems.
+      const found = tierItems.find((t) => String(t.id) === String(taskId));
+      const tier = found?.tier ?? 4;
+      fireAndForget(api.approveTask(tier, numId), `approveTask#${taskId}`);
     }
     showToast('Đã phê duyệt nghiệm thu công việc!');
   };
@@ -570,10 +580,11 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
       prev.map((t) => (t.id === taskId ? { ...t, status: 'in_progress' as const } : t))
     );
     logHistory('task', taskId, 'Xử lý yêu cầu hỗ trợ từ nhân viên');
-    if (typeof taskId === 'number' || /^\d+$/.test(String(taskId))) {
-      // ISS-007: backend mới dùng /api/tasks/:id/approve (không có resolveHelp riêng).
-      // Đánh dấu task = done để "resolve" help.
-      fireAndForget(api.approveTask(Number(taskId)), `approveTask#${taskId}`);
+    const numId = extractBackendId(taskId);
+    if (Number.isFinite(numId)) {
+      const found = tierItems.find((t) => String(t.id) === String(taskId));
+      const tier = found?.tier ?? 4;
+      fireAndForget(api.approveTask(tier, numId), `approveTask#${taskId}`);
     }
     // Update the team member who owns this task (by ownerName matching member.name)
     if (task) {
@@ -610,11 +621,15 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
       })
     );
     showToast('Tuyệt vời! Kết quả công việc đã tự động cập nhật lên bảng của Trưởng phòng.');
-    // Sync lên backend — chỉ gọi nếu id là số.
-    if (/^\d+$/.test(String(taskId))) {
+    // Sync lên backend — chỉ gọi nếu id trỏ về row thật (composite "<tier>-<num>").
+    const numId = extractBackendId(taskId);
+    if (Number.isFinite(numId)) {
+      // Phase C: cần tier; lookup trong tierItems (đã merge từ 4 bảng).
+      const found = tierItems.find((t) => String(t.id) === String(taskId));
+      const tier = found?.tier ?? 4;
       fireAndForget(
-        api.toggleEmployeeTask(taskId),
-        `toggleEmployeeTask#${taskId}`,
+        api.toggleTask(tier, numId),
+        `toggleTask#${taskId}`,
       );
     }
   };
@@ -625,9 +640,12 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
       prev.map((t) => (t.id === taskId ? { ...t, status: 'doing' } : t))
     );
     showToast('Trạng thái chuyển sang: Đang tiến hành làm.');
-    if (/^\d+$/.test(String(taskId))) {
+    const numId = extractBackendId(taskId);
+    if (Number.isFinite(numId)) {
+      const found = tierItems.find((t) => String(t.id) === String(taskId));
+      const tier = found?.tier ?? 4;
       fireAndForget(
-        api.patchEmployeeTaskStatus(taskId, 'doing'),
+        api.updateTask(tier, numId, { status: 'doing' }),
         `startEmployeeTask#${taskId}`,
       );
     }
@@ -659,11 +677,14 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
       )
     );
     showToast('Đã gửi ghi chú cho Trưởng phòng');
-    // Sync lên backend — chỉ gọi nếu id là số (tier items seed có id chuỗi sẽ skip).
-    if (/^\d+$/.test(String(taskId))) {
+    // Sync lên backend — chỉ gọi nếu id trỏ về row thật (composite "<tier>-<num>").
+    const numId = extractBackendId(taskId);
+    if (Number.isFinite(numId)) {
+      const found = tierItems.find((t) => String(t.id) === String(taskId));
+      const tier = found?.tier ?? 4;
       fireAndForget(
-        api.addEmployeeNote(taskId, noteText),
-        `addEmployeeNote#${taskId}`,
+        api.addTaskNote(tier, numId, noteText),
+        `addTaskNote#${taskId}`,
       );
     }
   };
@@ -742,14 +763,17 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
 
     setEmployeeTasks((prev) => [newTask, ...prev]);
     logHistory('task', newTask.id, `Tạo việc cá nhân: "${title}"`);
-    // Dual-write: sync việc cá nhân lên backend.
+    // Phase C: dùng createTask chuẩn (không còn alias createEmployeeTask).
     fireAndForget(
-      api.createEmployeeTask({
+      api.createTask({
+        tier: 4,
         title,
         description: notes || newTask.description,
-        deadline,
+        end_date: deadline,
+        priority: 'normal',
+        status: 'pending',
       }),
-      `createEmployeeTask#${newTask.code}`,
+      `createTask#${newTask.code}`,
     );
     showToast(`Đã thêm việc cá nhân: "${title}"`);
   };
@@ -884,11 +908,12 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
             )
           );
           logHistory('subtask', subtaskId, `Ghi nhật ký thi công (+${finalProgress}%)`);
-          // Dual-write: sync daily log mới lên backend.
-          if (typeof subtaskId === 'number' || /^\d+$/.test(String(subtaskId))) {
+          // Dual-write: sync daily log mới lên backend. subtaskId là PK riêng (numeric).
+          const subNumId = extractBackendId(subtaskId);
+          if (Number.isFinite(subNumId)) {
             fireAndForget(
               api.addDailyLog({
-                subtaskId: Number(subtaskId),
+                subtaskId: subNumId,
                 description: desc,
                 result,
                 obstacle,

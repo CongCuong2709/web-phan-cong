@@ -10,6 +10,7 @@
 import { Router } from 'express';
 import { db, stmt } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { authorize } from '../lib/policies.js';
 import { inDepartment } from '../utils/permissions.js';
 
 const router = Router();
@@ -78,9 +79,9 @@ router.post('/', (req, res) => {
 
 /** POST /api/help-requests/:id/resolve — Mark resolved. */
 router.post('/:id(\\d+)/resolve', (req, res) => {
-  if (!['admin', 'manager'].includes(req.user.role)) {
-    return res.status(403).json({ error: 'forbidden', message: 'Chỉ admin/manager mới giải quyết help request.' });
-  }
+  // B3: dùng centralized policy.
+  const authz = authorize('help_request:resolve', req.user, {});
+  if (!authz.ok) return res.status(authz.status).json(authz);
   const help = db.prepare('SELECT * FROM help_requests WHERE id = ?').get(Number(req.params.id));
   if (!help) return res.status(404).json({ error: 'not_found' });
 

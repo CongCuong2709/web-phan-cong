@@ -25,10 +25,12 @@ router.get('/', (req, res) => {
     FROM users u WHERE u.is_active = 1
   `).all();
 
-  // Lấy tất cả T4 items (assignable to employees) + count theo owner
+  // Lấy tất cả T4 tasks (assignable to employees) + count theo owner
+  // Phase C: tasks table giờ chỉ chứa tier 4 (bundle_id optional).
+  // Status giờ là enum (`blocked`/`doing`/...).
   const allT4 = db.prepare(`
     SELECT id, owner_user_id, department_code, status, progress, code, title
-    FROM tier_items WHERE tier = 4
+    FROM tasks
   `).all();
 
   const members = [];
@@ -43,9 +45,8 @@ router.get('/', (req, res) => {
 
     const userItems = allT4.filter((t) => t.owner_user_id === u.id);
     const active = userItems.filter((t) => t.progress !== 100).length;
-    const needHelp = userItems.some((t) =>
-      t.status === 'Điểm nghẽn' || t.status === 'Đang nghẽn'
-    );
+    // Fix C2: status giờ là enum (`blocked`); so sánh với enum thay vì tiếng Việt.
+    const needHelp = userItems.some((t) => t.status === 'blocked');
 
     members.push({
       id: `mem-${u.id}`,
