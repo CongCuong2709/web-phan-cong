@@ -1,10 +1,11 @@
 /**
  * db.js — Database connection dùng `node:sqlite` (built-in từ Node 22.5+).
  *
- * Phase C (2026-10) refactor:
+ * Phase E (2026-10) refactor:
+ *   - Xoá bảng `subtasks`; daily_logs FK trực tiếp vào tasks (không qua subtask)
  *   - Schema đổi từ 1 wide-table `tasks` thành 4 bảng projects/phases/bundles/tasks
  *   - Mỗi loại entity có stmt cache riêng (insertX, getX, listX)
- *   - Sub-resource (deliverable, help message) là 1:N với task
+ *   - Sub-resource (deliverable, help message, daily_log, note) là 1:N với task
  *   - Audit log đổi tên `history_entries` → `audit_log`, có JSON snapshot
  *
  * Phase B:
@@ -215,7 +216,8 @@ export const stmt = {
     UPDATE tasks SET
       title = ?, description = ?, owner_user_id = ?, assigned_by_user_id = ?,
       department_code = ?, start_date = ?, end_date = ?,
-      progress = ?, status = ?, priority = ?, is_today = ?, collapsed = ?
+      progress = ?, status = ?, priority = ?, is_today = ?, collapsed = ?,
+      blocker_note = ?
     WHERE id = ?
   `),
   deleteTask: db.prepare('DELETE FROM tasks WHERE id = ?'),
@@ -229,52 +231,13 @@ export const stmt = {
     WHERE t.id = ?
   `),
 
-  // --- Task Deliverables (1:N) ---
-  listDeliverablesByTask: db.prepare(`
-    SELECT * FROM task_deliverables WHERE task_id = ? ORDER BY sort_order, id
-  `),
-  insertDeliverable: db.prepare(`
-    INSERT INTO task_deliverables (task_id, type, text, file_name, file_url, mime_type, size_bytes, completed, completed_at, sort_order)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `),
-  updateDeliverable: db.prepare(`
-    UPDATE task_deliverables SET
-      type = ?, text = ?, file_name = ?, file_url = ?, mime_type = ?, size_bytes = ?,
-      completed = ?, completed_at = ?, sort_order = ?
-    WHERE id = ?
-  `),
-  deleteDeliverable: db.prepare('DELETE FROM task_deliverables WHERE id = ?'),
-  getDeliverable: db.prepare('SELECT * FROM task_deliverables WHERE id = ?'),
-
-  // --- Task Help Messages (1:N) ---
-  listHelpMessagesByTask: db.prepare(`
-    SELECT m.*, u.username AS author_username_str, u.fullname AS author_fullname
-    FROM task_help_messages m LEFT JOIN users u ON u.id = m.author_user_id
-    WHERE m.task_id = ? ORDER BY m.created_at DESC
-  `),
-  insertHelpMessage: db.prepare(`
-    INSERT INTO task_help_messages (task_id, author_user_id, body, is_resolved)
-    VALUES (?, ?, ?, 0)
-  `),
-  resolveHelpMessage: db.prepare(`
-    UPDATE task_help_messages SET is_resolved = 1, resolved_by_user_id = ?, resolved_at = datetime('now')
-    WHERE id = ?
-  `),
-
-  // --- Subtasks + Daily logs ---
-  getSubtask: db.prepare('SELECT * FROM subtasks WHERE id = ?'),
-  getSubtasksByTask: db.prepare(
-    'SELECT * FROM subtasks WHERE task_id = ? ORDER BY id'
-  ),
-  listAllSubtasks: db.prepare(`
-    SELECT s.*, u.username AS assignee_username_str, u.fullname AS assignee_fullname
-    FROM subtasks s LEFT JOIN users u ON u.id = s.assignee_user_id
-    ORDER BY s.id
-  `),
-  listDailyLogsBySub: db.prepare(`
+  // --- Daily logs (Phase E: FK truc tiep vao tasks, bo subtasks) ---
+  // Phase F: day la sub-resource DUY NHAT con lai tren task (text-only use case).
+  // Da drop: task_deliverables, task_help_messages, task_notes.
+  listDailyLogsByTask: db.prepare(`
     SELECT l.*, u.username AS user_username_str, u.fullname AS user_fullname
     FROM daily_logs l LEFT JOIN users u ON u.id = l.author_user_id
-    WHERE l.subtask_id = ? ORDER BY l.log_date DESC, l.id DESC
+    WHERE l.task_id = ? ORDER BY l.log_date DESC, l.id DESC
   `),
   listAllDailyLogs: db.prepare(`
     SELECT l.*, u.username AS user_username_str, u.fullname AS user_fullname
@@ -282,22 +245,18 @@ export const stmt = {
     ORDER BY l.log_date DESC, l.id DESC
   `),
   insertDailyLog: db.prepare(`
-    INSERT INTO daily_logs (subtask_id, log_date, description, result, obstacle,
+    INSERT INTO daily_logs (task_id, log_date, description, result, obstacle,
       progress, author_user_id) VALUES (?, ?, ?, ?, ?, ?, ?)
   `),
-  updateSubtaskProgress: db.prepare(
-    'UPDATE subtasks SET progress = MAX(progress, ?) WHERE id = ?'
-  ),
-
-  // --- Task notes ---
-  listNotesForTask: db.prepare(`
-    SELECT n.*, u.username AS author_username_str, u.fullname AS author_fullname
-    FROM task_notes n LEFT JOIN users u ON u.id = n.author_user_id
-    WHERE n.task_id = ? ORDER BY n.created_at DESC
+  // Phase F: UPSERT 1 daily_log/(task,ngay). SQLite dung ON CONFLICT qua unique index.
+  // Tuy nhien, schema khong co UNIQUE constraint, nen query WHERE truoc roi insert.
+  // Pattern nay dat gang ON CONFLICT: lay row cung (task_id, log_date), update neu co, insert neu khong.
+  upsertDailyLogForToday: db.prepare(`
+    UPDATE daily_logs
+       SET description = ?, result = ?, obstacle = ?, progress = ?,
+           author_user_id = ?, created_at = datetime('now')
+     WHERE task_id = ? AND log_date = ?
   `),
-  insertTaskNote: db.prepare(
-    'INSERT INTO task_notes (task_id, body, author_user_id) VALUES (?, ?, ?)'
-  ),
 
   // --- Audit log (Phase D — old schema: history_entries; new: audit_log) ---
   insertAuditLog: db.prepare(`
@@ -311,21 +270,8 @@ export const stmt = {
     ORDER BY created_at DESC LIMIT 100
   `),
 
-  // --- Help requests ---
-  listHelpRequestsBySender: db.prepare(
-    'SELECT * FROM help_requests WHERE sender_user_id = ? ORDER BY created_at DESC'
-  ),
-  listAllHelpRequests: db.prepare(
-    'SELECT * FROM help_requests ORDER BY created_at DESC'
-  ),
-  insertHelpRequest: db.prepare(`
-    INSERT INTO help_requests (sender_user_id, reason, message, status, related_task_id)
-    VALUES (?, ?, ?, ?, ?)
-  `),
-  resolveHelpRequest: db.prepare(`
-    UPDATE help_requests SET status = 'resolved', resolved_at = datetime('now'),
-      resolved_by_user_id = ? WHERE id = ?
-  `),
+  // Phase F: help_requests da xoa. Escalation gio thong qua tasks.blocker_note
+  // (NV ghi 1 dong, manager xem khi mo task). Khong can tickets.
 };
 
 export default db;

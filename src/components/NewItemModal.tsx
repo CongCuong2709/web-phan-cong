@@ -145,7 +145,7 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
       status: 'Chuẩn bị',
       priority,
       description,
-      deliverables: [{ id: `del-${Date.now()}`, title: 'Hoàn tất bàn giao', completed: false }],
+      // Phase F: bỏ deliverables (bảng task_deliverables đã xoá).
       managementNotes: `Mới tạo bởi ${currentUser.fullname}, đang chờ phân bổ chi tiết.`,
       gantt: {
         startWeek: sw,

@@ -1,15 +1,15 @@
 import React, { useState } from 'react';
-import { EmployeeTask, QuickHelpRequest, ROLE_LABEL, User } from '../types';
+import { EmployeeTask, ROLE_LABEL, User } from '../types';
 
 interface ViecCuaToiViewProps {
   currentUser: User;
   tasks: EmployeeTask[];
   onToggleDone: (taskId: string) => void;
   onStartTask: (taskId: string) => void;
-  onUpdateDeliverable: (taskId: string, newText: string) => void;
-  /** Fix UI-03: callback prop để thêm ghi chú qua state setter ở App.tsx (immutable update). */
-  onAddNote: (taskId: string, noteText: string) => void;
-  onSendHelpRequest: (request: Omit<QuickHelpRequest, 'id' | 'timestamp' | 'status'>) => void;
+  /** Phase F: callback ghi daily_log 4 cột. Thay cho onUpdateDeliverable + onAddNote cũ. */
+  onAddDailyLog: (taskId: string, description: string, result: string, obstacle: string, progress: number) => void;
+  /** Phase F: callback ghi tasks.blocker_note (1 dòng). Thay cho onSendHelpRequest cũ. */
+  onSetBlocker: (taskId: string, note: string) => void;
   onOpenNewPersonalTaskModal: () => void;
 }
 
@@ -18,53 +18,19 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
   tasks,
   onToggleDone,
   onStartTask,
-  onUpdateDeliverable,
-  onAddNote,
-  onSendHelpRequest,
+  onAddDailyLog,
+  onSetBlocker,
   onOpenNewPersonalTaskModal,
 }) => {
   const [filter, setFilter] = useState<'all' | 'today' | 'doing' | 'done'>('all');
-  const [selectedReason, setSelectedReason] = useState<string>('');
-  const [helpMessage, setHelpMessage] = useState<string>('');
-  const [showSentAlert, setShowSentAlert] = useState(false);
-  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
-  const [editDeliverableText, setEditDeliverableText] = useState('');
-  const [noteOpenTaskId, setNoteOpenTaskId] = useState<string | null>(null);
-  const [newNoteText, setNewNoteText] = useState('');
-
-  // Quick reason presets
-  const reasonPresets = [
-    'Chờ sếp duyệt tiền/chi phí',
-    'Thiếu tài liệu từ đối tác',
-    'Cần sếp gọi hỗ trợ trực tiếp',
-    'Khác',
-  ];
-
-  const handleSelectReason = (reason: string) => {
-    setSelectedReason(reason);
-    setHelpMessage(`[${reason}] `);
-  };
-
-  const handleSendHelp = () => {
-    if (!helpMessage.trim()) return;
-    onSendHelpRequest({
-      sender: currentUser.fullname,
-      reason: selectedReason || 'Vướng mắc công việc',
-      message: helpMessage,
-    });
-    setShowSentAlert(true);
-    setHelpMessage('');
-    setSelectedReason('');
-    setTimeout(() => setShowSentAlert(false), 5000);
-  };
-
-  const handleRequestHelpFromTask = (taskTitle: string) => {
-    const targetSection = document.getElementById('support-section');
-    if (targetSection) {
-      targetSection.scrollIntoView({ behavior: 'smooth' });
-      setHelpMessage(`Về việc "${taskTitle}": `);
-    }
-  };
+  /** Phase F: chỉ giữ 1 modal "Điền nhật ký hôm nay" + 1 modal "Báo cáo vướng mắc". */
+  const [logModalTaskId, setLogModalTaskId] = useState<string | null>(null);
+  const [logDesc, setLogDesc] = useState('');
+  const [logResult, setLogResult] = useState('');
+  const [logObstacle, setLogObstacle] = useState('');
+  const [logProgress, setLogProgress] = useState(0);
+  const [blockerModalTaskId, setBlockerModalTaskId] = useState<string | null>(null);
+  const [blockerText, setBlockerText] = useState('');
 
   // Filter tasks
   const filteredTasks = tasks.filter((t) => {
@@ -89,6 +55,33 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
 
   // Use the manager of the first task as the recipient label
   const managerLabel = isManager ? 'Ban Điều hành' : (tasks[0]?.manager?.name ?? 'Trưởng phòng phụ trách');
+
+  /** Mở modal nhật ký với giá trị ban đầu = currentDeliverable / blockerNote nếu có. */
+  const openLogModal = (task: EmployeeTask) => {
+    setLogModalTaskId(task.id);
+    setLogDesc(task.description || '');
+    setLogResult(task.currentDeliverable || '');
+    setLogObstacle(task.blockerNote || ''); // nếu NV đã ghi blocker, hiện sẵn
+    setLogProgress(0);
+  };
+
+  const submitLog = () => {
+    if (!logModalTaskId) return;
+    if (!logDesc.trim() && !logResult.trim()) return;
+    onAddDailyLog(logModalTaskId, logDesc.trim(), logResult.trim(), logObstacle.trim(), logProgress);
+    setLogModalTaskId(null);
+  };
+
+  const openBlockerModal = (task: EmployeeTask) => {
+    setBlockerModalTaskId(task.id);
+    setBlockerText(task.blockerNote || '');
+  };
+
+  const submitBlocker = () => {
+    if (!blockerModalTaskId) return;
+    onSetBlocker(blockerModalTaskId, blockerText);
+    setBlockerModalTaskId(null);
+  };
 
   return (
     <div className="flex flex-col w-full">
@@ -127,18 +120,15 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
               </span>
               <span>+ Tự tạo thêm việc cá nhân</span>
             </button>
-            <button
-              onClick={() => {
-                document.getElementById('support-section')?.scrollIntoView({ behavior: 'smooth' });
-              }}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#004ac6] hover:bg-[#2563eb] text-white text-[13px] font-semibold transition-colors shadow-sm"
-              type="button"
-            >
-              <span className="material-symbols-outlined text-[18px]">
-                campaign
+            {/* Phase F: bỏ nút "Báo cáo nhanh cho Trưởng phòng" + hỗ trợ
+                nhân viên. Escalation giờ là tasks.blocker_note (NV ghi 1 dòng
+                qua modal "Báo cáo vướng mắc" trên từng task). */}
+            {isManager && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#eff4ff] text-[#434655] text-[12px]">
+                <span className="material-symbols-outlined text-[16px]">info</span>
+                <span>Bạn là cấp quản lý — hỗ trợ nhân viên ở tab "Giao việc nhóm".</span>
               </span>
-              <span>Báo cáo nhanh cho Trưởng phòng</span>
-            </button>
+            )}
           </div>
         </div>
 
@@ -366,25 +356,29 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
                       </p>
                     </div>
 
-                    {/* Manager Avatar info */}
-                    <div className="flex items-center gap-2.5 shrink-0 self-start md:self-auto">
-                      <div className="text-right hidden sm:block">
-                        <span className="text-[11px] text-[#565e74] block">
-                          Trưởng phòng giao:
-                        </span>
-                        <span className="text-[12px] font-bold text-[#0b1c30]">
-                          {task.manager.name}
-                        </span>
+                    {/* Manager Avatar info — chỉ hiển thị cho nhân viên. Trưởng phòng / BGĐ tự giao
+                        cho mình thì label "Trưởng phòng giao" vô nghĩa. */}
+                    {!isManager && (
+                      <div className="flex items-center gap-2.5 shrink-0 self-start md:self-auto">
+                        <div className="text-right hidden sm:block">
+                          <span className="text-[11px] text-[#565e74] block">
+                            Trưởng phòng giao:
+                          </span>
+                          <span className="text-[12px] font-bold text-[#0b1c30]">
+                            {task.manager.name}
+                          </span>
+                        </div>
+                        <img
+                          alt="Manager"
+                          className="w-9 h-9 rounded-full object-cover ring-1 ring-[#c3c6d7]"
+                          src={task.manager.avatar}
+                        />
                       </div>
-                      <img
-                        alt="Manager"
-                        className="w-9 h-9 rounded-full object-cover ring-1 ring-[#c3c6d7]"
-                        src={task.manager.avatar}
-                      />
-                    </div>
+                    )}
                   </div>
 
-                  {/* Result Box */}
+                  {/* Result Box — Phase F: chỉ hiển thị text, không inline edit.
+                      Click "Điền nhật ký hôm nay" bên dưới để mở modal 4 cột. */}
                   <div className="bg-[#eff4ff] rounded-lg p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border border-[#dce9ff]">
                     <div className="flex items-start gap-2.5 flex-1 min-w-0">
                       <div className="w-7 h-7 rounded bg-[#dce9ff] flex items-center justify-center text-[#004ac6] shrink-0 mt-0.5 sm:mt-0">
@@ -394,35 +388,17 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
                       </div>
                       <div className="flex flex-col min-w-0 flex-1">
                         <span className="text-[11px] font-semibold text-[#565e74]">
-                          Kết quả bàn giao hiện tại:
+                          Kết quả bàn giao hôm nay:
                         </span>
-                        {editingTaskId === task.id ? (
-                          <div className="flex items-center gap-2 mt-1">
-                            <input
-                              type="text"
-                              value={editDeliverableText}
-                              onChange={(e) => setEditDeliverableText(e.target.value)}
-                              className="text-[13px] px-2 py-1 bg-white border border-[#004ac6] rounded flex-1 focus:outline-none"
-                            />
-                            <button
-                              onClick={() => {
-                                onUpdateDeliverable(task.id, editDeliverableText);
-                                setEditingTaskId(null);
-                              }}
-                              className="px-2.5 py-1 bg-[#006243] text-white text-[11px] font-bold rounded"
-                            >
-                              Lưu
-                            </button>
-                            <button
-                              onClick={() => setEditingTaskId(null)}
-                              className="px-2 py-1 bg-slate-200 text-[#0b1c30] text-[11px] rounded"
-                            >
-                              Hủy
-                            </button>
-                          </div>
-                        ) : (
-                          <span className="text-[13px] text-[#0b1c30] font-medium leading-relaxed">
-                            {task.currentDeliverable}
+                        <span className="text-[13px] text-[#0b1c30] font-medium leading-relaxed">
+                          {task.currentDeliverable || (
+                            <span className="text-[#737686] italic">Chưa có — bấm "Điền nhật ký" để ghi.</span>
+                          )}
+                        </span>
+                        {task.blockerNote && (
+                          <span className="text-[12px] text-[#ba1a1a] mt-1.5 flex items-start gap-1.5">
+                            <span className="material-symbols-outlined text-[15px] mt-0.5">priority_high</span>
+                            <span><strong>Vướng mắc:</strong> {task.blockerNote}</span>
                           </span>
                         )}
                       </div>
@@ -435,231 +411,198 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
                     </span>
                   </div>
 
-                  {/* Actions Bar */}
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-[#eff4ff]">
-                    <div className="flex items-center gap-2.5 flex-wrap">
-                      {isPending ? (
-                        <button
-                          onClick={() => onStartTask(task.id)}
-                          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#004ac6] hover:bg-[#2563eb] text-white text-[13px] font-bold transition-all shadow-sm"
-                          type="button"
-                        >
-                          <span className="material-symbols-outlined text-[18px]">
-                            play_arrow
-                          </span>
-                          <span>Bắt đầu làm</span>
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => onToggleDone(task.id)}
-                          className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-[13px] font-bold transition-all shadow-sm ${
-                            isDone
-                              ? 'bg-[#85f8c4] text-[#002114] hover:bg-emerald-300'
-                              : 'bg-[#006243] hover:bg-[#007d57] text-white'
-                          }`}
-                          type="button"
-                        >
-                          <span className="material-symbols-outlined text-[19px]">
-                            check_circle
-                          </span>
-                          <span>{isDone ? '✓ Đã xong việc' : '✓ Báo đã xong việc'}</span>
-                        </button>
-                      )}
-
+                  {/* Actions Bar — Phase F: 3 nút chính.
+                      1) Bắt đầu / Báo xong  2) Điền nhật ký hôm nay  3) Báo cáo vướng mắc (NV only) */}
+                  <div className="flex flex-wrap items-center gap-2.5 pt-1 border-t border-[#eff4ff]">
+                    {isPending ? (
                       <button
-                        onClick={() => {
-                          setEditingTaskId(task.id);
-                          setEditDeliverableText(task.currentDeliverable);
-                        }}
-                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#eff4ff] hover:bg-[#dce9ff] text-[#0b1c30] text-[12px] font-semibold transition-all border border-[#dce9ff]"
+                        onClick={() => onStartTask(task.id)}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#004ac6] hover:bg-[#2563eb] text-white text-[13px] font-bold transition-all shadow-sm"
                         type="button"
                       >
-                        <span className="material-symbols-outlined text-[16px] text-[#004ac6]">
-                          edit
+                        <span className="material-symbols-outlined text-[18px]">
+                          play_arrow
                         </span>
-                        <span>Cập nhật kết quả</span>
+                        <span>Bắt đầu làm</span>
                       </button>
-
+                    ) : (
                       <button
-                        onClick={() => handleRequestHelpFromTask(task.title)}
+                        onClick={() => onToggleDone(task.id)}
+                        className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-[13px] font-bold transition-all shadow-sm ${
+                          isDone
+                            ? 'bg-[#85f8c4] text-[#002114] hover:bg-emerald-300'
+                            : 'bg-[#006243] hover:bg-[#007d57] text-white'
+                        }`}
+                        type="button"
+                      >
+                        <span className="material-symbols-outlined text-[19px]">
+                          check_circle
+                        </span>
+                        <span>{isDone ? '✓ Đã xong việc' : '✓ Báo đã xong việc'}</span>
+                      </button>
+                    )}
+
+                    <button
+                      onClick={() => openLogModal(task)}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#004ac6] hover:bg-[#2563eb] text-white text-[12px] font-bold transition-all shadow-sm"
+                      type="button"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">
+                        edit_note
+                      </span>
+                      <span>Điền nhật ký hôm nay</span>
+                    </button>
+
+                    {!isManager && (
+                      <button
+                        onClick={() => openBlockerModal(task)}
                         className="inline-flex items-center gap-1 px-3 py-2 rounded-lg bg-white text-[#ba1a1a] hover:bg-red-50 border border-red-200 text-[12px] font-semibold transition-all shadow-sm"
                         type="button"
                       >
                         <span className="material-symbols-outlined text-[17px]">
-                          help
+                          priority_high
                         </span>
-                        <span>❓ Báo cần Trưởng phòng giúp</span>
+                        <span>{task.blockerNote ? 'Sửa vướng mắc' : 'Báo cáo vướng mắc'}</span>
                       </button>
-                    </div>
-
-                    <button
-                      onClick={() =>
-                        setNoteOpenTaskId(noteOpenTaskId === task.id ? null : task.id)
-                      }
-                      className="inline-flex items-center gap-1 text-[12px] font-medium text-[#565e74] hover:text-[#004ac6] transition-colors py-1 px-2 rounded hover:bg-[#eff4ff]"
-                      type="button"
-                    >
-                      <span className="material-symbols-outlined text-[16px]">
-                        chat_bubble_outline
-                      </span>
-                      <span>
-                        Để lại ghi chú cho sếp ({task.notes?.length || task.notesCount})
-                      </span>
-                    </button>
+                    )}
                   </div>
-
-                  {/* Notes dropdown box if open */}
-                  {noteOpenTaskId === task.id && (
-                    <div className="p-3 bg-[#eff4ff] rounded-lg border border-[#dce9ff] space-y-2 mt-2">
-                      <div className="text-[12px] font-bold text-[#0b1c30]">
-                        Ghi chú gửi Trưởng phòng:
-                      </div>
-                      {task.notes && task.notes.length > 0 ? (
-                        <div className="space-y-1.5">
-                          {task.notes.map((note, idx) => (
-                            <div
-                              key={idx}
-                              className="text-[12px] text-[#434655] bg-white p-2 rounded border border-[#e5eeff]"
-                            >
-                              • {note}
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-[11px] text-[#737686] italic">
-                          Chưa có ghi chú nào.
-                        </div>
-                      )}
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={newNoteText}
-                          onChange={(e) => setNewNoteText(e.target.value)}
-                          placeholder="Ghi chú cho sếp..."
-                          className="text-[12px] px-2.5 py-1.5 bg-white border border-[#c3c6d7] rounded flex-1 focus:outline-none focus:border-[#004ac6]"
-                        />
-                        <button
-                          onClick={() => {
-                            if (newNoteText.trim()) {
-                              // Fix UI-03: KHÔNG mutate trực tiếp task.notes nữa.
-                              // Gọi callback onAddNote → App.tsx xử lý qua state setter (immutable).
-                              onAddNote(task.id, newNoteText);
-                              setNewNoteText('');
-                              setNoteOpenTaskId(null);
-                            }
-                          }}
-                          className="px-3 py-1.5 bg-[#004ac6] text-white text-[12px] font-bold rounded"
-                        >
-                          Gửi ghi chú
-                        </button>
-                      </div>
-                    </div>
-                  )}
                 </div>
               );
             })}
           </div>
         </div>
 
-        {/* Quick Help & Escalation Box — chỉ hiện với employee */}
-        {!isManager && (
-        <div
-          id="support-section"
-          className="bg-white rounded-xl p-5 sm:p-6 border border-[#e5eeff] shadow-sm flex flex-col gap-4"
-        >
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-[#ffdad6] flex items-center justify-center text-[#ba1a1a]">
-                <span className="material-symbols-outlined text-[24px]">
-                  support_agent
-                </span>
-              </div>
-              <div className="flex flex-col">
-                <h3 className="text-[18px] font-bold text-[#0b1c30]">
-                  Bạn đang bị vướng mắc ở khâu nào?
+        {/* Phase F: Quick Help & Escalation Box đã bỏ. Escalation giờ
+            qua tasks.blocker_note (NV mở modal "Báo cáo vướng mắc" trên
+            từng task). Modal nhật ký + modal blocker ở dưới. */}
+
+        {/* Modal: Điền nhật ký hôm nay (4 cột text) */}
+        {logModalTaskId && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+            onClick={() => setLogModalTaskId(null)}
+          >
+            <div
+              className="bg-white rounded-2xl w-full max-w-lg p-6 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-[18px] font-bold text-[#0b1c30] flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[#004ac6]">edit_note</span>
+                  Điền nhật ký hôm nay
                 </h3>
-                <span className="text-[13px] text-[#565e74]">
-                  Gửi trực tiếp cho {managerLabel}.
-                </span>
+                <button onClick={() => setLogModalTaskId(null)} className="text-[#737686] hover:text-[#0b1c30]">
+                  <span className="material-symbols-outlined">close</span>
+                </button>
               </div>
-            </div>
-          </div>
-
-          {/* Quick Reason Presets */}
-          <div className="flex flex-col gap-1.5">
-            <span className="text-[12px] font-bold text-[#0b1c30]">
-              Chọn lý do vướng mắc:
-            </span>
-            <div className="flex flex-wrap gap-2">
-              {reasonPresets.map((reason) => {
-                const isSelected = selectedReason === reason;
-                return (
-                  <button
-                    key={reason}
-                    onClick={() => handleSelectReason(reason)}
-                    className={`px-3 py-1.5 rounded-lg text-[12px] font-semibold transition-colors border ${
-                      isSelected
-                        ? 'bg-[#ffdad6] text-[#ba1a1a] border-red-300'
-                        : 'bg-[#eff4ff] text-[#434655] border-[#dce9ff] hover:bg-[#dce9ff]'
-                    }`}
-                    type="button"
-                  >
-                    {reason === 'Chờ sếp duyệt tiền/chi phí' && '⏳ '}
-                    {reason === 'Thiếu tài liệu từ đối tác' && '📁 '}
-                    {reason === 'Cần sếp gọi hỗ trợ trực tiếp' && '📞 '}
-                    {reason === 'Khác' && '✏️ '}
-                    {reason}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Quick Message Input */}
-          <div className="flex flex-col gap-1.5">
-            <span className="text-[12px] font-bold text-[#0b1c30]">
-              Lời nhắn gửi Trưởng phòng:
-            </span>
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
-              <div className="relative flex-1">
-                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-[#737686]">
-                  chat
-                </span>
+              <div className="flex flex-col gap-3">
+                <label className="text-[12px] font-bold text-[#0b1c30]">
+                  Mô tả công việc hôm nay:
+                </label>
+                <textarea
+                  value={logDesc}
+                  onChange={(e) => setLogDesc(e.target.value)}
+                  rows={2}
+                  className="text-[13px] px-3 py-2 bg-[#eff4ff] border border-[#dce9ff] rounded-lg focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#004ac6]"
+                  placeholder="Bạn đã làm gì hôm nay?"
+                />
+                <label className="text-[12px] font-bold text-[#0b1c30]">
+                  Kết quả đạt được:
+                </label>
+                <textarea
+                  value={logResult}
+                  onChange={(e) => setLogResult(e.target.value)}
+                  rows={2}
+                  className="text-[13px] px-3 py-2 bg-[#eff4ff] border border-[#dce9ff] rounded-lg focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#004ac6]"
+                  placeholder="Hoàn thành phần nào? Sản phẩm gì?"
+                />
+                <label className="text-[12px] font-bold text-[#0b1c30]">
+                  Vướng mắc (nếu có):
+                </label>
+                <textarea
+                  value={logObstacle}
+                  onChange={(e) => setLogObstacle(e.target.value)}
+                  rows={2}
+                  className="text-[13px] px-3 py-2 bg-[#eff4ff] border border-[#dce9ff] rounded-lg focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#004ac6]"
+                  placeholder="Khó khăn gặp phải? Cần hỗ trợ gì?"
+                />
+                <label className="text-[12px] font-bold text-[#0b1c30]">
+                  Tiến độ: {logProgress}%
+                </label>
                 <input
-                  value={helpMessage}
-                  onChange={(e) => setHelpMessage(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSendHelp();
-                  }}
-                  className="w-full h-11 pl-10 pr-3 rounded-lg bg-[#eff4ff] text-[#0b1c30] text-[13px] placeholder:text-[#737686] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#004ac6] border border-[#dce9ff]"
-                  placeholder="Nhập điều bạn cần Trưởng phòng giải quyết..."
-                  type="text"
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={logProgress}
+                  onChange={(e) => setLogProgress(Number(e.target.value))}
+                  className="w-full"
                 />
               </div>
-              <button
-                onClick={handleSendHelp}
-                className="shrink-0 h-11 px-5 rounded-lg bg-[#ba1a1a] hover:bg-red-700 text-white text-[13px] font-bold transition-all shadow-sm flex items-center justify-center gap-1.5"
-                type="button"
-              >
-                <span className="material-symbols-outlined text-[19px]">
-                  send
-                </span>
-                <span>Gửi lời nhắn cho Trưởng phòng</span>
-              </button>
+              <div className="flex justify-end gap-2 mt-5">
+                <button
+                  onClick={() => setLogModalTaskId(null)}
+                  className="px-4 py-2 rounded-lg bg-slate-200 text-[#0b1c30] text-[13px] font-semibold"
+                >
+                  Hủy
+                </button>
+                <button
+                  onClick={submitLog}
+                  className="px-4 py-2 rounded-lg bg-[#006243] hover:bg-[#007d57] text-white text-[13px] font-bold"
+                >
+                  Lưu nhật ký
+                </button>
+              </div>
             </div>
           </div>
+        )}
 
-          {/* Success Sent Alert */}
-          {showSentAlert && (
-            <div className="flex items-center gap-2.5 p-3.5 rounded-lg bg-[#85f8c4]/30 text-[#002114] border border-[#007d57]/30 text-[13px] font-medium animate-fadeIn">
-              <span className="material-symbols-outlined text-[#006243] text-[20px]">
-                check_circle
-              </span>
-              <span>Đã gửi tới {managerLabel}.</span>
+        {/* Modal: Báo cáo vướng mắc (1 dòng → tasks.blocker_note) */}
+        {blockerModalTaskId && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+            onClick={() => setBlockerModalTaskId(null)}
+          >
+            <div
+              className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-[18px] font-bold text-[#0b1c30] flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[#ba1a1a]">priority_high</span>
+                  Báo cáo vướng mắc
+                </h3>
+                <button onClick={() => setBlockerModalTaskId(null)} className="text-[#737686] hover:text-[#0b1c30]">
+                  <span className="material-symbols-outlined">close</span>
+                </button>
+              </div>
+              <p className="text-[12px] text-[#565e74] mb-3">
+                Mô tả ngắn gọn vướng mắc của bạn. Trưởng phòng sẽ đọc khi mở task.
+              </p>
+              <textarea
+                value={blockerText}
+                onChange={(e) => setBlockerText(e.target.value)}
+                rows={4}
+                className="w-full text-[13px] px-3 py-2 bg-[#eff4ff] border border-[#dce9ff] rounded-lg focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#ba1a1a]"
+                placeholder="VD: Chờ sếp duyệt chi phí X, cần quyết định trong hôm nay..."
+              />
+              <div className="flex justify-end gap-2 mt-4">
+                <button
+                  onClick={() => setBlockerModalTaskId(null)}
+                  className="px-4 py-2 rounded-lg bg-slate-200 text-[#0b1c30] text-[13px] font-semibold"
+                >
+                  Hủy
+                </button>
+                <button
+                  onClick={submitBlocker}
+                  className="px-4 py-2 rounded-lg bg-[#ba1a1a] hover:bg-red-700 text-white text-[13px] font-bold"
+                >
+                  Gửi Trưởng phòng
+                </button>
+              </div>
             </div>
-          )}
-        </div>
-        )} {/* end !isManager */}
+          </div>
+        )}
       </div>
     </div>
   );

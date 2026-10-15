@@ -20,7 +20,6 @@ const counts = {
   tasks: db.prepare('SELECT COUNT(*) AS c FROM tasks').get().c,
   task_deliverables: db.prepare('SELECT COUNT(*) AS c FROM task_deliverables').get().c,
   task_help_messages: db.prepare('SELECT COUNT(*) AS c FROM task_help_messages').get().c,
-  subtasks: db.prepare('SELECT COUNT(*) AS c FROM subtasks').get().c,
   daily_logs: db.prepare('SELECT COUNT(*) AS c FROM daily_logs').get().c,
   help_requests: db.prepare('SELECT COUNT(*) AS c FROM help_requests').get().c,
   audit_log: db.prepare('SELECT COUNT(*) AS c FROM audit_log').get().c,

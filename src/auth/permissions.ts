@@ -11,7 +11,7 @@
  *               Tạo được T1 (Dự án) và T2 (Giai đoạn) — để BGĐ có thể
  *               khởi tạo khung điều hành mới mà không phụ thuộc admin.
  *   manager   : chỉ trong phòng ban mình. Tạo T3 + T4.
- *   employee  : chỉ T4 của chính mình. Chỉ ghi nhật ký SubTask mình được giao.
+ *   employee  : chỉ T4 của chính mình. Chỉ ghi nhật ký thi công của task mình được giao.
  *
  * Lưu ý: Khi có backend thật, các helper này vẫn dùng được để ẩn UI;
  * backend phải tự enforce lại ở middleware (frontend không phải boundary).
@@ -19,7 +19,6 @@
 
 import type {
   Department,
-  SubTask,
   TeamLeadTask,
   TierItem,
   TierLevel,
@@ -88,56 +87,40 @@ export function canEditTierItem(
   return item.tier === 4 && item.ownerUsername === user.username;
 }
 
-/** Cũng dùng cho toggle checkbox deliverables — quyền giống canEditTier. */
-export const canEditDeliverable = canEditTierItem;
+// Phase F: canEditDeliverable đã bỏ (bảng task_deliverables đã xoá).
+// Nếu cần tương đương trong tương lai, alias lại = canEditTierItem.
 
 /** Cho phép đổi trạng thái (status dropdown) — same guard as edit. */
 export const canChangeStatus = canEditTierItem;
 
 // ---------------------------------------------------------------------------
-// SubTask (T4.5) + DailyLog (nhật ký thi công)
+// DailyLog (nhật ký thi công) — Phase E: gắn trực tiếp vào task
 // ---------------------------------------------------------------------------
 
 /**
- * Quyền edit SubTask. Manager cần có parent item trong phòng ban mình
- * để xác định department (SubTask không có field department riêng).
- */
-export function canEditSubtask(
-  user: User | null | undefined,
-  subtask: SubTask,
-  parentItem?: TierItem
-): boolean {
-  if (!user) return false;
-  if (user.role === 'admin') return true;
-  if (user.role === 'director') return false;
-  if (user.role === 'manager') {
-    if (!parentItem) return false; // thiếu parent thì từ chối an toàn
-    return inDepartment(user, parentItem.department);
-  }
-  return subtask.assigneeUsername === user.username;
-}
-
-/**
- * Quyền ghi nhật ký thi công (DailyLog) cho 1 SubTask.
- * Theo nghiệp vụ xây dựng: chỉ assignee được ghi, manager có thể override.
+ * Quyền ghi nhật ký thi công (DailyLog) cho 1 task.
+ * Theo nghiệp vụ xây dựng:
+ *   - admin: luôn được
+ *   - director: read-only (không ghi log)
+ *   - manager: cùng phòng ban với task
+ *   - employee: chỉ owner của task
  */
 export function canAddDailyLog(
   user: User | null | undefined,
-  subtask: SubTask,
-  parentItem?: TierItem
+  task: TierItem
 ): boolean {
-  if (!user) return false;
+  if (!user || !task) return false;
   if (user.role === 'admin') return true;
   if (user.role === 'director') return false;
   if (user.role === 'manager') {
-    if (!parentItem) return false;
-    return inDepartment(user, parentItem.department);
+    return inDepartment(user, task.department);
   }
-  return subtask.assigneeUsername === user.username;
+  // employee: chỉ owner của task
+  return task.ownerUsername === user.username;
 }
 
 // ---------------------------------------------------------------------------
-// TeamLeadTask (giao việc nhóm) + QuickHelpRequest
+// TeamLeadTask (giao việc nhóm) — Phase F: bỏ QuickHelpRequest (help_requests đã xoá)
 // ---------------------------------------------------------------------------
 
 /** Quyền duyệt nghiệm thu 1 task. */

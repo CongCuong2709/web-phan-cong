@@ -5,10 +5,8 @@ import {
   TeamMember,
   TeamLeadTask,
   EmployeeTask,
-  QuickHelpRequest,
   User,
   ROLE_LABEL,
-  SubTask,
   DailyLog,
   HistoryEntry,
 } from './types';
@@ -42,14 +40,12 @@ export function viPriorityToEnum(p: string | undefined): string {
   }
 }
 import { AuthProvider, useAuth } from './auth/AuthContext';
-import { canAddDailyLog, canEditSubtask, findManagerOf, uid } from './auth/permissions';
+import { canAddDailyLog, findManagerOf, uid } from './auth/permissions';
 import { api, fireAndForget } from './lib/apiClient';
 import {
   apiToTierItem,
   apiToTeamLeadTask,
   apiToEmployeeTask,
-  apiToHelpRequest,
-  apiToSubtask,
   apiToDailyLog,
   apiToTeamMember,
   apiToHistoryEntry,
@@ -64,8 +60,6 @@ import { ViecCuaToiView } from './components/ViecCuaToiView';
 import { BaoCaoTongQuanView } from './components/BaoCaoTongQuanView';
 import { DetailsDrawer } from './components/DetailsDrawer';
 import { NewItemModal } from './components/NewItemModal';
-import { DeliverablePreviewModal } from './components/DeliverablePreviewModal';
-import { MessageModal } from './components/MessageModal';
 import { ExportModal } from './components/ExportModal';
 import { NewPersonalTaskModal } from './components/NewPersonalTaskModal';
 import { Toast } from './components/Toast';
@@ -111,20 +105,23 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
 
   const [employeeTasks, setEmployeeTasks] = useState<EmployeeTask[]>([]);
 
-  const [helpRequests, setHelpRequests] = useState<QuickHelpRequest[]>([]);
-
   /** Fetch toàn bộ data từ backend sau khi user login. Chạy lại khi user.id thay đổi. */
   useEffect(() => {
     let cancelled = false;
     (async () => {
       // ISS-007: Single source of truth — 1 endpoint /api/tasks cho cả 3 view
       // (Gantt, Giao việc nhóm, Việc của tôi). Transform sang 3 derived types.
+      // Lưu ý: /api/tasks trả về DỮ LIỆU CẢ 4 TIER. Chỉ tier 4 mới là "đầu việc"
+      // cá nhân (team lead / employee view) — tier 1/2/3 (dự án / giai đoạn / hạng mục)
+      // chỉ hiển thị trên cây Gantt. Nếu không filter, manager xem "Việc của tôi"
+      // sẽ thấy cả project/phase/bundle (vì seed cho manager làm owner) → bug.
       const tasksRes = await api.listTasks();
       if (!cancelled && tasksRes.ok) {
         const items = tasksRes.data.items;
+        const tier4Only = items.filter((it) => it.tier === 4);
         setTierItems(items.map(apiToTierItem));
-        setTeamTasks(items.map(apiToTeamLeadTask));
-        setEmployeeTasks(items.map(apiToEmployeeTask));
+        setTeamTasks(tier4Only.map(apiToTeamLeadTask));
+        setEmployeeTasks(tier4Only.map(apiToEmployeeTask));
       }
 
       // Team members (derive từ backend users + tasks)
@@ -133,17 +130,7 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
         setTeamMembers(memRes.data.members.map(apiToTeamMember));
       }
 
-      // Help requests
-      const helpRes = await api.listHelpRequests();
-      if (!cancelled && helpRes.ok) {
-        setHelpRequests(helpRes.data.requests.map(apiToHelpRequest));
-      }
-
-      // Subtasks + Daily logs (cho DetailsDrawer)
-      const subRes = await api.listSubtasks();
-      if (!cancelled && subRes.ok) {
-        setSubtasks(subRes.data.items.map(apiToSubtask));
-      }
+      // Daily logs (cho DetailsDrawer + BC tong quan)
       const logRes = await api.listDailyLogs();
       if (!cancelled && logRes.ok) {
         setDailyLogs(logRes.data.items.map(apiToDailyLog));
@@ -159,7 +146,6 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
   }, [user.id]);
 
   // Sub-tasks + nhật ký thi công + history (cho DetailsDrawer)
-  const [subtasks, setSubtasks] = useState<SubTask[]>([]);
   const [dailyLogs, setDailyLogs] = useState<DailyLog[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
 
@@ -335,10 +321,8 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
   const [selectedItemForDrawer, setSelectedItemForDrawer] = useState<TierItem | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isNewItemModalOpen, setIsNewItemModalOpen] = useState(false);
-  const [previewTask, setPreviewTask] = useState<TeamLeadTask | null>(null);
-  const [messageTarget, setMessageTarget] = useState<{ name: string; taskTitle: string } | null>(
-    null
-  );
+  // Phase F: previewTask (DeliverablePreviewModal) + messageTarget (MessageModal) đã bỏ.
+  // 3 bảng sub-resource tương ứng (task_deliverables, task_help_messages, messages) đã xoá.
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isNewPersonalTaskOpen, setIsNewPersonalTaskOpen] = useState(false);
 
@@ -465,9 +449,7 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
       status: newItemData.status || 'Chuẩn bị',
       priority: newItemData.priority || 'Trung bình',
       description: newItemData.description || 'Chưa có mô tả',
-      deliverables: newItemData.deliverables || [
-        { id: `del-${Date.now()}`, title: 'Hoàn tất bàn giao', completed: false },
-      ],
+      // Phase F: bỏ deliverables (bảng task_deliverables đã xoá).
       managementNotes: newItemData.managementNotes || `Tạo bởi ${user.fullname}.`,
       gantt: newItemData.gantt || {
         startWeek: 2,
@@ -573,37 +555,8 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     showToast('Đã phê duyệt nghiệm thu công việc!');
   };
 
-  // Resolve Help Request
-  const handleResolveHelp = (taskId: string) => {
-    const task = teamTasks.find((t) => t.id === taskId);
-    setTeamTasks((prev) =>
-      prev.map((t) => (t.id === taskId ? { ...t, status: 'in_progress' as const } : t))
-    );
-    logHistory('task', taskId, 'Xử lý yêu cầu hỗ trợ từ nhân viên');
-    const numId = extractBackendId(taskId);
-    if (Number.isFinite(numId)) {
-      const found = tierItems.find((t) => String(t.id) === String(taskId));
-      const tier = found?.tier ?? 4;
-      fireAndForget(api.approveTask(tier, numId), `approveTask#${taskId}`);
-    }
-    // Update the team member who owns this task (by ownerName matching member.name)
-    if (task) {
-      setTeamMembers((prev) =>
-        prev.map((m) =>
-          m.name === task.ownerName
-            ? {
-                ...m,
-                needHelp: false,
-                urgentNote: undefined,
-                statusText: '2 việc đang làm',
-                onTimeRate: '100% đúng hạn',
-              }
-            : m
-        )
-      );
-    }
-    showToast('Đã ghi nhận hỗ trợ! Trạng thái chuyển sang: Đang làm bình thường');
-  };
+  // Phase F: handleResolveHelp đã bỏ. Escalation giờ là tasks.blocker_note
+  // (NV ghi 1 dòng, manager xem khi mở task). Không cần ticket workflow.
 
   /** Toggle trạng thái done/doing của EmployeeTask — sync backend. */
   const handleToggleEmployeeTask = (taskId: string) => {
@@ -651,81 +604,31 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     }
   };
 
-  // Update deliverable text
-  const handleUpdateEmployeeDeliverable = (taskId: string, newText: string) => {
-    setEmployeeTasks((prev) =>
-      prev.map((t) =>
-        t.id === taskId
-          ? { ...t, currentDeliverable: newText, lastUpdated: 'Vừa cập nhật' }
-          : t
-      )
-    );
-    showToast('Đã lưu kết quả bàn giao mới!');
-  };
+  // Phase F: handleUpdateEmployeeDeliverable đã bỏ. "Kết quả bàn giao" giờ
+  // là daily_log.result của ngày hôm nay. ViecCuaToiView gọi onAddDailyLog.
 
-  /** Thêm ghi chú vào EmployeeTask — immutable update + fire-and-forget API. */
-  const handleAddEmployeeNote = (taskId: string, noteText: string) => {
+  // Phase F: handleAddEmployeeNote đã bỏ (task_notes bảng xoá). Ghi chú
+  // cho sếp giờ dùng daily_log.obstacle hoặc tasks.blocker_note.
+
+  // Phase F: handleSendHelpRequest đã bỏ (help_requests bảng xoá).
+  // Escalation giờ là 1 dòng tasks.blocker_note (NV viết trong ViecCuaToiView).
+
+  /** Set blocker_note trên task — escalation thay cho help_requests cũ. */
+  const handleSetBlocker = (taskId: string, note: string) => {
+    const trimmed = note.trim();
     setEmployeeTasks((prev) =>
-      prev.map((t) =>
-        t.id === taskId
-          ? {
-              ...t,
-              notes: [...(t.notes ?? []), noteText],
-              notesCount: (t.notesCount ?? 0) + 1,
-            }
-          : t
-      )
+      prev.map((t) => (t.id === taskId ? { ...t, blockerNote: trimmed } : t))
     );
-    showToast('Đã gửi ghi chú cho Trưởng phòng');
-    // Sync lên backend — chỉ gọi nếu id trỏ về row thật (composite "<tier>-<num>").
+    if (!trimmed) return;
     const numId = extractBackendId(taskId);
-    if (Number.isFinite(numId)) {
-      const found = tierItems.find((t) => String(t.id) === String(taskId));
-      const tier = found?.tier ?? 4;
-      fireAndForget(
-        api.addTaskNote(tier, numId, noteText),
-        `addTaskNote#${taskId}`,
-      );
-    }
-  };
-
-  // Send help request from Employee (uses real logged-in user)
-  const handleSendHelpRequest = (
-    req: Omit<QuickHelpRequest, 'id' | 'timestamp' | 'status'>
-  ) => {
-    const newReq: QuickHelpRequest = {
-      id: `help-${Date.now()}`,
-      timestamp: 'Vừa xong',
-      status: 'pending',
-      ...req,
-    };
-    setHelpRequests((prev) => [newReq, ...prev]);
-
-    setTeamTasks((prev) => [
-      {
-        id: uid('task-urgent'),
-        code: `NV-CANDAY-${Date.now().toString(36).toUpperCase()}`,
-        title: `Yêu cầu hỗ trợ từ ${req.sender}: ${req.reason}`,
-        category: 'Hỗ trợ khẩn',
-        deliverableType: 'text',
-        deliverableText: req.message,
-        ownerName: req.sender,
-        ownerAvatar: user.avatar,
-        ownerUsername: user.username,
-        department: user.departments[0],
-        submittedAt: 'Vừa báo',
-        status: 'need_help',
-        priority: 'Cao',
-        helpMessage: {
-          author: req.sender,
-          message: req.message,
-          timeAgo: 'Vừa xong',
-        },
-      },
-      ...prev,
-    ]);
-
-    showToast(`Lời nhắn đã gửi tới Trưởng phòng phụ trách (phòng ban ${user.departments[0] ?? ''})!`);
+    if (!Number.isFinite(numId)) return;
+    const found = tierItems.find((t) => String(t.id) === String(taskId));
+    const tier = found?.tier ?? 4;
+    fireAndForget(
+      api.setTaskBlocker(tier, numId, trimmed),
+      `setBlocker#${taskId}`,
+    );
+    showToast('Đã ghi nhận vướng mắc. Trưởng phòng sẽ xem khi mở task.');
   };
 
   /** Tạo việc cá nhân (không có trong tier tree). */
@@ -757,8 +660,8 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
           : `${ROLE_HELLO[user.role]} · ${user.departments[0] ?? ''}`,
         avatar: manager?.avatar ?? user.avatar ?? '',
       },
-      notesCount: notes ? 1 : 0,
-      notes: notes ? [notes] : [],
+      // Phase F: bỏ notesCount/notes (task_notes bảng xoá). Nội dung `notes`
+      // từ NewPersonalTaskModal giờ được lưu trong description + daily_log.
     };
 
     setEmployeeTasks((prev) => [newTask, ...prev]);
@@ -808,11 +711,8 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
               teamMembers={visibleTeamMembers}
               tasks={visibleTeamTasks}
               onApproveTask={handleApproveTeamTask}
-              onResolveHelp={handleResolveHelp}
               onOpenNewTaskModal={() => setIsNewItemModalOpen(true)}
               onOpenNewBundleModal={() => setIsNewItemModalOpen(true)}
-              onPreviewDeliverable={(task) => setPreviewTask(task)}
-              onSendMessage={(name, title) => setMessageTarget({ name, taskTitle: title })}
             />
           ))}
 
@@ -825,9 +725,51 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
               tasks={visibleEmployeeTasks}
               onToggleDone={handleToggleEmployeeTask}
               onStartTask={handleStartEmployeeTask}
-              onUpdateDeliverable={handleUpdateEmployeeDeliverable}
-              onAddNote={handleAddEmployeeNote}
-              onSendHelpRequest={handleSendHelpRequest}
+              onAddDailyLog={(taskId, desc, result, obstacle, progress) => {
+                const finalProgress = progress ?? 0;
+                const task = tierItems.find((t) => t.id === taskId);
+                if (!task) return;
+                if (!canAddDailyLog(user, task)) {
+                  showToast('Bạn không có quyền ghi nhật ký cho task này.');
+                  return;
+                }
+                // Cập nhật local state trước (optimistic). NV sẽ thấy ngay
+                // task.currentDeliverable = result mà không cần reload.
+                setEmployeeTasks((prev) =>
+                  prev.map((t) => (t.id === taskId ? { ...t, currentDeliverable: result || '', lastUpdated: 'Vừa ghi nhật ký' } : t))
+                );
+                setDailyLogs((prev) => [
+                  {
+                    id: uid('log'),
+                    taskId,
+                    logDate: new Date().toISOString().slice(0, 10),
+                    description: desc,
+                    result,
+                    obstacle,
+                    progress: finalProgress,
+                    username: user.username,
+                    userName: user.fullname,
+                    userRole: `${ROLE_LABEL[user.role]} · ${user.departments[0] ?? ''}`,
+                  },
+                  ...prev,
+                ]);
+                logHistory('daily_log', taskId, `Ghi nhật ký thi công (+${finalProgress}%)`);
+                const taskNumId = extractBackendId(taskId);
+                if (Number.isFinite(taskNumId)) {
+                  fireAndForget(
+                    api.addDailyLog({
+                      taskId: taskNumId,
+                      description: desc,
+                      result,
+                      obstacle,
+                      progress: finalProgress,
+                    }),
+                    `addDailyLog#${taskId}`,
+                  );
+                }
+                showToast('Đã ghi nhật ký thi công mới.');
+              }}
+              onSetBlocker={handleSetBlocker}
               onOpenNewPersonalTaskModal={() => setIsNewPersonalTaskOpen(true)}
             />
           ))}
@@ -841,6 +783,7 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
               teamMembers={visibleTeamMembers}
               teamTasks={visibleTeamTasks}
               dailyLogs={dailyLogs}
+              currentUser={user}
               onExport={() => setIsExportModalOpen(true)}
             />
           ))}
@@ -859,39 +802,22 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
         onUpdateItem={handleUpdateTierItem}
-        subtasks={subtasks}
         dailyLogs={dailyLogs}
         history={history}
         allTierItems={tierItems}
         currentUser={user}
-        onUpdateSubtaskProgress={(subId, progress) => {
-          const subtask = subtasks.find((s) => s.id === subId);
-          if (!subtask) return;
-          // A8 guard: kiểm tra quyền sửa SubTask. Manager cần biết parent item
-          // để xác định department; tìm qua subtask.taskId.
-          const parentItem = tierItems.find((t) => t.id === subtask.taskId);
-          if (!canEditSubtask(user, subtask, parentItem)) {
-            showToast('Bạn không có quyền cập nhật SubTask này.');
-            return;
-          }
-          setSubtasks((prev) =>
-            prev.map((s) => (s.id === subId ? { ...s, progress } : s))
-          );
-          logHistory('subtask', subId, `Cập nhật nhanh SubTask → ${progress}%`);
-        }}
-        onAddDailyLog={(subtaskId, desc, result, obstacle, progress) => {
+        onAddDailyLog={(taskId, desc, result, obstacle, progress) => {
           const finalProgress = progress ?? 0;
-          const subtask = subtasks.find((s) => s.id === subtaskId);
-          if (!subtask) return;
-          // A7 guard: chỉ assignee SubTask hoặc manager trong phòng ban được ghi nhật ký.
-          const parentItem = tierItems.find((t) => t.id === subtask.taskId);
-          if (!canAddDailyLog(user, subtask, parentItem)) {
-            showToast('Bạn không có quyền ghi nhật ký cho SubTask này.');
+          // A7 guard: chỉ owner task hoặc manager trong phòng ban được ghi nhật ký.
+          const task = tierItems.find((t) => t.id === taskId);
+          if (!task) return;
+          if (!canAddDailyLog(user, task)) {
+            showToast('Bạn không có quyền ghi nhật ký cho task này.');
             return;
           }
           const newLog: DailyLog = {
             id: uid('log'),
-            subtaskId,
+            taskId,
             logDate: new Date().toISOString().slice(0, 10),
             description: desc,
             result,
@@ -902,24 +828,19 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
             userRole: `${ROLE_LABEL[user.role]} · ${user.departments[0] ?? ''}`,
           };
           setDailyLogs((prev) => [newLog, ...prev]);
-          setSubtasks((prev) =>
-            prev.map((s) =>
-              s.id === subtaskId ? { ...s, progress: Math.max(s.progress, finalProgress) } : s
-            )
-          );
-          logHistory('subtask', subtaskId, `Ghi nhật ký thi công (+${finalProgress}%)`);
-          // Dual-write: sync daily log mới lên backend. subtaskId là PK riêng (numeric).
-          const subNumId = extractBackendId(subtaskId);
-          if (Number.isFinite(subNumId)) {
+          logHistory('daily_log', taskId, `Ghi nhật ký thi công (+${finalProgress}%)`);
+          // Dual-write: sync daily log mới lên backend. taskId là composite '<tier>-<num>'.
+          const taskNumId = extractBackendId(taskId);
+          if (Number.isFinite(taskNumId)) {
             fireAndForget(
               api.addDailyLog({
-                subtaskId: subNumId,
+                taskId: taskNumId,
                 description: desc,
                 result,
                 obstacle,
                 progress: finalProgress,
               }),
-              `addDailyLog#${subtaskId}`,
+              `addDailyLog#${taskId}`,
             );
           }
           showToast('Đã ghi nhật ký thi công mới.');
@@ -942,24 +863,9 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
           .map((u) => ({ username: u.username, fullname: u.fullname }))}
       />
 
-      {/* Deliverable Evidence Preview Modal */}
-      <DeliverablePreviewModal
-        task={previewTask}
-        isOpen={!!previewTask}
-        onClose={() => setPreviewTask(null)}
-        onApprove={handleApproveTeamTask}
-      />
-
-      {/* Send Message Modal */}
-      <MessageModal
-        isOpen={!!messageTarget}
-        onClose={() => setMessageTarget(null)}
-        targetName={messageTarget?.name || ''}
-        taskTitle={messageTarget?.taskTitle || ''}
-        onSend={(msg) => {
-          showToast(`Đã gửi tin nhắn đến ${messageTarget?.name}: "${msg}"`);
-        }}
-      />
+      {/* Phase F: DeliverablePreviewModal + MessageModal đã bỏ.
+            Hai component này chỉ render preview file PDF/spreadsheet/photo và
+            nhắn tin 1-1 — tương ứng với 2 bảng đã xoá. */}
 
       {/* Export Report Modal */}
       <ExportModal

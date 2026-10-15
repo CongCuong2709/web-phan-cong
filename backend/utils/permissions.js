@@ -63,28 +63,23 @@ export const canEditTierItem = canEditTask;
 /** Tương tự edit cho deliverable (inline columns của tasks). */
 export const canEditDeliverable = canEditTask;
 
-/** Quyền edit SubTask. Manager cần parent item trong phòng ban. */
-export function canEditSubtask(user, subtask, parentItem) {
-  if (!user) return false;
+/** Quyền ghi nhật ký thi công (DailyLog) cho 1 task.
+ *
+ * Phase E: bỏ SubTask, daily_log giờ FK trực tiếp vào tasks. Quyền dựa trên:
+ *   - admin: always
+ *   - director: read-only (không ghi log)
+ *   - manager: cùng department với task
+ *   - employee: chỉ owner của task
+ */
+export function canAddDailyLog(user, task) {
+  if (!user || !task) return false;
   if (user.role === 'admin') return true;
   if (user.role === 'director') return false;
   if (user.role === 'manager') {
-    if (!parentItem) return false;
-    return inDepartment(user, parentItem.department_code);
+    return inDepartment(user, task.department_code);
   }
-  return subtask.assignee_user_id === user.id;
-}
-
-/** Quyền ghi nhật ký thi công (DailyLog). */
-export function canAddDailyLog(user, subtask, parentItem) {
-  if (!user) return false;
-  if (user.role === 'admin') return true;
-  if (user.role === 'director') return false;
-  if (user.role === 'manager') {
-    if (!parentItem) return false;
-    return inDepartment(user, parentItem.department_code);
-  }
-  return subtask.assignee_user_id === user.id;
+  // employee: chỉ owner
+  return task.owner_user_id === user.id;
 }
 
 /** Quyền duyệt nghiệm thu team task. */

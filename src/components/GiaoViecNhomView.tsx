@@ -1,27 +1,24 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { TeamMember, TeamLeadTask } from '../types';
 
 interface GiaoViecNhomViewProps {
   teamMembers: TeamMember[];
   tasks: TeamLeadTask[];
   onApproveTask: (taskId: string) => void;
-  onResolveHelp: (taskId: string) => void;
   onOpenNewTaskModal: () => void;
   onOpenNewBundleModal: () => void;
-  onPreviewDeliverable: (task: TeamLeadTask) => void;
-  onSendMessage: (memberName: string, taskTitle: string) => void;
 }
 
 export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
   teamMembers,
   tasks,
   onApproveTask,
-  onResolveHelp,
   onOpenNewTaskModal,
   onOpenNewBundleModal,
-  onPreviewDeliverable,
-  onSendMessage,
 }) => {
+  // Phase F: bỏ onResolveHelp / onPreviewDeliverable / onSendMessage.
+  // task_help_messages + task_deliverables + messages đã xoá. Escalation giờ
+  // qua tasks.blocker_note (manager xem khi mở task — DetailsDrawer).
   const [filter, setFilter] = useState<'all' | 'pending' | 'need_help' | 'done'>('pending');
   const [memberFilter, setMemberFilter] = useState<string | null>(null);
 
@@ -483,37 +480,20 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                           </span>
                         </div>
 
-                        {/* Evidence preview box */}
-                        {isNeedHelp && task.helpMessage ? (
+                        {/* Phase F: hiển thị blocker_note (text 1 dòng) thay cho
+                            helpMessage 1:N cũ. Manager đọc "Vướng mắc" tại đây
+                            mà không cần mở task. */}
+                        {task.blockerNote ? (
                           <div className="p-2.5 bg-white rounded-lg border border-red-200 text-[13px] text-[#0b1c30] flex items-start gap-2 shadow-sm">
                             <span className="material-symbols-outlined text-[18px] text-[#ba1a1a] shrink-0 mt-0.5">
                               priority_high
                             </span>
                             <span>
-                              <strong>{task.helpMessage.author} gửi lời nhắn:</strong> “
-                              {task.helpMessage.message}”
+                              <strong>Vướng mắc:</strong> “
+                              {task.blockerNote}”
                             </span>
                           </div>
-                        ) : (
-                          <div
-                            onClick={() => onPreviewDeliverable(task)}
-                            className="p-2 bg-white rounded-lg border border-[#e5eeff] flex items-center gap-2 text-[13px] text-[#0b1c30] cursor-pointer hover:border-[#004ac6] transition-colors shadow-sm"
-                          >
-                            <span className="material-symbols-outlined text-[18px] text-[#006243]">
-                              {task.deliverableType === 'pdf'
-                                ? 'attachment'
-                                : task.deliverableType === 'spreadsheet'
-                                ? 'table_chart'
-                                : 'description'}
-                            </span>
-                            <span className="truncate">
-                              Kết quả nộp: <strong>{task.deliverableText}</strong>
-                            </span>
-                            <span className="material-symbols-outlined text-[16px] text-[#737686] ml-auto">
-                              open_in_new
-                            </span>
-                          </div>
-                        )}
+                        ) : null /* Phase F: bỏ preview deliverable - bảng đã xoá */}
 
                         {/* Metadata row */}
                         <div className="flex items-center gap-3 text-[11px] text-[#565e74] mt-0.5 flex-wrap">
@@ -551,68 +531,19 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                       </div>
                     </div>
 
-                    {/* Actions */}
+                    {/* Actions — Phase F: bỏ onSendMessage + onResolveHelp.
+                        Manager escalation giờ qua tasks.blocker_note (xem khi mở task). */}
                     <div className="flex items-center gap-2 self-end lg:self-center shrink-0">
                       {isPending && (
-                        <>
-                          <button
-                            onClick={() =>
-                              onSendMessage(task.ownerName, task.title)
-                            }
-                            className="px-3 py-1.5 bg-white border border-[#c3c6d7] text-[#0b1c30] hover:bg-[#eff4ff] rounded-lg text-[12px] font-semibold shadow-sm transition-colors"
-                            type="button"
-                          >
-                            Nhắc sửa
-                          </button>
-                          <button
-                            onClick={() => onApproveTask(task.id)}
-                            className="px-3.5 py-1.5 bg-[#006243] text-white hover:bg-[#007d57] rounded-lg text-[12px] font-bold shadow-sm flex items-center gap-1.5 transition-all"
-                            type="button"
-                          >
-                            <span className="material-symbols-outlined text-[16px]">
-                              check
-                            </span>
-                            <span>Duyệt đạt</span>
-                          </button>
-                        </>
-                      )}
-
-                      {isNeedHelp && (
-                        <>
-                          <button
-                            onClick={() =>
-                              onSendMessage(task.ownerName, task.title)
-                            }
-                            className="px-3 py-1.5 bg-white border border-[#c3c6d7] text-[#0b1c30] hover:bg-[#eff4ff] rounded-lg text-[12px] font-semibold shadow-sm transition-colors"
-                            type="button"
-                          >
-                            Nhắn {task.ownerName.split(' ').pop()}
-                          </button>
-                          <button
-                            onClick={() => onResolveHelp(task.id)}
-                            className="px-3.5 py-1.5 bg-[#004ac6] text-white hover:bg-[#2563eb] rounded-lg text-[12px] font-bold shadow-sm flex items-center gap-1.5 transition-all"
-                            type="button"
-                          >
-                            <span className="material-symbols-outlined text-[16px]">
-                              task_alt
-                            </span>
-                            <span>Đã xử lý hỗ trợ</span>
-                          </button>
-                        </>
-                      )}
-
-                      {!isPending && !isNeedHelp && (
                         <button
-                          onClick={() =>
-                            onSendMessage(task.ownerName, task.title)
-                          }
-                          className="px-3 py-1.5 bg-white border border-[#c3c6d7] text-[#0b1c30] hover:bg-[#eff4ff] rounded-lg text-[12px] font-semibold shadow-sm flex items-center gap-1 transition-colors"
+                          onClick={() => onApproveTask(task.id)}
+                          className="px-3.5 py-1.5 bg-[#006243] text-white hover:bg-[#007d57] rounded-lg text-[12px] font-bold shadow-sm flex items-center gap-1.5 transition-all"
                           type="button"
                         >
-                          <span className="material-symbols-outlined text-[16px] text-[#004ac6]">
-                            chat
+                          <span className="material-symbols-outlined text-[16px]">
+                            check
                           </span>
-                          <span>Nhắn hỏi thăm</span>
+                          <span>Duyệt đạt</span>
                         </button>
                       )}
                     </div>

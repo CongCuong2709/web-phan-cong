@@ -156,13 +156,8 @@ export interface TierItemDto {
   is_today?: number;
   bundle_name?: string | null;
   last_updated?: string | null;
-  deliverable_type?: 'pdf' | 'spreadsheet' | 'text' | 'photo' | null;
-  deliverable_text?: string | null;
-  deliverable_completed?: number;
-  file_name?: string | null;
-  help_message_author?: string | null;
-  help_message_body?: string | null;
-  help_message_timeago?: string | null;
+  /** Phase F: thay task_help_messages 1:N bằng 1 cột text. */
+  blocker_note?: string | null;
   blocker_alert?: string | null;
   start_week?: number;
   end_week?: number;
@@ -175,18 +170,8 @@ export interface TierItemDto {
   updated_at?: string;
 }
 
-export interface TaskNoteDto {
-  id: number;
-  task_id: number;
-  body: string;
-  author_user_id: number;
-  author_username_str?: string;
-  author_fullname?: string;
-  created_at: string;
-}
-
 export interface DailyLogDto {
-  subtaskId: number;
+  taskId: number;
   description: string;
   result?: string;
   obstacle?: string;
@@ -195,14 +180,12 @@ export interface DailyLogDto {
 
 // Fix TD-05: typed DTOs thay cho `unknown[]`. TypeScript sẽ bắt lỗi runtime
 // (sai tên field, missing field) ngay lúc compile thay vì chỉ nổn console.
+// Phase F: loại bỏ deliverable_* + help_message_* (3 bảng backend đã xoá).
 export interface TeamLeadTaskDto {
   id: number;
   code: string;
   title: string;
   category?: string;
-  deliverable_type: 'pdf' | 'spreadsheet' | 'text' | 'photo';
-  deliverable_text?: string;
-  file_name?: string;
   owner_fullname?: string;
   owner_username_str?: string;
   department_code?: string;
@@ -211,9 +194,8 @@ export interface TeamLeadTaskDto {
   status: 'pending_approval' | 'need_help' | 'in_progress' | 'done';
   priority?: 'Cao' | 'Thường';
   progress_text?: string;
-  help_message_body?: string;
-  help_message_author?: string;
-  help_message_timeago?: string;
+  /** Phase F: 1 dòng blocker do NV viết. */
+  blocker_note?: string | null;
 }
 
 export interface EmployeeTaskDto {
@@ -232,24 +214,10 @@ export interface EmployeeTaskDto {
   manager_avatar_url?: string;
   owner_fullname?: string;
   owner_username?: string;
-  notesCount?: number;
   owner_username_str?: string;
   department_code?: string;
-}
-
-export interface QuickHelpRequestDto {
-  id: number;
-  sender_user_id: number;
-  sender_fullname?: string;
-  sender_username?: string;
-  sender_avatar_url?: string;
-  reason: string;
-  message: string;
-  status: 'pending' | 'resolved';
-  related_team_lead_task_id?: number | null;
-  created_at: string;
-  resolved_at?: string | null;
-  resolved_by_user_id?: number | null;
+  /** Phase F: NV viết "đang vướng ở đâu" → manager xem. */
+  blocker_note?: string | null;
 }
 
 export interface TeamMemberDto {
@@ -267,25 +235,9 @@ export interface TeamMemberDto {
   department?: string;
 }
 
-export interface SubtaskDto {
-  id: number;
-  tier_item_id: number;
-  name: string;
-  description?: string;
-  assignee_username_str?: string;
-  assignee_fullname?: string;
-  start_date: string;
-  end_date: string;
-  progress: number;
-  status: 'not_started' | 'in_progress' | 'completed' | 'blocked' | 'review';
-  priority: 'low' | 'medium' | 'high' | 'critical';
-  results?: string;
-  notes?: string;
-}
-
 export interface DailyLogRowDto {
   id: number;
-  subtask_id: number;
+  task_id: number;
   log_date: string;
   description: string;
   result?: string;
@@ -299,7 +251,7 @@ export interface DailyLogRowDto {
 
 export interface HistoryEntryDto {
   id: number;
-  entity_type: 'project' | 'phase' | 'bundle' | 'task' | 'subtask' | 'team_lead_task' | 'employee_task';
+  entity_type: 'project' | 'phase' | 'bundle' | 'task' | 'daily_log' | 'team_lead_task' | 'employee_task';
   entity_id: number;
   action: string;
   author_user_id?: number;
@@ -355,9 +307,10 @@ export const api = {
   async listTasks() {
     return request<{ items: TierItemDto[] }>('GET', '/api/tasks');
   },
-  /** GET /api/tasks/:tier/:id — tier ∈ {1,2,3,4}. */
+  /** GET /api/tasks/:tier/:id — tier ∈ {1,2,3,4}.
+   *  Phase F: response chỉ trả `{ item }` (notes/deliverables/helpMessages đã xoá). */
   async getTask(tier: number, id: number) {
-    return request<{ item: TierItemDto; subtasks?: unknown[]; notes?: TaskNoteDto[]; deliverables?: unknown[]; helpMessages?: unknown[] }>(
+    return request<{ item: TierItemDto }>(
       'GET', `/api/tasks/${tier}/${id}`
     );
   },
@@ -374,15 +327,16 @@ export const api = {
     return request('DELETE', `/api/tasks/${tier}/${id}`);
   },
 
-  // --- Sub-resource trên task (notes, approve, help, toggle) ---
-  async addTaskNote(tier: number, id: number, body: string) {
-    return request<{ noteId: number }>('POST', `/api/tasks/${tier}/${id}/notes`, { body });
-  },
+  // --- Sub-resource trên task (Phase F: chi con daily_logs + blocker_note) ---
   async approveTask(tier: number, id: number) {
     return request<{ item: TierItemDto }>('POST', `/api/tasks/${tier}/${id}/approve`);
   },
-  async requestHelp(tier: number, id: number, reason: string, message: string) {
-    return request('POST', `/api/tasks/${tier}/${id}/help`, { reason, message });
+  /** POST /api/tasks/4/:id/blocker — NV ghi 1 dòng blocker_note.
+   *  Phase F: thay cho /help endpoint cũ (đã xoá). */
+  async setTaskBlocker(tier: number, id: number, note: string) {
+    return request<{ item: TierItemDto; blocker_note: string }>(
+      'POST', `/api/tasks/${tier}/${id}/blocker`, { note }
+    );
   },
   async toggleTask(tier: number, id: number) {
     return request<{ item: TierItemDto }>('POST', `/api/tasks/${tier}/${id}/toggle`);
@@ -392,9 +346,9 @@ export const api = {
   // TierItem/TeamLeadTask/EmployeeTask DTO types vẫn dùng cho transforms,
   // nhưng API chỉ có 1 endpoint /api/tasks.
 
-  // --- Subtasks + Daily logs (Phase 2 — endpoints tồn tại ở backend, chưa patch frontend) ---
+  // --- Daily logs (Phase E: gắn trực tiếp vào task) ---
   async addDailyLog(log: DailyLogDto) {
-    return request('POST', `/api/subtasks/${log.subtaskId}/logs`, {
+    return request('POST', `/api/tasks/${log.taskId}/logs`, {
       description: log.description,
       result: log.result,
       obstacle: log.obstacle,
@@ -423,22 +377,17 @@ export const api = {
     }>('GET', `/api/users${qs}`);
   },
 
-  // --- Help requests ---
-  async listHelpRequests() {
-    return request<{ requests: QuickHelpRequestDto[] }>('GET', '/api/help-requests');
-  },
-
   // --- Team members (derived) ---
   async listTeamMembers() {
     return request<{ members: TeamMemberDto[] }>('GET', '/api/team-members');
   },
 
-  // --- Subtasks + Daily logs ---
-  async listSubtasks() {
-    return request<{ items: SubtaskDto[] }>('GET', '/api/subtasks');
-  },
+  // --- Daily logs (bulk — cho Báo cáo tổng quan + per-task) ---
   async listDailyLogs() {
     return request<{ items: DailyLogRowDto[] }>('GET', '/api/daily-logs');
+  },
+  async listDailyLogsByTask(taskId: number) {
+    return request<{ items: DailyLogRowDto[] }>('GET', `/api/tasks/${taskId}/logs`);
   },
 
   // --- History ---

@@ -13,9 +13,7 @@ import type {
   TierLevel,
   TeamLeadTask,
   EmployeeTask,
-  QuickHelpRequest,
   TeamMember,
-  SubTask,
   DailyLog,
   HistoryEntry,
 } from '../types';
@@ -85,8 +83,9 @@ export function apiToTierItem(api: any): TierItem {
   // daysRemaining: compute runtime từ endDate
   const daysRemaining = endDate ? computeDaysRemaining(endDate) : undefined;
 
-  // Phase C: deliverables + help_messages giờ là 1:N qua API riêng.
-  // TierItem này chỉ dùng cho list view; detail view sẽ fetch riêng qua getTask().
+  // Phase F: deliverables + help_messages đã bị xoá. TierItem không còn
+  // chứa các field này. Sub-resource duy nhất còn lại là daily_logs
+  // (fetch riêng qua getDailyLogsByTask).
   //
   // parentId cũng dùng composite id `<parentTier>-<parentNumericId>` để tránh nhầm
   // giữa các tier khi walk cây. Parent tier luôn = child.tier - 1:
@@ -121,9 +120,10 @@ export function apiToTierItem(api: any): TierItem {
     // Map priority từ enum sang tiếng Việt.
     priority: priorityEnumToVi(api.priority) as TierItem['priority'],
     description: String(api.description || ''),
-    deliverables: [], // Phase C: deliverables là bảng riêng, fetch qua getTask()
     managementNotes: String(api.management_notes || ''),
     blockerAlert: api.blocker_alert as string | undefined,
+    // Phase F: 1 cột blocker_note thay cho task_help_messages 1:N.
+    blockerNote: String(api.blocker_note || ''),
     // Phase C: gantt.startWeek/endWeek derive runtime từ start_date/end_date
     // (B6: bỏ denormalized columns khỏi schema — 1 nguồn sự thật).
     gantt: {
@@ -178,9 +178,8 @@ function computeDaysRemaining(endDateIso: string): number {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function apiToTeamLeadTask(api: any): TeamLeadTask {
-  // ISS-007: backend giờ trả unified Task. T4 có deliverable_*, help_message_*
-  // inline. Status 'in_progress' (old) ↔ 'doing' (new). Map ngược để GiaoViecNhomView
-  // không cần refactor.
+  // Phase F: backend trả unified Task. deliverable_* / help_message_* đã bỏ.
+  // Chỉ còn blocker_note (1 cột text).
   const statusMap: Record<string, TeamLeadTask['status']> = {
     'pending': 'in_progress',
     'doing': 'in_progress',
@@ -196,9 +195,6 @@ export function apiToTeamLeadTask(api: any): TeamLeadTask {
     code: String(api.code || ''),
     title: String(api.title || ''),
     category: String(api.bundle_name || ''),  // dùng bundle_name thay vì category
-    deliverableType: (api.deliverable_type as TeamLeadTask['deliverableType']) || 'text',
-    deliverableText: String(api.deliverable_text || ''),
-    fileName: (api.file_name as string) || undefined,
     ownerName: String(api.owner_fullname || api.owner_username_str || ''),
     ownerUsername: (api.owner_username_str as string) || undefined,
     department: api.department_code as TeamLeadTask['department'],
@@ -207,14 +203,8 @@ export function apiToTeamLeadTask(api: any): TeamLeadTask {
     status: statusMap[String(api.status)] || 'in_progress',
     priority: priorityEnumToVi(api.priority) as TeamLeadTask['priority'],
     progressText: api.progress != null ? `${api.progress}%` : undefined,
-    helpMessage:
-      api.help_message_body && api.help_message_author
-        ? {
-            author: String(api.help_message_author),
-            message: String(api.help_message_body),
-            timeAgo: String(api.help_message_timeago || 'Vừa xong'),
-          }
-        : undefined,
+    // Phase F: 1 dòng blocker_note thay cho helpMessage 1:N cũ.
+    blockerNote: String(api.blocker_note || ''),
   };
 }
 
@@ -225,6 +215,8 @@ export function apiToTeamLeadTask(api: any): TeamLeadTask {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function apiToEmployeeTask(api: any): EmployeeTask {
   // ISS-007: backend giờ là unified Task. Map status enum sang EmployeeTask enum.
+  // Phase F: notesCount/notes đã bỏ (task_notes bảng xoá). currentDeliverable giờ
+  // lấy từ daily_log.result mới nhất (sẽ fill sau qua useEffect) hoặc ''.
   const statusMap: Record<string, EmployeeTask['status']> = {
     'pending': 'pending',
     'doing': 'doing',
@@ -240,7 +232,9 @@ export function apiToEmployeeTask(api: any): EmployeeTask {
     bundleName: String(api.bundle_name || '—'),
     title: String(api.title || ''),
     description: String(api.description || ''),
-    currentDeliverable: String(api.deliverable_text || ''),
+    // Phase F: currentDeliverable không còn từ task_deliverables. Sẽ được fill
+    // từ daily_log.result hôm nay qua useEffect (xem ViecCuaToiView).
+    currentDeliverable: '',
     lastUpdated: String(api.last_updated || ''),
     deadline: String(api.end_date || ''),
     isToday: Boolean(api.is_today),
@@ -251,27 +245,10 @@ export function apiToEmployeeTask(api: any): EmployeeTask {
       role: 'Trưởng phòng phụ trách',
       avatar: '',
     },
-    notesCount: Number(api.notesCount ?? 0),
-    notes: [],
     ownerUsername: (api.owner_username_str as string | undefined) || undefined,
     department: api.department_code as EmployeeTask['department'],
-  };
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// Help request
-// ─────────────────────────────────────────────────────────────────────
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function apiToHelpRequest(api: any): QuickHelpRequest {
-  return {
-    id: String(api.id),
-    timestamp: String(api.created_at || ''),
-    // Fix TD-04: đọc sender_fullname từ backend JOIN (xem helpRequests.js:21-30).
-    sender: String(api.sender_fullname ?? '—'),
-    reason: String(api.reason || ''),
-    message: String(api.message || ''),
-    status: (api.status as QuickHelpRequest['status']) || 'pending',
+    // Phase F: blocker_note thay cho help_requests 1:N cũ.
+    blockerNote: String(api.blocker_note || ''),
   };
 }
 
@@ -298,43 +275,16 @@ export function apiToTeamMember(api: any): TeamMember {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// SubTask (T4.5)
-// ─────────────────────────────────────────────────────────────────────
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function apiToSubtask(api: any): SubTask {
-  // ISS-007: subtasks giờ FK `task_id` thay `tier_item_id`. Map ngược cho UI.
-  // task_id ở schema luôn thuộc tier 4 → composite id dạng "4-<num>" để khớp với TierItem.id.
-  const taskIdNum = api.task_id ?? api.tier_item_id;
-  return {
-    id: String(api.id),
-    taskId: taskIdNum != null ? toCompositeId(4, taskIdNum) : '',
-    name: String(api.name || ''),
-    description: undefined,
-    assigneeUsername: api.assignee_username_str ?? undefined,
-    assigneeName: api.assignee_fullname ?? undefined,
-    assigneeRole: undefined,
-    assigneeAvatar: undefined,
-    startDate: '',
-    endDate: '',
-    progress: Number(api.progress ?? 0),
-    status: (api.status === 'done' ? 'completed' : 'in_progress') as SubTask['status'],
-    priority: 'medium' as SubTask['priority'],
-    results: undefined,
-    notes: undefined,
-  };
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// DailyLog
+// DailyLog (Phase E: taskId thay subtaskId)
 // ─────────────────────────────────────────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function apiToDailyLog(api: any): DailyLog {
   return {
     id: String(api.id),
-    subtaskId: String(api.subtask_id),
+    taskId: String(api.task_id),
     logDate: String(api.log_date || ''),
+    createdAt: String(api.created_at || ''),
     description: String(api.description || ''),
     result: api.result ?? undefined,
     obstacle: api.obstacle ?? undefined,

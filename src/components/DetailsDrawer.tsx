@@ -1,16 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   TierItem,
-  Deliverable,
-  SubTask,
   DailyLog,
   HistoryEntry,
-  SubtaskStatus,
   User,
 } from '../types';
 import {
   canEditTierItem,
-  canEditSubtask,
   canAddDailyLog,
 } from '../auth/permissions';
 
@@ -19,14 +15,16 @@ interface DetailsDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   onUpdateItem: (updated: TierItem) => void;
-  subtasks?: SubTask[];
   dailyLogs?: DailyLog[];
   history?: HistoryEntry[];
   /** Fix TD-07: cần truyền allTierItems để compute descendants khi filter history. */
   allTierItems?: TierItem[];
-  onUpdateSubtaskProgress?: (subtaskId: string, progress: number) => void;
+  /**
+   * Phase E: gọi khi user ghi nhật ký thi công cho task (T4). Tham số đầu
+   * tiên là taskId (composite '<tier>-<num>'), không còn qua subtask.
+   */
   onAddDailyLog?: (
-    subtaskId: string,
+    taskId: string,
     description: string,
     result?: string,
     obstacle?: string,
@@ -36,32 +34,15 @@ interface DetailsDrawerProps {
   currentUser?: User;
 }
 
-const SUBTASK_STATUS_LABEL: Record<SubtaskStatus, string> = {
-  not_started: 'Chưa bắt đầu',
-  in_progress: 'Đang thi công',
-  completed: 'Hoàn thành',
-  blocked: 'Đang nghẽn',
-  review: 'Đang nghiệm thu',
-};
-
-const SUBTASK_STATUS_COLOR: Record<SubtaskStatus, string> = {
-  not_started: 'bg-slate-100 text-slate-700',
-  in_progress: 'bg-[#004ac6]/10 text-[#004ac6]',
-  completed: 'bg-emerald-100 text-emerald-800',
-  blocked: 'bg-amber-100 text-amber-800',
-  review: 'bg-[#dae2fd] text-[#131b2e]',
-};
 
 export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
   item,
   isOpen,
   onClose,
   onUpdateItem,
-  subtasks = [],
   dailyLogs = [],
   history = [],
   allTierItems = [],
-  onUpdateSubtaskProgress,
   onAddDailyLog,
   currentUser,
 }) => {
@@ -75,9 +56,7 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
     [currentUser, formData]
   );
 
-  const [expandedSubtask, setExpandedSubtask] = useState<string | null>(null);
   const [newLogDraft, setNewLogDraft] = useState<{
-    subtaskId: string;
     description: string;
     result: string;
     obstacle: string;
@@ -87,7 +66,6 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
   useEffect(() => {
     setFormData(item ? JSON.parse(JSON.stringify(item)) : null);
     setIsEditing(false);
-    setExpandedSubtask(null);
     setNewLogDraft(null);
   }, [item]);
 
@@ -103,22 +81,12 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
     return Math.round((end.getTime() - now.getTime()) / 86400000);
   }, [formData?.endDate]);
 
-  const itemSubtasks = useMemo(() => {
+  const itemLogs = useMemo(() => {
     if (!formData || formData.tier !== 4) return [];
-    return subtasks.filter((s) => s.taskId === formData.id);
-  }, [subtasks, formData]);
-
-  const logsBySubtask = useMemo(() => {
-    const map = new Map<string, DailyLog[]>();
-    for (const log of dailyLogs) {
-      if (!map.has(log.subtaskId)) map.set(log.subtaskId, []);
-      map.get(log.subtaskId)!.push(log);
-    }
-    for (const list of map.values()) {
-      list.sort((a, b) => (a.logDate < b.logDate ? 1 : -1));
-    }
-    return map;
-  }, [dailyLogs]);
+    return dailyLogs
+      .filter((l) => l.taskId === formData.id)
+      .sort((a, b) => (a.logDate < b.logDate ? 1 : -1));
+  }, [dailyLogs, formData]);
 
   // Fix TD-07: history filter đúng theo ý đồ — bao gồm:
   //  1. History của chính item hiện tại
@@ -146,28 +114,8 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
 
   if (!isOpen || !formData) return null;
 
-  const handleToggleDeliverable = (delId: string) => {
-    if (!formData) return;
-    // Guard A5: chỉ user có quyền edit mới toggle được deliverables (ẩn UI đã làm,
-    // nhưng phòng trường hợp gọi trực tiếp từ devtools / future handler khác).
-    if (!canEdit) return;
-    const newDeliverables = formData.deliverables.map((d: Deliverable) =>
-      d.id === delId ? { ...d, completed: !d.completed } : d
-    );
-    const completedCount = newDeliverables.filter((d) => d.completed).length;
-    const calculatedProgress =
-      newDeliverables.length > 0
-        ? Math.round((completedCount / newDeliverables.length) * 100)
-        : formData.progress;
-
-    const updated: TierItem = {
-      ...formData,
-      deliverables: newDeliverables,
-      progress: calculatedProgress,
-    };
-    setFormData(updated);
-    onUpdateItem(updated);
-  };
+  // Phase F: bỏ handleToggleDeliverable (bảng task_deliverables đã xoá).
+  // Tiến độ task giờ update qua daily_log.progress (xem routes/dailyLogs.js).
 
   const handleSave = () => {
     if (formData) {
@@ -394,49 +342,31 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
             )}
           </div>
 
-          {/* 7. Deliverables */}
-          <div className="bg-white p-3.5 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-[11px] font-semibold text-[#565e74] uppercase tracking-wider">
-                7. Kết quả bàn giao (Deliverables)
+          {/* 7. Blocker Note (chỉ T4) — Phase F: thay cho helpMessage 1:N cũ */}
+          {formData.tier === 4 && (
+            <div className="bg-white p-3.5 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+              <label className="text-[11px] font-semibold text-[#565e74] uppercase tracking-wider block mb-1.5">
+                7. Vướng mắc (NV báo cáo)
               </label>
-              <span className="text-[11px] font-mono text-[#006243] font-medium">
-                {formData.deliverables.filter((d) => d.completed).length}/
-                {formData.deliverables.length} đạt
-              </span>
+              {isEditing ? (
+                <textarea
+                  value={formData.blockerNote || ''}
+                  onChange={(e) =>
+                    setFormData({ ...formData, blockerNote: e.target.value })
+                  }
+                  className="w-full text-[13px] bg-[#f8f9ff] border border-[#c3c6d7] rounded p-2 focus:outline-none focus:border-[#004ac6]"
+                  rows={2}
+                  placeholder="NV sẽ viết vướng mắc ở đây qua nút Báo cáo vướng mắc trong Việc của tôi"
+                />
+              ) : (
+                <p className="text-[13px] text-[#434655] leading-relaxed">
+                  {formData.blockerNote || (
+                    <span className="italic text-[#737686]">Chưa có báo cáo vướng mắc nào.</span>
+                  )}
+                </p>
+              )}
             </div>
-            <div className="space-y-2">
-              {formData.deliverables.map((del) => (
-                <div
-                  key={del.id}
-                  onClick={() => handleToggleDeliverable(del.id)}
-                  className={`flex items-start gap-2.5 p-2 rounded border border-transparent transition-colors ${
-                    canEdit
-                      ? 'hover:bg-[#eff4ff] cursor-pointer hover:border-[#dce9ff]'
-                      : 'cursor-not-allowed opacity-80'
-                  }`}
-                  title={canEdit ? 'Bấm để đánh dấu hoàn thành' : 'Bạn không có quyền chỉnh sửa'}
-                >
-                  <span
-                    className={`material-symbols-outlined text-[18px] shrink-0 mt-0.5 ${
-                      del.completed ? 'text-[#006243] fill-1' : 'text-[#737686]'
-                    }`}
-                  >
-                    {del.completed ? 'check_circle' : 'radio_button_unchecked'}
-                  </span>
-                  <span
-                    className={`text-[13px] ${
-                      del.completed
-                        ? 'line-through text-[#737686]'
-                        : 'text-[#0b1c30] font-medium'
-                    }`}
-                  >
-                    {del.title}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
+          )}
 
           {/* 8. Management Notes */}
           <div className="bg-white p-3.5 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
@@ -459,289 +389,152 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
             )}
           </div>
 
-          {/* 9. SUBTASKS (chỉ hiển thị với T4) */}
+          {/* 9. NHẬT KÝ THI CÔNG (chỉ T4) — Phase E: gắn trực tiếp vào task, không qua subtask */}
           {formData.tier === 4 && (
             <div className="bg-white p-3.5 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
               <div className="flex items-center justify-between mb-2">
                 <label className="text-[11px] font-semibold text-[#565e74] uppercase tracking-wider">
-                  9. Đầu việc con (Sub-tasks)
+                  9. Nhật ký thi công
                 </label>
                 <span className="text-[11px] font-mono text-[#004ac6] font-semibold">
-                  {itemSubtasks.length} hạng mục
+                  {itemLogs.length} mục
                 </span>
               </div>
 
-              {itemSubtasks.length === 0 ? (
+              {itemLogs.length === 0 ? (
                 <p className="text-[12px] text-[#737686] italic">
-                  Đầu việc này chưa có Sub-task nào.
+                  Đầu việc này chưa có nhật ký thi công nào.
                 </p>
               ) : (
-                <div className="space-y-2">
-                  {itemSubtasks.map((sub) => {
-                    const logs = logsBySubtask.get(sub.id) ?? [];
-                    const expanded = expandedSubtask === sub.id;
-                    return (
-                      <div
-                        key={sub.id}
-                        className="border border-[#e5eeff] rounded-lg overflow-hidden"
-                      >
-                        <button
-                          onClick={() =>
-                            setExpandedSubtask(expanded ? null : sub.id)
-                          }
-                          className="w-full text-left p-2.5 hover:bg-[#eff4ff] flex items-start justify-between gap-2 transition-colors"
-                          type="button"
-                        >
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span
-                                className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${SUBTASK_STATUS_COLOR[sub.status]}`}
-                              >
-                                {SUBTASK_STATUS_LABEL[sub.status]}
-                              </span>
-                              <span className="text-[13px] font-semibold text-[#0b1c30] truncate">
-                                {sub.name}
-                              </span>
-                            </div>
-                            <div className="text-[11px] text-[#565e74] mt-0.5 flex items-center gap-1.5">
-                              <span className="material-symbols-outlined text-[12px]">
-                                person
-                              </span>
-                              <span>
-                                {sub.assigneeName}
-                                {sub.assigneeUsername && (
-                                  <span className="font-mono text-[#004ac6] ml-1">
-                                    @{sub.assigneeUsername}
-                                  </span>
-                                )}
-                              </span>
-                              <span className="text-[#c3c6d7]">•</span>
-                              <span>
-                                {sub.startDate} → {sub.endDate}
-                              </span>
-                              {logs.length > 0 && (
-                                <>
-                                  <span className="text-[#c3c6d7]">•</span>
-                                  <span className="text-[#006243] font-semibold">
-                                    {logs.length} nhật ký
-                                  </span>
-                                </>
-                              )}
-                            </div>
-                            <div className="mt-1.5 w-full h-1.5 bg-[#eff4ff] rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-[#004ac6] rounded-full"
-                                style={{ width: `${sub.progress}%` }}
-                              ></div>
-                            </div>
-                          </div>
-                          <span className="text-[12px] font-bold text-[#004ac6] shrink-0 self-start">
-                            {sub.progress}%
-                          </span>
-                        </button>
-
-                        {expanded && (
-                          <div className="border-t border-[#e5eeff] p-2.5 bg-[#f8f9ff] space-y-2.5">
-                            {sub.results && (
-                              <div className="text-[12px] text-[#434655] bg-emerald-50 border border-emerald-200 rounded p-2 leading-relaxed">
-                                <span className="font-semibold text-[#006243]">
-                                  Kết quả:
-                                </span>{' '}
-                                {sub.results}
-                              </div>
-                            )}
-
-                            {/* Daily logs timeline */}
-                            <div className="flex items-center justify-between">
-                              <span className="text-[11px] font-bold text-[#565e74] uppercase tracking-wider">
-                                Nhật ký thi công ({logs.length})
-                              </span>
-                              {onAddDailyLog && canAddDailyLog(currentUser, sub, formData) && (
-                                <button
-                                  onClick={() =>
-                                    setNewLogDraft({
-                                      subtaskId: sub.id,
-                                      description: '',
-                                      result: '',
-                                      obstacle: '',
-                                      progress: sub.progress,
-                                    })
-                                  }
-                                  className="text-[11px] font-bold text-[#004ac6] hover:text-[#2563eb] flex items-center gap-1"
-                                  type="button"
-                                >
-                                  <span className="material-symbols-outlined text-[14px]">
-                                    add
-                                  </span>
-                                  Thêm nhật ký
-                                </button>
-                              )}
-                            </div>
-
-                            {logs.length === 0 ? (
-                              <p className="text-[12px] text-[#737686] italic">
-                                Chưa có nhật ký.
-                              </p>
-                            ) : (
-                              <ul className="space-y-2">
-                                {logs.map((log) => (
-                                  <li
-                                    key={log.id}
-                                    className="bg-white border border-[#e5eeff] rounded p-2.5"
-                                  >
-                                    <div className="flex items-center justify-between mb-1">
-                                      <span className="font-mono text-[11px] font-bold text-[#004ac6]">
-                                        {log.logDate}
-                                      </span>
-                                      <span className="text-[10px] font-bold text-[#006243]">
-                                        +{log.progress}%
-                                      </span>
-                                    </div>
-                                    <div className="text-[12px] text-[#0b1c30] leading-relaxed">
-                                      {log.description}
-                                    </div>
-                                    {log.result && (
-                                      <div className="text-[11px] text-[#006243] mt-1 font-medium">
-                                        ✅ {log.result}
-                                      </div>
-                                    )}
-                                    {log.obstacle && log.obstacle !== 'Không' && (
-                                      <div className="text-[11px] text-[#ba1a1a] mt-1 font-medium">
-                                        ⚠ {log.obstacle}
-                                      </div>
-                                    )}
-                                    <div className="text-[10px] text-[#737686] mt-1.5">
-                                      — {log.userName}
-                                      {log.userRole && ` · ${log.userRole}`}
-                                    </div>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-
-                            {/* Inline draft form */}
-                            {newLogDraft?.subtaskId === sub.id && (
-                              <div className="bg-[#eff4ff] border border-[#dce9ff] rounded p-2.5 space-y-2">
-                                <textarea
-                                  value={newLogDraft.description}
-                                  onChange={(e) =>
-                                    setNewLogDraft({
-                                      ...newLogDraft,
-                                      description: e.target.value,
-                                    })
-                                  }
-                                  rows={2}
-                                  placeholder="Mô tả công việc hôm nay…"
-                                  className="w-full text-[12px] p-2 rounded border border-[#dce9ff] bg-white"
-                                />
-                                <input
-                                  type="text"
-                                  value={newLogDraft.result}
-                                  onChange={(e) =>
-                                    setNewLogDraft({
-                                      ...newLogDraft,
-                                      result: e.target.value,
-                                    })
-                                  }
-                                  placeholder="Kết quả đạt được (tuỳ chọn)"
-                                  className="w-full text-[12px] p-2 rounded border border-[#dce9ff] bg-white"
-                                />
-                                <input
-                                  type="text"
-                                  value={newLogDraft.obstacle}
-                                  onChange={(e) =>
-                                    setNewLogDraft({
-                                      ...newLogDraft,
-                                      obstacle: e.target.value,
-                                    })
-                                  }
-                                  placeholder="Vướng mắc (tuỳ chọn)"
-                                  className="w-full text-[12px] p-2 rounded border border-[#dce9ff] bg-white"
-                                />
-                                <div className="flex items-center gap-2">
-                                  <label className="text-[11px] font-semibold text-[#0b1c30] shrink-0">
-                                    Tiến độ:
-                                  </label>
-                                  <input
-                                    type="range"
-                                    min="0"
-                                    max="100"
-                                    value={newLogDraft.progress}
-                                    onChange={(e) =>
-                                      setNewLogDraft({
-                                        ...newLogDraft,
-                                        progress: Number(e.target.value),
-                                      })
-                                    }
-                                    className="flex-1 accent-[#004ac6]"
-                                  />
-                                  <span className="text-[12px] font-bold text-[#004ac6] w-12 text-right">
-                                    {newLogDraft.progress}%
-                                  </span>
-                                </div>
-                                <div className="flex justify-end gap-2 pt-1">
-                                  <button
-                                    onClick={() => setNewLogDraft(null)}
-                                    type="button"
-                                    className="px-2.5 py-1 text-[11px] font-semibold text-[#565e74] hover:bg-white rounded"
-                                  >
-                                    Hủy
-                                  </button>
-                                  <button
-                                    onClick={() => {
-                                      if (
-                                        !newLogDraft.description.trim() ||
-                                        !onAddDailyLog
-                                      )
-                                        return;
-                                      onAddDailyLog(
-                                        sub.id,
-                                        newLogDraft.description,
-                                        newLogDraft.result || undefined,
-                                        newLogDraft.obstacle || undefined,
-                                        newLogDraft.progress,
-                                      );
-                                      setNewLogDraft(null);
-                                    }}
-                                    type="button"
-                                    className="px-3 py-1 bg-[#006243] hover:bg-[#007d57] text-white text-[11px] font-bold rounded"
-                                  >
-                                    Lưu nhật ký
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Quick progress slider for the subtask */}
-                            {onUpdateSubtaskProgress && canEditSubtask(currentUser, sub, formData) && (
-                              <div className="flex items-center gap-2 pt-1 border-t border-[#e5eeff]">
-                                <span className="text-[11px] text-[#565e74] shrink-0">
-                                  Cập nhật nhanh:
-                                </span>
-                                <input
-                                  type="range"
-                                  min="0"
-                                  max="100"
-                                  value={sub.progress}
-                                  onChange={(e) =>
-                                    onUpdateSubtaskProgress(
-                                      sub.id,
-                                      Number(e.target.value)
-                                    )
-                                  }
-                                  className="flex-1 accent-[#004ac6] cursor-pointer"
-                                />
-                                <span className="text-[11px] font-bold text-[#004ac6] w-10 text-right">
-                                  {sub.progress}%
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                        )}
+                <ul className="space-y-2">
+                  {itemLogs.map((log) => (
+                    <li
+                      key={log.id}
+                      className="bg-[#f8f9ff] border border-[#e5eeff] rounded p-2.5"
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-mono text-[11px] font-bold text-[#004ac6]">
+                          {log.logDate}
+                        </span>
+                        <span className="text-[10px] font-bold text-[#006243]">
+                          +{log.progress}%
+                        </span>
                       </div>
-                    );
-                  })}
-                </div>
+                      <div className="text-[12px] text-[#0b1c30] leading-relaxed">
+                        {log.description}
+                      </div>
+                      {log.result && (
+                        <div className="text-[11px] text-[#006243] mt-1 font-medium">
+                          ✅ {log.result}
+                        </div>
+                      )}
+                      {log.obstacle && log.obstacle !== 'Không' && (
+                        <div className="text-[11px] text-[#ba1a1a] mt-1 font-medium">
+                          ⚠ {log.obstacle}
+                        </div>
+                      )}
+                      <div className="text-[10px] text-[#737686] mt-1.5">
+                        — {log.userName}
+                        {log.userRole && ` · ${log.userRole}`}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {/* Form thêm nhật ký (inline) */}
+              {onAddDailyLog && canAddDailyLog(currentUser, formData) && (
+                newLogDraft ? (
+                  <div className="bg-[#eff4ff] border border-[#dce9ff] rounded p-2.5 space-y-2 mt-2">
+                    <textarea
+                      value={newLogDraft.description}
+                      onChange={(e) =>
+                        setNewLogDraft({ ...newLogDraft, description: e.target.value })
+                      }
+                      rows={2}
+                      placeholder="Mô tả công việc hôm nay…"
+                      className="w-full text-[12px] p-2 rounded border border-[#dce9ff] bg-white"
+                    />
+                    <input
+                      type="text"
+                      value={newLogDraft.result}
+                      onChange={(e) =>
+                        setNewLogDraft({ ...newLogDraft, result: e.target.value })
+                      }
+                      placeholder="Kết quả đạt được (tuỳ chọn)"
+                      className="w-full text-[12px] p-2 rounded border border-[#dce9ff] bg-white"
+                    />
+                    <input
+                      type="text"
+                      value={newLogDraft.obstacle}
+                      onChange={(e) =>
+                        setNewLogDraft({ ...newLogDraft, obstacle: e.target.value })
+                      }
+                      placeholder="Vướng mắc (tuỳ chọn)"
+                      className="w-full text-[12px] p-2 rounded border border-[#dce9ff] bg-white"
+                    />
+                    <div className="flex items-center gap-2">
+                      <label className="text-[11px] font-semibold text-[#0b1c30] shrink-0">
+                        Tiến độ:
+                      </label>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={newLogDraft.progress}
+                        onChange={(e) =>
+                          setNewLogDraft({ ...newLogDraft, progress: Number(e.target.value) })
+                        }
+                        className="flex-1 accent-[#004ac6]"
+                      />
+                      <span className="text-[12px] font-bold text-[#004ac6] w-12 text-right">
+                        {newLogDraft.progress}%
+                      </span>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button
+                        onClick={() => setNewLogDraft(null)}
+                        type="button"
+                        className="px-2.5 py-1 text-[11px] font-semibold text-[#565e74] hover:bg-white rounded"
+                      >
+                        Hủy
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (!newLogDraft.description.trim() || !onAddDailyLog) return;
+                          onAddDailyLog(
+                            formData.id,
+                            newLogDraft.description,
+                            newLogDraft.result || undefined,
+                            newLogDraft.obstacle || undefined,
+                            newLogDraft.progress,
+                          );
+                          setNewLogDraft(null);
+                        }}
+                        type="button"
+                        className="px-3 py-1 bg-[#006243] hover:bg-[#007d57] text-white text-[11px] font-bold rounded"
+                      >
+                        Lưu nhật ký
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() =>
+                      setNewLogDraft({
+                        description: '',
+                        result: '',
+                        obstacle: '',
+                        progress: formData.progress ?? 0,
+                      })
+                    }
+                    className="mt-2 text-[11px] font-bold text-[#004ac6] hover:text-[#2563eb] flex items-center gap-1"
+                    type="button"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">add</span>
+                    Thêm nhật ký
+                  </button>
+                )
               )}
             </div>
           )}

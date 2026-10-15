@@ -18,10 +18,10 @@ import './db.js'; // Trigger DB bootstrap (side-effect import)
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
 import taskRoutes from './routes/tasks.js';
-import subtaskRoutes from './routes/subtasks.js';
-import helpRequestRoutes from './routes/helpRequests.js';
+import dailyLogRoutes from './routes/dailyLogs.js';
 import historyRoutes from './routes/history.js';
 import teamMemberRoutes from './routes/teamMembers.js';
+// Phase F: helpRequests route đã deprecated (file còn nhưng return 410). Không mount nữa.
 
 const PORT = Number(process.env.PORT) || 3000;
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
@@ -55,9 +55,13 @@ app.use('/api/tasks', taskRoutes);
 app.use('/api/tier-items', taskRoutes);  // backward-compat alias
 app.use('/api/team-tasks', taskRoutes);   // backward-compat alias
 app.use('/api/employee-tasks', taskRoutes); // backward-compat alias
-app.use('/api', subtaskRoutes);          // /tasks/:id/subtasks, /subtasks/:id/*, /subtasks/:id/logs
+// Phase E: thay subtasks routes bằng dailyLogs routes
+//   GET  /api/tasks/:taskId/logs     - list logs của 1 task
+//   POST /api/tasks/:taskId/logs     - thêm log
+//   GET  /api/daily-logs             - list tất cả (cho Báo cáo)
+//   DELETE /api/daily-logs/:id       - xoá log
+app.use('/api', dailyLogRoutes);
 app.use('/api/team-members', teamMemberRoutes);
-app.use('/api/help-requests', helpRequestRoutes);
 app.use('/api/history', historyRoutes);
 
 // --- 404 ---

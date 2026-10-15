@@ -40,18 +40,13 @@ console.log('🗑️  Clearing existing data…');
 db.exec(`
   DELETE FROM audit_log;
   DELETE FROM daily_logs;
-  DELETE FROM subtasks;
-  DELETE FROM task_help_messages;
-  DELETE FROM task_deliverables;
-  DELETE FROM task_notes;
-  DELETE FROM help_requests;
+  -- Phase F: 6 bảng sub-resource đã xoá khỏi schema (task_deliverables,
+  -- task_help_messages, task_notes, help_requests, messages, attachments).
   DELETE FROM tasks;
   DELETE FROM bundles;
   DELETE FROM phases;
   DELETE FROM projects;
   DELETE FROM sessions;
-  DELETE FROM messages;
-  DELETE FROM attachments;
   DELETE FROM user_departments;
   DELETE FROM users;
   DELETE FROM departments;
@@ -228,30 +223,17 @@ const t3 = insertTask.run(
 const t3Id = Number(t3.lastInsertRowid);
 
 // ============================================================================
-// 4. Subtask + Daily log demo (cho T4-A01)
+// 4. Daily log demo (Phase E: gắn trực tiếp vào T4-A01, không qua subtask)
 // ============================================================================
 
-console.log('📝 Inserting subtasks + daily logs…');
-const insertSubtask = db.prepare(`
-  INSERT INTO subtasks (task_id, name, assignee_user_id, progress, status)
-  VALUES (?, ?, ?, ?, ?)
-`);
+console.log('📝 Inserting daily logs…');
 const insertLog = db.prepare(`
-  INSERT INTO daily_logs (subtask_id, log_date, description, result, obstacle, progress, author_user_id)
+  INSERT INTO daily_logs (task_id, log_date, description, result, obstacle, progress, author_user_id)
   VALUES (?, ?, ?, ?, ?, ?, ?)
 `);
 
-const subInfo = insertSubtask.run(
-  t1Id,
-  'Khảo sát hiện trạng',
-  userIds['hong'],
-  60,
-  'doing',
-);
-const subId = Number(subInfo.lastInsertRowid);
-
 insertLog.run(
-  subId,
+  t1Id,
   '2026-01-20',
   'Khảo sát thực địa khu A, đo đạc diện tích',
   'Đã hoàn tất 80% diện tích, còn 20% vướng mặt bằng hộ dân',
@@ -260,25 +242,17 @@ insertLog.run(
   userIds['hong'],
 );
 
+
 // ============================================================================
-// 5. Task deliverables + help message demo
+// 5. Phase F: 2 deliverables + 1 help message demo đã bỏ.
+//    Thay bằng 1 blocker_note demo trên task T1 (NV viết 1 dòng vướng mắc).
 // ============================================================================
 
-console.log('📦 Inserting deliverables + help messages…');
+console.log('📝 Inserting demo blocker_note on T1…');
 db.prepare(`
-  INSERT INTO task_deliverables (task_id, type, text, completed, sort_order)
-  VALUES (?, ?, ?, ?, ?)
-`).run(t1Id, 'text', 'Báo cáo khảo sát hiện trạng', 1, 0);
-
-db.prepare(`
-  INSERT INTO task_deliverables (task_id, type, text, file_name, completed, sort_order)
-  VALUES (?, ?, ?, ?, ?, ?)
-`).run(t1Id, 'pdf', 'Bản đồ hiện trạng tỷ lệ 1/500', 'hientrang_A.pdf', 0, 1);
-
-db.prepare(`
-  INSERT INTO task_help_messages (task_id, author_user_id, body, is_resolved)
-  VALUES (?, ?, ?, ?)
-`).run(t1Id, userIds['hong'], 'Cần hỗ trợ thêm nhân lực khảo sát do 1 bạn nghỉ phép', 0);
+  UPDATE tasks SET blocker_note = ?
+  WHERE id = ?
+`).run('Cần hỗ trợ thêm nhân lực khảo sát do 1 bạn nghỉ phép', t1Id);
 
 // ============================================================================
 // 6. Audit log demo
@@ -310,10 +284,10 @@ db.prepare(`
 db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
 db.close();
 
-console.log('\n✅ Seed v3 complete!');
+console.log('\n✅ Seed v5 (text-only) complete!');
 console.log('   - 4 departments, 11 users');
 console.log('   - 1 project → 1 phase → 1 bundle → 2 tasks + 1 standalone task');
-console.log('   - 1 subtask + 1 daily log + 2 deliverables + 1 help message');
+console.log('   - 1 daily log + 1 blocker_note demo (3 bảng sub-resource cũ đã bỏ)');
 console.log('   - 2 audit log entries');
 console.log('\n   Default password:');
 console.log('   - admin / admin123');

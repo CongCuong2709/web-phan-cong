@@ -217,16 +217,9 @@ router.get('/:tier(\\d+)/:id(\\d+)', (req, res) => {
   if (!canSee(req.user, enriched)) {
     return res.status(403).json({ error: 'forbidden' });
   }
-
-  // Cho tier 4: trả kèm subtasks + notes + deliverables + help_messages
-  let subtasks = [], notes = [], deliverables = [], helpMessages = [];
-  if (Number(req.params.tier) === 4) {
-    subtasks = stmt.getSubtasksByTask.all(Number(req.params.id));
-    notes = stmt.listNotesForTask.all(Number(req.params.id));
-    deliverables = stmt.listDeliverablesByTask.all(Number(req.params.id));
-    helpMessages = stmt.listHelpMessagesByTask.all(Number(req.params.id));
-  }
-  return res.json({ item: enriched, subtasks, notes, deliverables, helpMessages });
+  // Phase F: chi tra ve item. 3 sub-resource cu (notes/deliverables/helpMessages) da
+  // xoa. daily_logs frontend lay rieng qua GET /api/daily-logs?taskId=...
+  return res.json({ item: enriched });
 });
 
 /** POST /api/tasks — Tạo mới. */
@@ -391,6 +384,7 @@ router.patch('/:tier(\\d+)/:id(\\d+)', (req, res) => {
         body.priority ? normalizePriority(body.priority) : item.priority,
         body.is_today !== undefined ? (body.is_today ? 1 : 0) : item.is_today,
         body.collapsed !== undefined ? (body.collapsed ? 1 : 0) : item.collapsed,
+        body.blocker_note ?? item.blocker_note ?? '',
         id,
       );
       updated = stmt.getTask.get(id);
@@ -438,26 +432,8 @@ router.delete('/:tier(\\d+)/:id(\\d+)', (req, res) => {
 // ============================================================================
 // Sub-resources
 // ============================================================================
-
-/** POST /api/tasks/:tier/:id/notes — Thêm note (chỉ T4). */
-router.post('/:tier(\\d+)/:id(\\d+)/notes', (req, res) => {
-  const tier = Number(req.params.tier);
-  if (tier !== 4) return res.status(400).json({ error: 'notes_only_for_task' });
-  const id = Number(req.params.id);
-  const task = stmt.getTask.get(id);
-  if (!task) return res.status(404).json({ error: 'not_found' });
-  const body = req.body || {};
-  if (!body.body?.trim()) {
-    return res.status(400).json({ error: 'body_required' });
-  }
-  let lastId = 0;
-  tx(() => {
-    const info = stmt.insertTaskNote.run(id, body.body.trim(), req.user.id);
-    lastId = Number(info.lastInsertRowid);
-    logAudit('task_note', lastId, 'create', null, { body: body.body.trim() }, req);
-  });
-  return res.status(201).json({ noteId: lastId });
-});
+// Phase F: chi con daily_logs la sub-resource 1:N cua task.
+// Da xoa: notes, deliverables, help_messages endpoints (cac bang tuong ung da drop).
 
 /** POST /api/tasks/:tier/:id/approve — Manager nghiệm thu. */
 router.post('/:tier(\\d+)/:id(\\d+)/approve', (req, res) => {
@@ -478,7 +454,7 @@ router.post('/:tier(\\d+)/:id(\\d+)/approve', (req, res) => {
     if (tier === 1) stmt.updateProject.run(item.title, item.description, item.owner_user_id, item.start_date, item.end_date, 'done', item.collapsed, id);
     else if (tier === 2) stmt.updatePhase.run(item.title, item.description, item.owner_user_id, item.start_date, item.end_date, 'done', item.management_notes, item.blocker_alert, item.collapsed, id);
     else if (tier === 3) stmt.updateBundle.run(item.title, item.description, item.owner_user_id, item.start_date, item.end_date, 'done', item.collapsed, id);
-    else stmt.updateTask.run(item.title, item.description, item.owner_user_id, item.assigned_by_user_id, item.department_code, item.start_date, item.end_date, progress, 'done', item.priority, item.is_today, item.collapsed, id);
+    else stmt.updateTask.run(item.title, item.description, item.owner_user_id, item.assigned_by_user_id, item.department_code, item.start_date, item.end_date, progress, 'done', item.priority, item.is_today, item.collapsed, item.blocker_note || '', id);
     logAudit(
       tier === 1 ? 'project' : tier === 2 ? 'phase' : tier === 3 ? 'bundle' : 'task',
       id, 'status_change', { status: item.status }, { status: 'done' }, req,
@@ -490,51 +466,37 @@ router.post('/:tier(\\d+)/:id(\\d+)/approve', (req, res) => {
   return res.json({ item: enrichWithTier(updated, tier) });
 });
 
-/** POST /api/tasks/:tier/:id/help — NV xin hỗ trợ (chỉ T4). */
-router.post('/:tier(\\d+)/:id(\\d+)/help', (req, res) => {
+/** POST /api/tasks/:tier/:id/blocker — NV ghi 1 dong `blocker_note` cho task (Phase F).
+ *  Thay the POST /help (da xoa). Frontend:
+ *    POST { taskId, note } → 200 { blocker_note }
+ *  Quyen: owner task hoac admin/manager trong phong ban.
+ */
+router.post('/:tier(\\d+)/:id(\\d+)/blocker', (req, res) => {
   const tier = Number(req.params.tier);
-  if (tier !== 4) return res.status(400).json({ error: 'help_only_for_task' });
+  if (tier !== 4) return res.status(400).json({ error: 'blocker_only_for_task' });
   const id = Number(req.params.id);
   const task = stmt.getTask.get(id);
   if (!task) return res.status(404).json({ error: 'not_found' });
   const enriched = enrichWithTier(task, tier);
-  const authz = authorize('task:request_help', req.user, { task: enriched });
+  const authz = authorize('task:edit', req.user, { task: enriched });
   if (!authz.ok) return res.status(authz.status).json(authz);
 
   const body = req.body || {};
-  if (!body.reason?.trim() || !body.message?.trim()) {
-    return res.status(400).json({ error: 'reason_message_required' });
-  }
+  const note = String(body.note ?? '').trim();
+  if (!note) return res.status(400).json({ error: 'note_required' });
+
   tx(() => {
-    // 1. Tạo help message (1:N — append)
-    const msgInfo = db.prepare(`
-      INSERT INTO task_help_messages (task_id, author_user_id, body, is_resolved)
-      VALUES (?, ?, ?, 0)
-    `).run(id, req.user.id, body.message.trim());
-    logAudit('task_help_message', Number(msgInfo.lastInsertRowid), 'create',
-      null, { reason: body.reason.trim(), message: body.message.trim() }, req);
-
-    // 2. Set status = blocked (qua state machine)
-    const tr = canTransition(task.status, 'blocked', req.user, enriched);
-    if (tr.ok) {
-      stmt.updateTask.run(
-        task.title, task.description, task.owner_user_id, task.assigned_by_user_id,
-        task.department_code, task.start_date, task.end_date,
-        task.progress, 'blocked', task.priority, task.is_today, task.collapsed,
-        id,
-      );
-      logAudit('task', id, 'status_change', { status: task.status }, { status: 'blocked' }, req);
-    }
-
-    // 3. Tạo help_request linked
-    const helpInfo = stmt.insertHelpRequest.run(
-      req.user.id, body.reason.trim(), body.message.trim(), 'pending', id,
+    stmt.updateTask.run(
+      task.title, task.description, task.owner_user_id, task.assigned_by_user_id,
+      task.department_code, task.start_date, task.end_date,
+      task.progress, task.status, task.priority, task.is_today, task.collapsed,
+      note, // ← blocker_note
+      id,
     );
-    logAudit('help_request', Number(helpInfo.lastInsertRowid), 'create',
-      null, { reason: body.reason.trim() }, req);
+    logAudit('task', id, 'update', { blocker_note: task.blocker_note || '' }, { blocker_note: note }, req);
   });
 
-  return res.status(201).json({ ok: true });
+  return res.json({ item: enrichWithTier(stmt.getTask.get(id), tier), blocker_note: note });
 });
 
 /** POST /api/tasks/:tier/:id/toggle — Owner tick. */
@@ -559,6 +521,7 @@ router.post('/:tier(\\d+)/:id(\\d+)/toggle', (req, res) => {
       task.title, task.description, task.owner_user_id, task.assigned_by_user_id,
       task.department_code, task.start_date, task.end_date,
       nextProgress, next, task.priority, task.is_today, task.collapsed,
+      task.blocker_note || '',
       id,
     );
     logAudit('task', id, 'status_change', { status: task.status }, { status: next }, req);

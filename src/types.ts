@@ -1,5 +1,10 @@
 /**
- * Core type definitions for 4-Tier Enterprise Execution System & Team Workspace
+ * Core type definitions for 4-Tier Enterprise Execution System & Team Workspace.
+ *
+ * Phase F (2026-10): simplified for text-only daily-log use case.
+ *   - Drop Deliverable, TaskNote, QuickHelpRequest interfaces (3 bảng backend đã xoá).
+ *   - Task gắn 1 cột `blockerNote` (thay task_help_messages 1:N).
+ *   - dailyLogs là sub-resource DUY NHẤT còn lại trên task.
  */
 
 export type TierLevel = 1 | 2 | 3 | 4;
@@ -45,22 +50,6 @@ export const ROLE_LABEL: Record<Role, string> = {
   employee: 'Nhân viên',
 };
 
-export interface Deliverable {
-  id: string;
-  title: string;
-  completed: boolean;
-  fileUrl?: string;
-  fileName?: string;
-}
-
-export interface Deliverable {
-  id: string;
-  title: string;
-  completed: boolean;
-  fileUrl?: string;
-  fileName?: string;
-}
-
 // ============================================================================
 // ISS-007: Unified Task type — single source of truth cho mọi loại "đầu việc".
 // Thay thế 3 bảng backend cũ (tier_items, team_lead_tasks, employee_tasks) và
@@ -80,6 +69,9 @@ export type TaskPriority = 'low' | 'normal' | 'high' | 'critical';
  *   - Tier 4: Đầu việc (Task, leaf)   — parent_id = T3.id, owned by NV
  *
  * Mọi view (Gantt 4 tầng, Giao việc nhóm, Việc của tôi) đều dùng chung 1 type này.
+ *
+ * Phase F: loại bỏ deliverable* / helpMessage* / notes* (3 bảng backend đã xoá).
+ *           Thêm `blockerNote` (1 cột text — escalation thay cho help_requests).
  */
 export interface Task {
   id: string;
@@ -119,16 +111,9 @@ export interface Task {
   bundleName?: string;
   lastUpdated?: string;
 
-  // Inline deliverable (from team_lead_tasks)
-  deliverableType?: 'pdf' | 'spreadsheet' | 'text' | 'photo';
-  deliverableText?: string;
-  deliverableCompleted?: boolean;
-  fileName?: string;
-
-  // Inline help message (from team_lead_tasks)
-  helpMessageAuthor?: string;
-  helpMessageBody?: string;
-  helpMessageTimeago?: string;
+  // Phase F: NV ghi 1 dòng "đang vướng ở đâu / cần hỗ trợ gì".
+  // Manager xem khi mở task (thay cho help_requests 1:N cũ).
+  blockerNote?: string;
 
   // Management
   managementNotes: string;
@@ -139,20 +124,6 @@ export interface Task {
     startWeek: number;
     endWeek: number;
   };
-
-  // Notes (loaded với `GET /api/tasks/:id`)
-  notesCount?: number;
-  notes?: TaskNote[];
-}
-
-export interface TaskNote {
-  id: string;
-  taskId: string;
-  body: string;
-  authorUserId: string;
-  authorUsername?: string;
-  authorFullname?: string;
-  createdAt: string;
 }
 
 /**
@@ -161,10 +132,6 @@ export interface TaskNote {
  * Giữ lại để backward-compat với components đang dùng các field display như
  * `tierName`, `tierBadge`, `owner` (object thay vì id). Transform runtime ở
  * transforms.ts sẽ bổ sung các field display.
- *
- * Status / Priority giữ lại Tiếng Việt (UI Gantt) — để khớp với code đang
- * so sánh `v.status === 'Đã xong'` ở components. Transform sẽ convert từ
- * enum DB sang Tiếng Việt.
  */
 export interface TierItem extends Omit<Task, 'status' | 'priority' | 'ownerUserId' | 'ownerFullname' | 'ownerUsername'> {
   tierName: string;
@@ -177,29 +144,27 @@ export interface TierItem extends Omit<Task, 'status' | 'priority' | 'ownerUserI
     avatar?: string;
   };
   // Status / Priority giữ lại dạng Tiếng Việt để UI không phải refactor.
-  // transforms.ts convert enum DB → Tiếng Việt khi parse response.
   status: 'Đang chạy' | 'Sắp xong' | 'Đã xong' | 'Điểm nghẽn' | 'Đang làm' | 'Đang nghẽn' | 'Lên lịch' | 'Chuẩn bị';
   priority: 'Cao (Critical Path)' | 'Trung bình' | 'Thấp';
   statusBadgeColor?: string;
-  deliverables: Deliverable[];
   ownerUsername?: string;
   ownerUserId?: string;
   ownerFullname?: string;
+  // Phase F: bỏ `deliverables` (interface Deliverable đã xoá, bảng task_deliverables đã xoá).
+  // Tiến độ task giờ tính từ MAX(daily_logs.progress) thay vì deliverables hoàn thành.
 }
 
 /**
  * TeamLeadTask — DEPRECATED. Use `Task` instead (ISS-007).
  * Giữ lại để GiaoViecNhomView không phải refactor toàn bộ.
- * Standalone interface (KHÔNG extends Task) để tránh cascading type errors.
+ *
+ * Phase F: loại bỏ deliverableType/text/fileName/helpMessage (3 bảng backend đã xoá).
  */
 export interface TeamLeadTask {
   id: string;
   code: string;
   title: string;
   category: string;
-  deliverableType: 'pdf' | 'spreadsheet' | 'text' | 'photo';
-  deliverableText: string;
-  fileName?: string;
   ownerName: string;
   ownerAvatar?: string;
   ownerUsername?: string;
@@ -208,18 +173,19 @@ export interface TeamLeadTask {
   deadline?: string;
   status: 'pending_approval' | 'need_help' | 'in_progress' | 'done';
   priority?: 'Cao' | 'Thường';
-  helpMessage?: {
-    author: string;
-    message: string;
-    timeAgo: string;
-  };
+  /** Phase F: 1 dòng blocker do NV viết (thay helpMessage 1:N cũ). */
+  blockerNote?: string;
+  /** Hiển thị rollup progress mới nhất (lấy từ daily_logs.progress). */
   progressText?: string;
 }
 
 /**
  * EmployeeTask — DEPRECATED. Use `Task` instead (ISS-007).
  * Giữ lại để ViecCuaToiView không phải refactor toàn bộ.
- * Standalone interface.
+ *
+ * Phase F: loại bỏ currentDeliverable (chuyển sang daily_log.result),
+ *          notesCount/notes (bảng task_notes đã xoá, dùng daily_log.description).
+ *          Thêm blockerNote.
  */
 export interface EmployeeTask {
   id: string;
@@ -227,6 +193,7 @@ export interface EmployeeTask {
   bundleName: string;
   title: string;
   description: string;
+  /** Phase F: text kết quả bàn giao inline (giờ sync với daily_log.result hôm nay). */
   currentDeliverable: string;
   lastUpdated: string;
   deadline: string;
@@ -237,10 +204,12 @@ export interface EmployeeTask {
     role: string;
     avatar: string;
   };
-  notesCount: number;
-  notes?: string[];
+  /** Username of the employee that owns this task (primary key for "Việc của tôi"). */
   ownerUsername?: string;
+  /** Department for manager cross-check. */
   department?: Department;
+  /** Phase F: NV viết "đang vướng ở đâu" → manager xem. */
+  blockerNote?: string;
 }
 
 export interface TeamMember {
@@ -261,97 +230,21 @@ export interface TeamMember {
   username?: string;
 }
 
-export interface TeamLeadTask {
-  id: string;
-  code: string;
-  title: string;
-  category: string;
-  deliverableType: 'pdf' | 'spreadsheet' | 'text' | 'photo';
-  deliverableText: string;
-  fileName?: string;
-  ownerName: string;
-  ownerAvatar?: string;
-  /** Username that owns this team task (employee). */
-  ownerUsername?: string;
-  /** Department the task is rolled up to. */
-  department?: Department;
-  submittedAt: string;
-  deadline?: string;
-  status: 'pending_approval' | 'need_help' | 'in_progress' | 'done';
-  priority?: 'Cao' | 'Thường';
-  helpMessage?: {
-    author: string;
-    message: string;
-    timeAgo: string;
-  };
-  progressText?: string;
-}
-
-export interface EmployeeTask {
-  id: string;
-  code: string;
-  bundleName: string;
-  title: string;
-  description: string;
-  currentDeliverable: string;
-  lastUpdated: string;
-  deadline: string;
-  isToday?: boolean;
-  status: 'doing' | 'done' | 'pending';
-  manager: {
-    name: string;
-    role: string;
-    avatar: string;
-  };
-  notesCount: number;
-  notes?: string[];
-  /** Username of the employee that owns this task (primary key for "Việc của tôi"). */
-  ownerUsername?: string;
-  /** Department for manager cross-check. */
-  department?: Department;
-}
-
-export interface QuickHelpRequest {
-  id: string;
-  timestamp: string;
-  sender: string;
-  reason: string;
-  message: string;
-  status: 'pending' | 'resolved';
-}
-
 /**
- * Construction-domain extensions: each T4 task can own several SubTasks
- * (T4.5), and each SubTask can have several Daily Logs (Nhật ký thi công).
+ * Construction-domain extensions: each T4 task can have several Daily Logs
+ * (Nhật ký thi công) — sub-resource 1:N duy nhất còn lại.
+ *
+ * Phase E: bỏ SubTask tier. Task là leaf (T4 nhỏ nhất).
+ * Phase F: 1 log/(task,ngày) — UPSERT ở routes/dailyLogs.js.
  */
-export type SubtaskStatus = 'not_started' | 'in_progress' | 'completed' | 'blocked' | 'review';
-export type TaskPriorityLevel = 'low' | 'medium' | 'high' | 'critical';
-
-export interface SubTask {
-  id: string;
-  /** Parent T4 TierItem.id. */
-  taskId: string;
-  name: string;
-  description?: string;
-  assigneeUsername?: string;
-  assigneeName?: string;
-  assigneeRole?: string;
-  assigneeAvatar?: string;
-  /** Display strings in dd/MM format, e.g. "12/10". */
-  startDate: string;
-  endDate: string;
-  progress: number;
-  status: SubtaskStatus;
-  priority: TaskPriorityLevel;
-  results?: string;
-  notes?: string;
-}
-
 export interface DailyLog {
   id: string;
-  subtaskId: string;
+  /** Parent T4 TierItem.id (numeric). */
+  taskId: string;
   /** Display string for the day (ISO). */
   logDate: string;
+  /** Thời điểm tạo log (backend trả ISO string). Dùng để sắp xếp nhiều log cùng ngày. */
+  createdAt?: string;
   description: string;
   result?: string;
   obstacle?: string;
@@ -364,7 +257,7 @@ export interface DailyLog {
 
 export interface HistoryEntry {
   id: string;
-  entityType: 'project' | 'phase' | 'bundle' | 'task' | 'subtask';
+  entityType: 'project' | 'phase' | 'bundle' | 'task' | 'daily_log';
   entityId: string;
   action: string;
   username: string;

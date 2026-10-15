@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   TierItem,
   TeamMember,
@@ -6,6 +6,7 @@ import {
   DailyLog,
   DEPARTMENT_LABEL,
   Department,
+  User,
 } from '../types';
 
 interface BaoCaoTongQuanViewProps {
@@ -14,6 +15,8 @@ interface BaoCaoTongQuanViewProps {
   teamTasks: TeamLeadTask[];
   /** Nhật ký thi công (DailyLog) — dùng để tóm tắt hoạt động nhân viên trong ngày. */
   dailyLogs?: DailyLog[];
+  /** User đang đăng nhập — dùng để filter báo cáo theo phòng ban khi là manager. */
+  currentUser?: User | null;
   onExport: () => void;
 }
 
@@ -22,6 +25,7 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
   teamMembers,
   teamTasks,
   dailyLogs = [],
+  currentUser,
   onExport,
 }) => {
   const completedTierItems = tierItems.filter((i) => i.progress === 100).length;
@@ -59,8 +63,30 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
   const firstBlocker = blockedItems[0];
 
   // === Hoạt động nhân viên hôm nay (Daily Logs) ===
-  // Lọc logs theo ngày hiện tại, group theo phòng ban, tóm tắt per nhân viên.
-  const today = now.toISOString().slice(0, 10);
+  // Lọc logs theo ngày hiện tại (local date, không UTC), filter theo phòng ban
+  // của currentUser nếu là manager, group theo phòng ban, tóm tắt per nhân viên.
+  //
+  // Fix bug cũ: `now.toISOString().slice(0, 10)` trả về ngày UTC, không phải
+  // local. Với user GMT+7, trước 7h sáng local, `today` là NGÀY HÔM QUA theo
+  // UTC → bỏ sót log hôm nay / hiển thị nhầm log hôm qua.
+  const today = (() => {
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  })();
+
+  // Manager: chỉ thấy log của phòng mình quản lý (departments của user).
+  // Admin / director: thấy tất cả.
+  const scopeDepts: Department[] | null = useMemo(() => {
+    if (!currentUser) return null;
+    if (currentUser.role === 'manager') {
+      return currentUser.departments ?? [];
+    }
+    return null; // admin/director xem toàn công ty
+  }, [currentUser]);
+
   const logsToday = useMemo(
     () => dailyLogs.filter((l) => l.logDate === today),
     [dailyLogs, today],
@@ -83,6 +109,7 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
     logCount: number;
     avgProgress: number;
     hasObstacle: boolean;
+    logs: DailyLog[];
   };
 
   const todaySummaries = useMemo<MemberDailySummary[]>(() => {
@@ -91,22 +118,32 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
       const key = log.username.toLowerCase();
       const tm = memberByUsername.get(key);
       const dept: Department | 'Chưa rõ' = tm?.department ?? 'Chưa rõ';
+      // Filter theo phòng ban nếu là manager: bỏ log không thuộc dept quản lý.
+      if (scopeDepts && dept !== 'Chưa rõ' && !scopeDepts.includes(dept)) {
+        continue;
+      }
       const existing = acc.get(key);
       if (existing) {
         const prevTotal = existing.avgProgress * (existing.logCount - 1);
         existing.avgProgress = Math.round((prevTotal + log.progress) / existing.logCount);
         existing.logCount += 1;
+        existing.logs.push(log);
         if (log.obstacle && log.obstacle.trim()) existing.hasObstacle = true;
       } else {
+        // Fallback avatar: backend /api/daily-logs không JOIN users.avatar_url
+        // nên `log.userAvatar` thường rỗng. Lấy từ teamMembers (đã fetch từ
+        // /api/users) — avatar của user tương ứng theo username.
+        const avatarFallback = tm?.avatar || log.userAvatar || '';
         acc.set(key, {
           username: log.username,
           userName: log.userName,
           role: log.userRole,
-          avatar: log.userAvatar,
+          avatar: avatarFallback,
           department: dept,
           logCount: 1,
           avgProgress: log.progress,
           hasObstacle: !!(log.obstacle && log.obstacle.trim()),
+          logs: [log],
         });
       }
     }
@@ -115,7 +152,7 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
       if (a.hasObstacle !== b.hasObstacle) return a.hasObstacle ? -1 : 1;
       return b.logCount - a.logCount;
     });
-  }, [logsToday, memberByUsername]);
+  }, [logsToday, memberByUsername, scopeDepts]);
 
   const summariesByDepartment = useMemo(() => {
     const groups = new Map<Department | 'Chưa rõ', MemberDailySummary[]>();
@@ -135,6 +172,11 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
     }),
     [logsToday, todaySummaries],
   );
+
+  // Click-to-expand một nhân viên để xem chi tiết các log hôm nay.
+  // Trước đây UI chỉ hiển thị số liệu tóm tắt, user không xem được nội dung log
+  // → phải mở từng task chi tiết mới biết nhân viên ghi gì → UX gap.
+  const [expandedUsername, setExpandedUsername] = useState<string | null>(null);
 
   return (
     <div className="flex flex-col w-full">
@@ -402,13 +444,21 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
           </div>
 
           {todayStats.totalLogs === 0 ? (
-            <div className="flex items-center gap-2.5 p-4 rounded-lg bg-[#eff4ff]/40 border border-dashed border-[#c3c6d7]">
-              <span className="material-symbols-outlined text-[20px] text-[#565e74]">
+            <div className="flex items-center gap-3 p-4 rounded-lg bg-[#eff4ff]/40 border border-dashed border-[#c3c6d7]">
+              <span className="material-symbols-outlined text-[22px] text-[#565e74]">
                 inbox
               </span>
-              <p className="text-[13px] text-[#565e74]">
-                Chưa có nhân viên nào ghi nhật ký hôm nay ({today}).
-              </p>
+              <div className="flex-1">
+                <p className="text-[13px] font-semibold text-[#434655]">
+                  Chưa có nhân viên nào ghi nhật ký hôm nay ({today}).
+                </p>
+                <p className="text-[11px] text-[#565e74] mt-0.5">
+                  Nhật ký được tạo trong mục "Ghi nhật ký thi công" của từng đầu việc trên tab
+                  <span className="font-mono mx-1">Giao việc nhóm</span>
+                  / <span className="font-mono">Việc của tôi</span>. Đây là bằng chứng thi công
+                  thực tế theo ngày, dùng để đối chiếu tiến độ khi review.
+                </p>
+              </div>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -426,68 +476,149 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
                     </span>
                   </div>
                   <ul className="divide-y divide-[#eff4ff]">
-                    {members.map((m) => (
-                      <li
-                        key={m.username}
-                        className="flex items-start gap-3 px-3.5 py-2.5 hover:bg-white transition-colors"
-                      >
-                        <div className="w-9 h-9 rounded-full bg-[#eff4ff] flex items-center justify-center text-[#004ac6] font-bold text-[13px] shrink-0">
-                          {m.avatar ? (
-                            <img
-                              src={m.avatar}
-                              alt={m.userName}
-                              className="w-9 h-9 rounded-full object-cover"
-                            />
-                          ) : (
-                            m.userName.charAt(0).toUpperCase()
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-[13px] font-semibold text-[#0b1c30] truncate">
-                              {m.userName}
-                            </span>
-                            <span className="font-mono text-[10px] text-[#565e74]">
-                              @{m.username}
-                            </span>
-                            {m.hasObstacle && (
-                              <span
-                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#ffdad6] text-[#ba1a1a] text-[10px] font-bold"
-                                title="Có vướng mắc được ghi nhận hôm nay"
-                              >
-                                <span className="material-symbols-outlined text-[11px]">
-                                  warning
+                    {members.map((m) => {
+                      const isOpen = expandedUsername === m.username;
+                      // Sắp xếp log mới nhất trước cho dễ đọc
+                      const logsAsc = [...m.logs].sort((a, b) =>
+                        (b.createdAt || '').localeCompare(a.createdAt || ''),
+                      );
+                      return (
+                        <li key={m.username} className="hover:bg-white transition-colors">
+                          {/* Click vào header để expand/collapse danh sách log */}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedUsername(isOpen ? null : m.username)
+                            }
+                            className="w-full text-left flex items-start gap-3 px-3.5 py-2.5"
+                            aria-expanded={isOpen}
+                          >
+                            <div className="w-9 h-9 rounded-full bg-[#eff4ff] flex items-center justify-center text-[#004ac6] font-bold text-[13px] shrink-0 overflow-hidden">
+                              {m.avatar ? (
+                                <img
+                                  src={m.avatar}
+                                  alt={m.userName}
+                                  className="w-9 h-9 rounded-full object-cover"
+                                />
+                              ) : (
+                                m.userName.charAt(0).toUpperCase()
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-[13px] font-semibold text-[#0b1c30] truncate">
+                                  {m.userName}
                                 </span>
-                                Vướng mắc
-                              </span>
-                            )}
-                          </div>
-                          {m.role && (
-                            <p className="text-[11px] text-[#565e74] truncate mt-0.5">
-                              {m.role}
-                            </p>
+                                <span className="font-mono text-[10px] text-[#565e74]">
+                                  @{m.username}
+                                </span>
+                                {m.hasObstacle && (
+                                  <span
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#ffdad6] text-[#ba1a1a] text-[10px] font-bold"
+                                    title="Có vướng mắc được ghi nhận hôm nay"
+                                  >
+                                    <span className="material-symbols-outlined text-[11px]">
+                                      warning
+                                    </span>
+                                    Vướng mắc
+                                  </span>
+                                )}
+                              </div>
+                              {m.role && (
+                                <p className="text-[11px] text-[#565e74] truncate mt-0.5">
+                                  {m.role}
+                                </p>
+                              )}
+                              <div className="flex items-center gap-3 mt-1 text-[11px] text-[#434655]">
+                                <span className="inline-flex items-center gap-1">
+                                  <span className="material-symbols-outlined text-[12px] text-[#004ac6]">
+                                    description
+                                  </span>
+                                  <span className="font-semibold">{m.logCount}</span>
+                                  <span className="text-[#565e74]">nhật ký</span>
+                                </span>
+                                <span className="inline-flex items-center gap-1">
+                                  <span className="material-symbols-outlined text-[12px] text-[#006243]">
+                                    trending_up
+                                  </span>
+                                  <span className="font-semibold">TB</span>
+                                  <span className="font-mono font-bold text-[#006243]">
+                                    {m.avgProgress}%
+                                  </span>
+                                </span>
+                              </div>
+                            </div>
+                            <span
+                              className={`material-symbols-outlined text-[18px] text-[#565e74] shrink-0 mt-2 transition-transform ${
+                                isOpen ? 'rotate-180' : ''
+                              }`}
+                              aria-hidden="true"
+                            >
+                              expand_more
+                            </span>
+                          </button>
+
+                          {/* Expanded: danh sách log chi tiết trong ngày */}
+                          {isOpen && (
+                            <div className="px-3.5 pb-3 pt-1 space-y-2 bg-[#f8f9ff]/60">
+                              {logsAsc.length === 0 ? (
+                                <p className="text-[11px] text-[#565e74] italic">
+                                  Không có nhật ký chi tiết.
+                                </p>
+                              ) : (
+                                logsAsc.map((log) => (
+                                  <div
+                                    key={log.id}
+                                    className="border-l-2 border-[#c3c6d7] pl-2.5 py-1.5 bg-white rounded-r"
+                                  >
+                                    <div className="flex items-center gap-2 text-[10px] text-[#565e74] mb-1">
+                                      <span className="font-mono">#{log.id}</span>
+                                      <span>·</span>
+                                      <span>
+                                        tiến độ{' '}
+                                        <span className="font-bold text-[#006243]">
+                                          {log.progress}%
+                                        </span>
+                                      </span>
+                                      {log.obstacle && log.obstacle.trim() && (
+                                        <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-[#ffdad6] text-[#ba1a1a] font-bold">
+                                          <span className="material-symbols-outlined text-[10px]">
+                                            warning
+                                          </span>
+                                          vướng mắc
+                                        </span>
+                                      )}
+                                    </div>
+                                    {log.description && (
+                                      <p className="text-[12px] text-[#0b1c30] leading-relaxed">
+                                        <span className="text-[#565e74] font-semibold">
+                                          Việc đã làm:
+                                        </span>{' '}
+                                        {log.description}
+                                      </p>
+                                    )}
+                                    {log.result && (
+                                      <p className="text-[12px] text-[#0b1c30] leading-relaxed mt-0.5">
+                                        <span className="text-[#565e74] font-semibold">
+                                          Kết quả:
+                                        </span>{' '}
+                                        {log.result}
+                                      </p>
+                                    )}
+                                    {log.obstacle && log.obstacle.trim() && (
+                                      <p className="text-[12px] text-[#ba1a1a] leading-relaxed mt-0.5">
+                                        <span className="font-semibold">Vướng mắc:</span>{' '}
+                                        {log.obstacle}
+                                      </p>
+                                    )}
+                                  </div>
+                                ))
+                              )}
+                            </div>
                           )}
-                          <div className="flex items-center gap-3 mt-1 text-[11px] text-[#434655]">
-                            <span className="inline-flex items-center gap-1">
-                              <span className="material-symbols-outlined text-[12px] text-[#004ac6]">
-                                description
-                              </span>
-                              <span className="font-semibold">{m.logCount}</span>
-                              <span className="text-[#565e74]">nhật ký</span>
-                            </span>
-                            <span className="inline-flex items-center gap-1">
-                              <span className="material-symbols-outlined text-[12px] text-[#006243]">
-                                trending_up
-                              </span>
-                              <span className="font-semibold">TB</span>
-                              <span className="font-mono font-bold text-[#006243]">
-                                {m.avgProgress}%
-                              </span>
-                            </span>
-                          </div>
-                        </div>
-                      </li>
-                    ))}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               ))}
