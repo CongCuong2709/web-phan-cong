@@ -215,8 +215,10 @@ export function apiToTeamLeadTask(api: any): TeamLeadTask {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function apiToEmployeeTask(api: any): EmployeeTask {
   // ISS-007: backend giờ là unified Task. Map status enum sang EmployeeTask enum.
-  // Phase F: notesCount/notes đã bỏ (task_notes bảng xoá). currentDeliverable giờ
-  // lấy từ daily_log.result mới nhất (sẽ fill sau qua useEffect) hoặc ''.
+  // Phase F: notesCount/notes đã bỏ (task_notes bảng xoá). currentDeliverable là
+  // trường DERIVED — không có sẵn trên /api/tasks; App.tsx sẽ merge từ
+  // daily_log.result của HÔM NAY sau khi fetch xong Promise.all ở useEffect login.
+  // Hàm này chỉ trả về baseline (''). Đừng tự fill ở đây — sẽ tạo duplicate logic.
   const statusMap: Record<string, EmployeeTask['status']> = {
     'pending': 'pending',
     'doing': 'doing',

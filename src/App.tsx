@@ -115,30 +115,67 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
       // cá nhân (team lead / employee view) — tier 1/2/3 (dự án / giai đoạn / hạng mục)
       // chỉ hiển thị trên cây Gantt. Nếu không filter, manager xem "Việc của tôi"
       // sẽ thấy cả project/phase/bundle (vì seed cho manager làm owner) → bug.
-      const tasksRes = await api.listTasks();
-      if (!cancelled && tasksRes.ok) {
+      //
+      // Phase F: tasks.currentDeliverable đã bỏ (chuyển sang daily_logs.result).
+      // Phải chạy Promise.all với /api/daily-logs để merge log hôm nay vào
+      // employeeTasks ngay từ đầu — nếu không, sau reload Status Strip sẽ
+      // hiển thị "Chưa nộp" dù DB đã có daily_log.result thật (bug trước đây).
+      const [tasksRes, logRes, memRes, histRes] = await Promise.all([
+        api.listTasks(),
+        api.listDailyLogs(),
+        api.listTeamMembers(),
+        api.listHistory(50),
+      ]);
+      if (cancelled) return;
+
+      // Build lookup: taskNumId → daily_log của HÔM NAY (mới nhất trong ngày).
+      const today = new Date().toISOString().slice(0, 10);
+      const todayLogByTaskNum: Record<number, ReturnType<typeof apiToDailyLog>> = {};
+      if (logRes.ok) {
+        for (const raw of logRes.data.items) {
+          const log = apiToDailyLog(raw);
+          if (log.logDate !== today) continue;
+          const numId = Number(log.taskId);
+          if (!Number.isFinite(numId)) continue;
+          if (todayLogByTaskNum[numId] !== undefined) continue;
+          todayLogByTaskNum[numId] = log;
+        }
+      }
+
+      if (tasksRes.ok) {
         const items = tasksRes.data.items;
         const tier4Only = items.filter((it) => it.tier === 4);
         setTierItems(items.map(apiToTierItem));
         setTeamTasks(tier4Only.map(apiToTeamLeadTask));
-        setEmployeeTasks(tier4Only.map(apiToEmployeeTask));
+        // Merge log hôm nay vào currentDeliverable / description baseline trước
+        // khi set state — đảm bảo render đầu đã có data, không flicker.
+        setEmployeeTasks(
+          tier4Only.map((api: any) => {
+            const base = apiToEmployeeTask(api);
+            const log: ReturnType<typeof apiToDailyLog> | undefined =
+              todayLogByTaskNum[api.id];
+            if (!log) return base;
+            return {
+              ...base,
+              currentDeliverable: log.result ?? '',
+              // desc form-prefill: nếu user đã ghi log hôm nay thì dùng description
+              // của log đó (mới nhất) thay vì description gốc của task.
+              description: log.description?.trim() ? log.description : base.description,
+              lastUpdated: 'Hôm nay',
+            };
+          }),
+        );
       }
 
-      // Team members (derive từ backend users + tasks)
-      const memRes = await api.listTeamMembers();
-      if (!cancelled && memRes.ok) {
-        setTeamMembers(memRes.data.members.map(apiToTeamMember));
-      }
-
-      // Daily logs (cho DetailsDrawer + BC tong quan)
-      const logRes = await api.listDailyLogs();
-      if (!cancelled && logRes.ok) {
+      if (logRes.ok) {
         setDailyLogs(logRes.data.items.map(apiToDailyLog));
       }
 
-      // History (global recent)
-      const histRes = await api.listHistory(50);
-      if (!cancelled && histRes.ok) {
+      if (memRes.ok) {
+        setTeamMembers(memRes.data.members.map(apiToTeamMember));
+      }
+
+      if (histRes.ok) {
         setHistory(histRes.data.items.map(apiToHistoryEntry));
       }
     })();
@@ -723,6 +760,7 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
             <ViecCuaToiView
               currentUser={user}
               tasks={visibleEmployeeTasks}
+              dailyLogs={dailyLogs}
               onToggleDone={handleToggleEmployeeTask}
               onStartTask={handleStartEmployeeTask}
               onAddDailyLog={(taskId, desc, result, obstacle, progress) => {
@@ -735,8 +773,19 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
                 }
                 // Cập nhật local state trước (optimistic). NV sẽ thấy ngay
                 // task.currentDeliverable = result mà không cần reload.
+                // Sync blockerNote từ obstacle để status "Có vướng mắc" phản
+                // ánh đúng ý NV sau khi ghi nhật ký inline.
                 setEmployeeTasks((prev) =>
-                  prev.map((t) => (t.id === taskId ? { ...t, currentDeliverable: result || '', lastUpdated: 'Vừa ghi nhật ký' } : t))
+                  prev.map((t) =>
+                    t.id === taskId
+                      ? {
+                          ...t,
+                          currentDeliverable: result || '',
+                          blockerNote: obstacle ? obstacle.trim() : t.blockerNote,
+                          lastUpdated: 'Vừa ghi nhật ký',
+                        }
+                      : t,
+                  )
                 );
                 setDailyLogs((prev) => [
                   {
@@ -769,7 +818,80 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
                 }
                 showToast('Đã ghi nhật ký thi công mới.');
               }}
-              onSetBlocker={handleSetBlocker}
+              onSaveAllLogs={(entries) => {
+                // Batch save — 1 cú click lưu N task. Tối ưu N+1 network call.
+                // Mỗi entry qua cùng pipeline (canAddDailyLog guard + optimistic
+                // update + audit + fireAndForget API) nhưng gom toast thành summary.
+                let saved = 0;
+                let skipped = 0;
+                for (const e of entries) {
+                  const finalProgress = e.progress ?? 0;
+                  const task = tierItems.find((t) => t.id === e.taskId);
+                  if (!task) {
+                    skipped++;
+                    continue;
+                  }
+                  if (!canAddDailyLog(user, task)) {
+                    skipped++;
+                    continue;
+                  }
+                  setEmployeeTasks((prev) =>
+                    prev.map((t) =>
+                      t.id === e.taskId
+                        ? {
+                            ...t,
+                            currentDeliverable: e.result || '',
+                            blockerNote: e.obstacle ? e.obstacle.trim() : t.blockerNote,
+                            lastUpdated: 'Vừa ghi nhật ký',
+                          }
+                        : t,
+                    ),
+                  );
+                  setDailyLogs((prev) => [
+                    {
+                      id: uid('log'),
+                      taskId: e.taskId,
+                      logDate: new Date().toISOString().slice(0, 10),
+                      description: e.desc,
+                      result: e.result,
+                      obstacle: e.obstacle,
+                      progress: finalProgress,
+                      username: user.username,
+                      userName: user.fullname,
+                      userRole: `${ROLE_LABEL[user.role]} · ${user.departments[0] ?? ''}`,
+                    },
+                    ...prev,
+                  ]);
+                  logHistory(
+                    'daily_log',
+                    e.taskId,
+                    `Ghi nhật ký thi công (+${finalProgress}%)`,
+                  );
+                  const taskNumId = extractBackendId(e.taskId);
+                  if (Number.isFinite(taskNumId)) {
+                    fireAndForget(
+                      api.addDailyLog({
+                        taskId: taskNumId,
+                        description: e.desc,
+                        result: e.result,
+                        obstacle: e.obstacle,
+                        progress: finalProgress,
+                      }),
+                      `addDailyLog#${e.taskId}`,
+                    );
+                  }
+                  saved++;
+                }
+                if (saved > 0) {
+                  const msg =
+                    skipped > 0
+                      ? `Đã lưu ${saved} nhật ký (bỏ qua ${skipped} task không có quyền).`
+                      : `Đã lưu ${saved} nhật ký.`;
+                  showToast(msg);
+                } else if (skipped > 0) {
+                  showToast('Không có task nào được lưu (thiếu quyền).', 'warning');
+                }
+              }}
               onOpenNewPersonalTaskModal={() => setIsNewPersonalTaskOpen(true)}
             />
           ))}
