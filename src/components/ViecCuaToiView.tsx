@@ -42,6 +42,10 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
    * Draft nhật ký theo taskId. User điền nhiều row cùng lúc, 1 click Save All.
    * Fallback về task.description / currentDeliverable / blockerNote khi user
    * chưa gõ (baseline từ daily_log hôm nay đã merge ở App.tsx).
+   *
+   * Fix #1: `progress` baseline = task.progress (đã merge từ daily_log.progress
+   * ở App.tsx), KHÔNG dùng 0 cứng. Nếu không, Save All sẽ reset progress về 0%
+   * khi user chỉ sửa mô tả/kết quả mà quên không kéo slider.
    */
   interface LogDraft {
     desc: string;
@@ -59,29 +63,64 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
   // Filter tasks
   const filteredTasks = tasks.filter((t) => {
     if (filter === 'all') return true;
-    if (filter === 'today') return t.isToday;
+    if (filter === 'today') return t.isToday && t.status !== 'done';
     if (filter === 'doing') return t.status === 'doing';
     if (filter === 'done') return t.status === 'done';
     return true;
   });
 
+  // Fix #4: Sort filteredTasks theo priority trước, sau đó theo deadline gần nhất,
+  // task done đẩy xuống cuối (Fix #3). Memoize để khỏi sort lại mỗi render.
+  const sortedTasks = useMemo(() => {
+    const statusRank: Record<EmployeeTask['status'], number> = {
+      doing: 0,
+      pending: 1,
+      done: 2,
+    };
+    return [...filteredTasks].sort((a, b) => {
+      // 1. Task done luôn cuối cùng
+      const sa = statusRank[a.status];
+      const sb = statusRank[b.status];
+      if (sa !== sb) return sa - sb;
+
+      // 2. Trong cùng nhóm status: isToday ưu tiên trước
+      if (Boolean(a.isToday) !== Boolean(b.isToday)) {
+        return a.isToday ? -1 : 1;
+      }
+
+      // 3. Cuối cùng: deadline gần nhất trước
+      if (a.deadline && b.deadline && a.deadline !== b.deadline) {
+        return a.deadline < b.deadline ? -1 : 1;
+      }
+      return 0;
+    });
+  }, [filteredTasks]);
+
   const doingCount = tasks.filter((t) => t.status === 'doing').length;
   const pendingCount = tasks.filter((t) => t.status === 'pending').length;
   const todoCount = pendingCount + doingCount; // Tổng việc CHƯA xong (Fix UI-01)
-  const todayCount = tasks.filter((t) => t.isToday).length;
+  // Fix #2: todayCount loại task đã done — chỉ đếm việc THẬT SỰ cần xong hôm nay.
+  const todayCount = tasks.filter((t) => t.isToday && t.status !== 'done').length;
   const doneCount = tasks.filter((t) => t.status === 'done').length;
   const overdueCount = tasks.filter((t) => t.isToday && t.status !== 'done').length;
 
-  // Dynamic metric 2 sub-text: first urgent task
-  const firstTodayPending = tasks.find((t) => t.isToday && t.status !== 'done');
+  // Fix #2: firstTodayPending sort theo deadline (gần nhất trước) để hiển thị
+  // task cận deadline hơn thay vì task bất kỳ trong mảng.
+  const firstTodayPending = useMemo(() => {
+    const candidates = tasks.filter((t) => t.isToday && t.status !== 'done');
+    if (candidates.length === 0) return undefined;
+    return [...candidates].sort((a, b) => {
+      if (a.deadline && b.deadline && a.deadline !== b.deadline) {
+        return a.deadline < b.deadline ? -1 : 1;
+      }
+      return 0;
+    })[0];
+  }, [tasks]);
 
   const isManager = currentUser.role === 'manager' || currentUser.role === 'director';
 
-  // Use the manager of the first task as the recipient label
-  const managerLabel = isManager ? 'Ban Điều hành' : (tasks[0]?.manager?.name ?? 'Trưởng phòng phụ trách');
-
   /** Lấy draft cho 1 task. Fallback về dữ liệu baseline từ task
-   *  (description / currentDeliverable / blockerNote) khi user chưa gõ. */
+   *  (description / currentDeliverable / blockerNote / progress) khi user chưa gõ. */
   const getDraft = (task: EmployeeTask): LogDraft => {
     const cached = logDrafts[task.id];
     if (cached) return cached;
@@ -89,7 +128,9 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
       desc: task.description || '',
       result: task.currentDeliverable || '',
       obstacle: task.blockerNote || '',
-      progress: 0,
+      // Fix #1: lấy progress từ task (đã merge từ daily_log.progress ở App.tsx).
+      // Fallback 0 chỉ áp dụng nếu task mới hoàn toàn chưa có log nào.
+      progress: task.progress ?? 0,
     };
   };
 
@@ -122,17 +163,25 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
   /** True khi draft khác baseline → user đang soạn chưa lưu. */
   const isDraftDirty = (task: EmployeeTask): boolean => {
     const d = getDraft(task);
+    const baselineProgress = task.progress ?? 0;
     return (
       d.desc !== (task.description || '') ||
       d.result !== (task.currentDeliverable || '') ||
       d.obstacle !== (task.blockerNote || '') ||
-      d.progress !== 0
+      d.progress !== baselineProgress
     );
   };
 
   /** Trạng thái real-time hiển thị trên row. */
-  type LogStatus = 'has_blocker' | 'drafting' | 'submitted' | 'not_submitted';
+  type LogStatus = 'has_blocker' | 'drafting' | 'submitted' | 'not_submitted' | 'resolved';
   const getLogStatus = (task: EmployeeTask): LogStatus => {
+    // Fix #8: Nếu user vừa save log hôm nay với obstacle rỗng trong khi task.blockerNote
+    // vẫn có nội dung (NV tự báo hết vướng, chờ manager xác nhận) → hiển thị 'resolved'
+    // thay vì 'has_blocker' để giảm lo lắng cho NV. Manager vẫn thấy blockerNote gốc.
+    const hasBlockerInDraft = logDrafts[task.id]?.obstacle.trim();
+    if (task.blockerNote && logDrafts[task.id] !== undefined && !hasBlockerInDraft) {
+      return 'resolved';
+    }
     if (task.blockerNote) return 'has_blocker';
     if (isDraftDirty(task)) return 'drafting';
     if (task.currentDeliverable) return 'submitted';
@@ -145,13 +194,17 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
   };
 
   /** Build map taskNumId → lịch sử daily_log N ngày gần nhất (mặc định 7),
-   *  đã loại log hôm nay (vì hôm nay đã có draft inline). Memoize theo dailyLogs. */
+   *  đã loại log hôm nay (vì hôm nay đã có draft inline) VÀ chỉ lấy log
+   *  của currentUser (Fix #5: tránh lộ log user khác trong panel lịch sử).
+   *  Memoize theo dailyLogs + currentUser.username. */
   const HISTORY_LIMIT = 7;
   const historyByTask = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10);
     const out: Record<number, DailyLog[]> = {};
     for (const log of dailyLogs) {
       if (log.logDate === today) continue;
+      // Fix #5: chỉ hiển thị log của chính user đang xem.
+      if (log.username && log.username !== currentUser.username) continue;
       const numId = Number(log.taskId);
       if (!Number.isFinite(numId)) continue;
       const arr = out[numId] ?? (out[numId] = []);
@@ -159,11 +212,11 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
       arr.push(log);
     }
     return out;
-  }, [dailyLogs]);
+  }, [dailyLogs, currentUser.username]);
 
   /** Save All — quét tất cả row có draft khác baseline, gom thành entries
    *  gửi 1 phát qua onSaveAllLogs. App.tsx xử lý batch (network + audit + toast). */
-  const dirtyTasks = filteredTasks.filter((t) => isDraftDirty(t));
+  const dirtyTasks = sortedTasks.filter((t) => isDraftDirty(t));
   const dirtyCount = dirtyTasks.length;
 
   const saveAll = () => {
@@ -428,7 +481,7 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
               </div>
 
               {/* Rows */}
-              {filteredTasks.map((task) => {
+              {sortedTasks.map((task) => {
                 const isDone = task.status === 'done';
                 const isDoing = task.status === 'doing';
                 const isPending = task.status === 'pending';
@@ -449,6 +502,13 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
                     cls: 'bg-[#ffdad6] text-[#ba1a1a] border-[#ffb4ab]',
                     icon: 'priority_high',
                     label: 'Có vướng mắc',
+                  },
+                  // Fix #8: NV đã báo hết vướng (save log hôm nay với obstacle rỗng),
+                  // đang chờ manager xác nhận → hiển thị màu xanh "đã xử lý".
+                  resolved: {
+                    cls: 'bg-[#85f8c4]/40 text-[#006243] border-[#006243]/30',
+                    icon: 'task_alt',
+                    label: 'Đã báo hết vướng',
                   },
                   drafting: {
                     cls: 'bg-[#fff3cd] text-[#856404] border-[#ffe69c]',

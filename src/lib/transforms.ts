@@ -251,6 +251,9 @@ export function apiToEmployeeTask(api: any): EmployeeTask {
     department: api.department_code as EmployeeTask['department'],
     // Phase F: blocker_note thay cho help_requests 1:N cũ.
     blockerNote: String(api.blocker_note || ''),
+    // Fix #1: tiến độ từ API (tasks.progress). App.tsx sẽ override bằng
+    // daily_log.progress của HÔM NAY nếu có, để slider hiển thị giá trị mới nhất.
+    progress: Number(api.progress ?? 0),
   };
 }
 

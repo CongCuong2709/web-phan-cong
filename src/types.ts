@@ -199,6 +199,13 @@ export interface EmployeeTask {
   deadline: string;
   isToday?: boolean;
   status: 'doing' | 'done' | 'pending';
+  /**
+   * Tiến độ task (%) lấy từ daily_log.progress mới nhất.
+   * Fix #1: cần có baseline để `getDraft()` không luôn default = 0 → bug reset progress.
+   * Backend rollup đã có ở `tasks.progress` (transforms.ts) — App.tsx merge
+   * từ daily_log.progress của HÔM NAY để slider hiển thị đúng giá trị.
+   */
+  progress: number;
   manager: {
     name: string;
     role: string;

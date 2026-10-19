@@ -162,6 +162,9 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
               // của log đó (mới nhất) thay vì description gốc của task.
               description: log.description?.trim() ? log.description : base.description,
               lastUpdated: 'Hôm nay',
+              // Fix #1: lấy progress mới nhất từ daily_log.progress hôm nay
+              // để slider hiển thị đúng baseline. Tránh bug reset về 0 khi Save All.
+              progress: log.progress ?? 0,
             };
           }),
         );
@@ -688,6 +691,8 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
       deadline,
       isToday: deadline.includes('Hôm nay'),
       status: 'doing',
+      // Fix #1: personal task mới tạo luôn bắt đầu từ 0%.
+      progress: 0,
       ownerUsername: user.username,
       department: user.departments[0],
       manager: {
