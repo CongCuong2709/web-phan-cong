@@ -2,18 +2,19 @@
  * middleware/auth.js — JWT verification + populate req.user.
  *
  * Yêu cầu Authorization: Bearer <token>.
- * Token được sign bằng JWT_SECRET (env), expires 7d (MVP).
+ * Token được sign bằng JWT_SECRET (env bắt buộc), expires 7d (mặc định).
  */
 
 import jwt from 'jsonwebtoken';
 import { db, stmt } from '../db.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-secret-CHANGE-ME';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
-
-if (JWT_SECRET === 'dev-only-secret-CHANGE-ME' && process.env.NODE_ENV === 'production') {
-  throw new Error('FATAL: JWT_SECRET phải được set trong production!');
+// Bắt buộc JWT_SECRET phải được set qua env — không có default để tránh
+// secret predictable ở production (deploy quên set NODE_ENV=production).
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error('FATAL: JWT_SECRET env var is required. Set it trước khi start backend.');
 }
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 
 /** Sign JWT cho user. */
 export function signToken(user, jti) {

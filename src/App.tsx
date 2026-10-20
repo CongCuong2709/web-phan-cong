@@ -219,7 +219,6 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
             departments: rawDepts(u) as User['departments'],
             initial: u.initial ?? u.fullname.charAt(0),
             avatar: u.avatar_url ?? undefined,
-            password: '', // không cần plaintext ở client
           }))
         );
       }
@@ -379,58 +378,6 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
    * Tính lại tiến độ cộng dồn: T4→T3→T2→T1.
    * Pre-group theo parent trong 1 pass O(N) để tránh nested filter O(N²).
    */
-  const recalculateRollup = (items: TierItem[]): TierItem[] => {
-    // Explicit Map type — nếu không, TypeScript widen status/progress thành string/number
-    // và các phép gán literal bên dưới bị reject.
-    const itemsMap = new Map<string, TierItem>(
-      items.map((i) => [i.id, { ...i }])
-    );
-
-    // 1 pass: group children by parent id
-    const childrenByParent = new Map<string, TierItem[]>();
-    for (const item of itemsMap.values()) {
-      if (item.parentId) {
-        const arr = childrenByParent.get(item.parentId);
-        if (arr) arr.push(item);
-        else childrenByParent.set(item.parentId, [item]);
-      }
-    }
-
-    // Helper: tính avg + cập nhật status theo threshold (mirror backend logic).
-    const applyRollup = (parent: TierItem, children: TierItem[], includeRunningStatus: boolean) => {
-      if (children.length === 0) return;
-      const avg = Math.round(
-        children.reduce((acc, c) => acc + c.progress, 0) / children.length
-      );
-      parent.progress = avg;
-      // TierItem.status là Tiếng Việt (string union). Cast any-string.
-      const status = parent.status as string;
-      if (avg === 100) parent.status = 'Đã xong' as TierItem['status'];
-      else if (avg > 90) parent.status = 'Sắp xong' as TierItem['status'];
-      else if (includeRunningStatus && avg > 0 &&
-               (status === 'Đã xong' || status === 'Sắp xong')) {
-        // Tier 1: nếu trước đó đã xong mà progress giảm → revert về 'Đang chạy'.
-        // Tránh overwrite 'Chuẩn bị' khi avg = 0.
-        parent.status = 'Đang chạy' as TierItem['status'];
-      }
-    };
-
-    // Tier 3 ← Tier 4
-    for (const item of itemsMap.values()) {
-      if (item.tier === 3) applyRollup(item, childrenByParent.get(item.id) ?? [], false);
-    }
-    // Tier 2 ← Tier 3
-    for (const item of itemsMap.values()) {
-      if (item.tier === 2) applyRollup(item, childrenByParent.get(item.id) ?? [], false);
-    }
-    // Tier 1 ← Tier 2 (Tier 1 cho phép update status)
-    for (const item of itemsMap.values()) {
-      if (item.tier === 1) applyRollup(item, childrenByParent.get(item.id) ?? [], true);
-    }
-
-    return Array.from(itemsMap.values());
-  };
-
   /** Cập nhật 1 item trong cây 4 tầng + sync backend (backend tự rollup). */
   const handleUpdateTierItem = (updated: TierItem) => {
     // FE chỉ giữ optimistic update cho UX mượt; backend là source of truth (xem recomputeRollup).
@@ -464,7 +411,8 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     const localId = `tier-item-${Date.now()}`;
     const newItem: TierItem = {
       id: localId,
-      code: newItemData.code || `NV-${Math.floor(Math.random() * 900)}`,
+      // code để trống — backend tự generate (NEW-XXXXXX) trong response.
+      code: '',
       tier: newItemData.tier || 4,
       tierName: newItemData.tierName || 'Tầng 4: Đầu việc',
       tierBadge: newItemData.tierBadge || 'VIỆC T4',
@@ -492,9 +440,9 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
       },
     };
 
-    // Optimistic update với rollup ngay để UI responsive
+    // Optimistic update — backend tự rollup progress khi response trả về.
     const newItems = [...tierItems, newItem];
-    setTierItems(recalculateRollup(newItems));
+    setTierItems(newItems);
     logHistory(
       newItem.tier === 1 ? 'project' : newItem.tier === 2 ? 'phase' : newItem.tier === 3 ? 'bundle' : 'task',
       localId,
@@ -664,7 +612,8 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     );
     const newTask: EmployeeTask = {
       id: `emp-task-${Date.now()}`,
-      code: `NV-${Math.floor(100 + Math.random() * 900)}`,
+      // code để trống — backend tự generate (NEW-XXXXXX) trong response.
+      code: '',
       bundleName: 'Việc cá nhân',
       title,
       description: notes || 'Nhiệm vụ cá nhân tự ghi chú.',

@@ -6,7 +6,6 @@
  *   2. `mvp_session_v1` — user ID hiện tại, để restore session sau khi F5/reload trang
  *
  * Tất cả data nghiệp vụ (tier items, tasks, members…) đến từ backend API sau login.
- * Offline fallback: nếu backend down → dùng plaintext password từ SEED_USERS.
  */
 
 import React, {
@@ -18,7 +17,6 @@ import React, {
   useState,
 } from 'react';
 import { Department, User } from '../types';
-import { SEED_USERS } from '../data/users';
 import { api } from '../lib/apiClient';
 
 /** Chỉ giữ session ID để restore "ai đang login" sau khi reload trang. */
@@ -52,10 +50,10 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   /**
    * `users` — danh sách users đang biết phía frontend.
-   * Khởi tạo bằng SEED_USERS (cho offline fallback).
-   * Sau khi login thành công sẽ được merge với user thật từ backend.
+   * Khởi tạo rỗng — backend `/api/users` (cho manager/admin) hoặc `user` payload từ
+   * login (cho employee) sẽ populate sau khi đăng nhập.
    */
-  const [users, setUsersState] = useState<User[]>(SEED_USERS);
+  const [users, setUsersState] = useState<User[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(() => loadSessionUserId());
 
   /** Persist session ID để restore sau reload — KHÔNG persist users list. */
@@ -74,16 +72,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
 
   /**
-   * Login: ưu tiên gọi backend API.
+   * Login: gọi backend API duy nhất.
    * - Success → save token (apiClient), merge user từ backend vào state, set session.
-   * - Network error → fallback local SEED_USERS (plaintext check).
-   * - 401 → trả message lỗi từ backend.
+   * - Network error / 401 → trả message lỗi rõ ràng.
    */
   const login = useCallback(
     async (username: string, password: string) => {
       const trimmed = username.trim();
 
-      // 1. Try backend API
       const apiResult = await api.login(trimmed, password);
       if (apiResult.ok) {
         const backendUser = apiResult.data.user;
@@ -109,7 +105,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           departments: backendDepts,
           avatar: backendUser.avatar_url ?? existing?.avatar,
           initial: backendUser.initial ?? existing?.initial ?? backendUser.fullname.charAt(0),
-          password: '', // không bao giờ lưu plaintext sau khi backend login
         };
 
         setUsersState((prev) => {
@@ -120,27 +115,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { ok: true as const };
       }
 
-      // 2. Failure branch (check network error or backend error)
-      if (!apiResult.ok) {
-        if (apiResult.networkError) {
-          const match = SEED_USERS.find((u) => u.username.toLowerCase() === trimmed.toLowerCase());
-          if (match && match.password === password) {
-            // Đảm bảo user có trong state khi offline
-            setUsersState((prev) =>
-              prev.some((u) => u.id === match.id) ? prev : [...prev, match]
-            );
-            setCurrentUserId(match.id);
-            return { ok: true as const };
-          }
-          return { ok: false as const, reason: 'Sai tài khoản/mật khẩu (backend offline).' };
-        }
-
-        // 3. 401 từ backend → trả message gốc
-        return { ok: false as const, reason: apiResult.error.message ?? 'Sai tài khoản hoặc mật khẩu.' };
-      }
-
-      // Unreachable fallback (để TS happy với exhaustive check)
-      return { ok: false as const, reason: 'Lỗi không xác định.' };
+      // Backend lỗi (network hoặc 4xx/5xx) — trả message gốc.
+      const reason = apiResult.networkError
+        ? 'Không kết nối được backend. Vui lòng kiểm tra mạng hoặc liên hệ admin.'
+        : (apiResult.error.message ?? 'Sai tài khoản hoặc mật khẩu.');
+      return { ok: false as const, reason };
     },
     [users]
   );

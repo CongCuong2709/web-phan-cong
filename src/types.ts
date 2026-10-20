@@ -31,8 +31,6 @@ export interface User {
   departments: Department[];
   initial?: string;
   avatar?: string;
-  /** Demo-only: plain-text password for MVP. Production should use a backend hash. */
-  password: string;
 }
 
 export const DEPARTMENT_LABEL: Record<Department, string> = {

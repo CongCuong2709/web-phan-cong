@@ -114,18 +114,13 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
       : tier === 3 ? 'HẠNG MỤC T3'
       : 'VIỆC T4';
 
-    const code =
-      tier === 1 ? `DA-${Math.floor(100 + Math.random() * 900)}`
-      : tier === 2 ? `GD-${Math.floor(10 + Math.random() * 90)}`
-      : tier === 3 ? `GOI-${Math.floor(10 + Math.random() * 90)}`
-      : `NV-${Math.floor(100 + Math.random() * 900)}`;
-
     // Derive startWeek/endWeek từ startDate/endDate (month-view index 1..N)
     const sw = deriveWeekIndex(startDate);
     const ew = deriveWeekIndex(endDate);
 
     onAddItem({
-      code,
+      // code để trống — backend tự generate (NEW-XXXXXX).
+      code: '',
       tier,
       tierName,
       tierBadge,
