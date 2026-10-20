@@ -60,7 +60,7 @@ import { ViecCuaToiView } from './components/ViecCuaToiView';
 import { BaoCaoTongQuanView } from './components/BaoCaoTongQuanView';
 import { DetailsDrawer } from './components/DetailsDrawer';
 import { NewItemModal } from './components/NewItemModal';
-import { ExportModal } from './components/ExportModal';
+
 import { NewPersonalTaskModal } from './components/NewPersonalTaskModal';
 import { Toast } from './components/Toast';
 import LoginPage from './components/LoginPage';
@@ -359,7 +359,6 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
   const [selectedItemForDrawer, setSelectedItemForDrawer] = useState<TierItem | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isNewItemModalOpen, setIsNewItemModalOpen] = useState(false);
-  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isNewPersonalTaskOpen, setIsNewPersonalTaskOpen] = useState(false);
 
   // Toast state
@@ -670,7 +669,6 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
               setIsDrawerOpen(true);
             }}
             onOpenNewModal={() => setIsNewItemModalOpen(true)}
-            onExport={() => setIsExportModalOpen(true)}
           />
         )}
 
@@ -840,7 +838,6 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
               teamTasks={visibleTeamTasks}
               dailyLogs={dailyLogs}
               currentUser={user}
-              onExport={() => setIsExportModalOpen(true)}
             />
           ))}
       </main>
@@ -917,19 +914,6 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
             return u.departments?.some((d) => user.departments.includes(d));
           })
           .map((u) => ({ username: u.username, fullname: u.fullname }))}
-      />
-
-      {/* Export Report Modal */}
-      <ExportModal
-        isOpen={isExportModalOpen}
-        onClose={() => setIsExportModalOpen(false)}
-        onSuccess={(type) => {
-          showToast(
-            `Đã xuất thành công tệp ${
-              type === 'pdf' ? 'He-thong-TAG-Q4.pdf' : 'Bao-cao-TAG.xlsx'
-            }!`
-          );
-        }}
       />
 
       {/* New Personal Task Modal */}

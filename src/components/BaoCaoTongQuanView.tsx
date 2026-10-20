@@ -17,7 +17,6 @@ interface BaoCaoTongQuanViewProps {
   dailyLogs?: DailyLog[];
   /** User đang đăng nhập — dùng để filter báo cáo theo phòng ban khi là manager. */
   currentUser?: User | null;
-  onExport: () => void;
 }
 
 export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
@@ -26,7 +25,6 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
   teamTasks,
   dailyLogs = [],
   currentUser,
-  onExport,
 }) => {
   const completedTierItems = tierItems.filter((i) => i.progress === 100).length;
   const inProgressTierItems = tierItems.filter((i) => i.progress > 0 && i.progress < 100).length;
@@ -195,13 +193,6 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
             >
               <span className="material-symbols-outlined text-[18px]">print</span>
               <span>In báo cáo</span>
-            </button>
-            <button
-              onClick={onExport}
-              className="px-4 py-2 bg-[#004ac6] hover:bg-[#2563eb] text-white text-[13px] font-bold rounded-lg flex items-center gap-1.5 shadow-sm transition-all"
-            >
-              <span className="material-symbols-outlined text-[18px]">download</span>
-              <span>Xuất PDF / Excel</span>
             </button>
           </div>
         </div>

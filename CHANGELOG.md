@@ -25,6 +25,8 @@ rải rác trong source — gây nhiễu khi đọc code.
 | **TD-06** | `GiaoViecNhomView` filter "thành viên" hiển thị **tên** thay vì raw value. |
 | **TD-07** | `DetailsDrawer.history` filter đúng theo ý đồ: bao gồm cả descendants của items user đang mở (cần truyền `allTierItems`). |
 
+| **Phase H** | 2026-10 | Xoá nút "Xuất PDF/Excel" fake ở `BaoCaoTongQuanView` + `Gantt4TangView`. Modal `ExportModal.tsx` chỉ simulate loading 700ms rồi show toast "Đã xuất thành công" — không generate file thật. Nếu sau này cần export, viết lại với `jspdf`/`xlsx` (FE) hoặc `pdfkit`/`exceljs` (BE). Stub `src/components/ExportModal.tsx` đã empty (`export {};`) để tương thích nếu có ai đó chưa rebuild. |
+
 ## Quy ước tương lai
 
 - Khi có thay đổi lớn (xoá/thêm bảng, đổi schema, refactor kiến trúc) → thêm 1 dòng vào bảng trên.

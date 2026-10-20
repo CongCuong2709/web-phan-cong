@@ -6,7 +6,6 @@ interface Gantt4TangViewProps {
   currentUser?: User;
   onSelectItem: (item: TierItem) => void;
   onOpenNewModal: () => void;
-  onExport: () => void;
 }
 
 /** Format dd/MM (Fix UI-05 helper). */
@@ -144,7 +143,6 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
   currentUser,
   onSelectItem,
   onOpenNewModal,
-  onExport,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   // Fix #15: searchTermRaw lưu giá trị input ngay, debounce 300ms xuống searchTerm
@@ -984,18 +982,6 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                 })}
               </div>
             </div>
-          </div>
-
-          {/* Quick Summary Footer */}
-          <div className="p-3 bg-[#eff4ff] flex items-center justify-end text-[12px] text-[#565e74] border-t border-[#dce9ff]">
-            <button
-              onClick={onExport}
-              className="text-[#004ac6] hover:underline font-semibold flex items-center gap-1"
-              type="button"
-            >
-              <span className="material-symbols-outlined text-[16px]">download</span>
-              <span>Xuất báo cáo PDF / Excel</span>
-            </button>
           </div>
         </div>
       </div>
