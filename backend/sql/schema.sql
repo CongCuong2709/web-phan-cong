@@ -1,21 +1,37 @@
 -- =============================================================================
--- schema.sql — Database schema v5 (2026-10) — TEXT-ONLY, SIMPLIFIED
+-- schema.sql — Database schema v6 (2026-10) — TEXT-ONLY, SIMPLIFIED + AUDIT FIXES
 --
--- REFACTOR (Phase F — drop over-engineered sub-resources):
---   Mục tiêu: "Phân công task → nhân viên điền kết quả hàng ngày (text-only)".
---   Schema trước có 3 lớp overlap để lưu text trên task (task_deliverables.type=text,
---   task_notes, daily_logs.result). Bỏ 2 lớp trùng → chỉ giữ daily_logs (đã đúng
---   pattern "nhật ký thi công" 4-cột description/result/obstacle/progress).
---
---   DROP: task_deliverables, task_help_messages, help_requests, task_notes, messages, attachments
---   ADD : tasks.blocker_note TEXT  (thay task_help_messages — 1 dòng, manager xem khi mở task)
---   KEEP: daily_logs (4 cột: description, result, obstacle, progress) + log_date + author
---         Mỗi task có 1 daily_log/ngày (UPSERT pattern ở routes/dailyLogs.js).
+-- Lịch sử refactor:
+--   Phase B (2026-10): bỏ JS rollup trùng với trigger (sau đó rollback vì
+--     trigger chỉ update updated_at, JS rollup vẫn cần — xem routes/tasks.js).
+--   Phase C (2026-10): chuẩn hoá 4-tier (projects/phases/bundles/tasks).
+--   Phase D (2026-10): đổi history_entries → audit_log có JSON snapshot.
+--   Phase E (2026-10): bỏ bảng subtasks; daily_logs FK trực tiếp vào tasks.
+--   Phase F (2026-10): bỏ 3 lớp text overlap → chỉ giữ daily_logs.
+--   Phase G (2026-10 — BẢN NÀY): vá các vấn đề thiết kế còn lại:
+--     G1. UNIQUE(task_id, log_date) trên daily_logs + dùng ON CONFLICT
+--         trong code (atomic UPSERT, hết race condition).
+--     G2. is_today_date TEXT trên tasks — "today" có ngày cụ thể, tự reset.
+--     G3. created_by_user_id trên projects/phases/bundles/tasks — truy vết
+--         người tạo (audit_log chỉ có cho mutations, không có cho lúc tạo).
+--     G4. CHECK format ngày (YYYY-MM-DD) cho start_date/end_date/log_date.
+--     G5. CHECK độ dài password_hash (bcrypt ~60 ký tự).
+--     G6. Comment đúng về "JS rollup vs trigger" (trigger chỉ updated_at).
+--     G7. Khôi phục bảng task_help_messages (lịch sử escalation) — bổ sung
+--         cho tasks.blocker_note (chỉ giữ 1 dòng hiện tại). Bảng này
+--         đơn giản hơn daily_logs: chỉ body + author + is_resolved.
 --
 -- Status vocab chuẩn hoá: pending|doing|done|pending_approval|blocked
 -- Priority vocab chuẩn hoá: low|normal|high|critical
 -- State machine định nghĩa ở backend/lib/stateMachine.js
 -- =============================================================================
+
+-- ============================================================================
+-- 0. Reusable CHECK expression cho date format YYYY-MM-DD
+-- ============================================================================
+-- Lưu ý: SQLite không có native DATE; dùng TEXT với GLOB pattern.
+-- Cho phép NULL (date optional), nhưng nếu set phải đúng format.
+-- Áp dụng trong CHECK constraints bên dưới.
 
 -- ============================================================================
 -- 1. Users + Departments
@@ -24,7 +40,8 @@
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-  password_hash TEXT NOT NULL,
+  -- bcrypt hash luôn ~60 ký tự; reject rỗng hoặc quá ngắn để chặn bug.
+  password_hash TEXT NOT NULL CHECK (length(password_hash) >= 20),
   fullname TEXT NOT NULL,
   email TEXT,
   role TEXT NOT NULL CHECK (role IN ('admin','director','manager','employee')),
@@ -55,7 +72,11 @@ CREATE INDEX IF NOT EXISTS idx_user_dept_dept ON user_departments(department_cod
 -- Tier 1 = projects    (Dự án)         — có owner, dates
 -- Tier 2 = phases      (Giai đoạn)     — có project_id, management_notes, blocker_alert
 -- Tier 3 = bundles     (Hạng mục)      — có phase_id
--- Tier 4 = tasks       (Đầu việc)      — có bundle_id, is_today
+-- Tier 4 = tasks       (Đầu việc)      — có bundle_id, is_today_date
+--
+-- Phase G3: tất cả 4 tier có created_by_user_id (người tạo) — khác với
+--   owner_user_id (người chịu trách nhiệm hiện tại). tasks còn có
+--   assigned_by_user_id (người giao việc).
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS projects (
@@ -64,8 +85,9 @@ CREATE TABLE IF NOT EXISTS projects (
   title TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-  start_date TEXT,
-  end_date TEXT,
+  created_by_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  start_date TEXT CHECK (start_date IS NULL OR start_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+  end_date TEXT CHECK (end_date IS NULL OR end_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending','doing','done','pending_approval','blocked')),
   progress_rollup INTEGER NOT NULL DEFAULT 0 CHECK (progress_rollup BETWEEN 0 AND 100),
@@ -74,6 +96,7 @@ CREATE TABLE IF NOT EXISTS projects (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_projects_creator ON projects(created_by_user_id);
 CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
 
 CREATE TABLE IF NOT EXISTS phases (
@@ -83,8 +106,9 @@ CREATE TABLE IF NOT EXISTS phases (
   title TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-  start_date TEXT,
-  end_date TEXT,
+  created_by_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  start_date TEXT CHECK (start_date IS NULL OR start_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+  end_date TEXT CHECK (end_date IS NULL OR end_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending','doing','done','pending_approval','blocked')),
   progress_rollup INTEGER NOT NULL DEFAULT 0 CHECK (progress_rollup BETWEEN 0 AND 100),
@@ -98,6 +122,7 @@ CREATE TABLE IF NOT EXISTS phases (
 );
 CREATE INDEX IF NOT EXISTS idx_phases_project ON phases(project_id);
 CREATE INDEX IF NOT EXISTS idx_phases_owner ON phases(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_phases_creator ON phases(created_by_user_id);
 
 CREATE TABLE IF NOT EXISTS bundles (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,8 +131,9 @@ CREATE TABLE IF NOT EXISTS bundles (
   title TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-  start_date TEXT,
-  end_date TEXT,
+  created_by_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  start_date TEXT CHECK (start_date IS NULL OR start_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+  end_date TEXT CHECK (end_date IS NULL OR end_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending','doing','done','pending_approval','blocked')),
   progress_rollup INTEGER NOT NULL DEFAULT 0 CHECK (progress_rollup BETWEEN 0 AND 100),
@@ -118,6 +144,7 @@ CREATE TABLE IF NOT EXISTS bundles (
 );
 CREATE INDEX IF NOT EXISTS idx_bundles_phase ON bundles(phase_id);
 CREATE INDEX IF NOT EXISTS idx_bundles_owner ON bundles(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_bundles_creator ON bundles(created_by_user_id);
 
 CREATE TABLE IF NOT EXISTS tasks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -126,20 +153,28 @@ CREATE TABLE IF NOT EXISTS tasks (
   title TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  created_by_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   assigned_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   department_code TEXT REFERENCES departments(code) ON DELETE SET NULL,
-  start_date TEXT,
-  end_date TEXT,
+  start_date TEXT CHECK (start_date IS NULL OR start_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+  end_date TEXT CHECK (end_date IS NULL OR end_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
   progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending','doing','done','pending_approval','blocked')),
   priority TEXT NOT NULL DEFAULT 'normal'
     CHECK (priority IN ('low','normal','high','critical')),
-  -- Chỉ T4 (tasks) mới có is_today (employee view flag)
+  -- Phase G2: is_today + is_today_date.
+  --   is_today       — boolean cờ nhanh (back-compat, có thể derive từ is_today_date)
+  --   is_today_date  — nếu set và = hôm nay → task hiện trong "Today" view.
+  --                    Nếu set nhưng < hôm nay → coi như đã hết hạn, view bỏ qua.
+  --                    Tự reset qua logic app: mỗi lần toggle, set date = today().
+  -- Chỉ T4 (tasks) mới có 2 cột này (employee view flag).
   is_today INTEGER NOT NULL DEFAULT 0 CHECK (is_today IN (0,1)),
+  is_today_date TEXT CHECK (is_today_date IS NULL OR is_today_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
   collapsed INTEGER NOT NULL DEFAULT 0 CHECK (collapsed IN (0,1)),
   -- Phase F: thay thế task_help_messages (1:N) bằng 1 cột text trên task.
-  -- NV ghi 1 dòng "đang vướng ở đâu / cần hỗ trợ gì", manager xem khi mở task.
+  -- Phase G7: KHÔI PHỤC task_help_messages (lịch sử 1:N) bên dưới — bổ sung
+  --   cho blocker_note (chỉ giữ dòng hiện tại). NV/manager có thể xem lịch sử.
   blocker_note TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -147,49 +182,81 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_bundle ON tasks(bundle_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_owner ON tasks(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_creator ON tasks(created_by_user_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_dept ON tasks(department_code);
 CREATE INDEX IF NOT EXISTS idx_tasks_assigned_by ON tasks(assigned_by_user_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-CREATE INDEX IF NOT EXISTS idx_tasks_today ON tasks(is_today);
+-- Phase G2: composite index cho "Today" view: WHERE is_today=1 AND is_today_date=date('now')
+CREATE INDEX IF NOT EXISTS idx_tasks_today ON tasks(is_today, is_today_date);
 CREATE INDEX IF NOT EXISTS idx_tasks_end_date ON tasks(end_date);
 
 -- ============================================================================
 -- 3. DailyLog (nhật ký thi công) — sub-resource duy nhất còn lại
 -- ============================================================================
 --
--- Phase F: giờ chỉ còn 1 sub-resource trên task là daily_logs. Trước đây có thêm
---   task_deliverables (1:N), task_help_messages (1:N), task_notes (1:N) — đã drop
---   vì text-only use case không cần 3 lớp overlap.
+-- Phase G1: UNIQUE(task_id, log_date) constraint.
+--   Trước đây (Phase F): không có UNIQUE, dùng SELECT-then-UPDATE/INSERT pattern
+--   trong code → race condition khi 2 request đồng thời.
+--   Giờ: schema enforce uniqueness, code dùng `INSERT ... ON CONFLICT(task_id, log_date) DO UPDATE`.
 --
--- 1 task có N daily_logs (mỗi ngày 1 row — UPSERT ở routes/dailyLogs.js).
+-- 1 task có N daily_logs (mỗi ngày 1 row).
 -- 4 cột text: description (công việc), result (kết quả), obstacle (vướng mắc),
 -- progress (0-100, dùng để rollup tiến độ task).
---
--- Lưu ý: KHÔNG đặt UNIQUE(task_id, log_date) ở schema — UPSERT dùng
--- ON CONFLICT trong SQL thông qua WHERE để tìm row cùng ngày trước khi insert.
 
 CREATE TABLE IF NOT EXISTS daily_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  log_date TEXT NOT NULL,
+  log_date TEXT NOT NULL CHECK (log_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
   description TEXT NOT NULL DEFAULT '',
   result TEXT NOT NULL DEFAULT '',
   obstacle TEXT NOT NULL DEFAULT '',
   progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
   author_user_id INTEGER NOT NULL REFERENCES users(id),
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Phase G1: 1 task có tối đa 1 daily_log/ngày
+  UNIQUE(task_id, log_date)
 );
 CREATE INDEX IF NOT EXISTS idx_daily_logs_task ON daily_logs(task_id);
 CREATE INDEX IF NOT EXISTS idx_daily_logs_date ON daily_logs(log_date);
-CREATE INDEX IF NOT EXISTS idx_daily_logs_task_date ON daily_logs(task_id, log_date);
 
 -- ============================================================================
--- 4. Audit log (Phase D — upgrade: thêm old_values, new_values, IP, UA)
+-- 4. TaskHelpMessage (lịch sử escalation) — Phase G7 khôi phục
 -- ============================================================================
+--
+-- Phase F đã bỏ bảng này vì coi là "3 lớp overlap". Phase G nhận ra:
+--   tasks.blocker_note (1 dòng text hiện tại) + task_help_messages (lịch sử
+--   1:N) phục vụ 2 mục đích khác nhau:
+--     - blocker_note: manager xem nhanh khi mở task
+--     - help_messages: NV/manager xem lại lịch sử hội thoại escalation
+--
+-- Schema tối giản: chỉ body + author + is_resolved. KHÔNG có description/result
+-- /obstacle/progress (vì đã có daily_logs cho mục đích đó).
+
+CREATE TABLE IF NOT EXISTS task_help_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  body TEXT NOT NULL,
+  author_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  is_resolved INTEGER NOT NULL DEFAULT 0 CHECK (is_resolved IN (0,1)),
+  resolved_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  resolved_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_help_msg_task ON task_help_messages(task_id);
+CREATE INDEX IF NOT EXISTS idx_help_msg_unresolved ON task_help_messages(task_id, is_resolved);
+
+-- ============================================================================
+-- 5. Audit log (Phase D — upgrade: thêm old_values, new_values, IP, UA)
+-- ============================================================================
+--
+-- Phase G: thêm 'task_help_message' vào entity_type. Đối với DB đã tồn tại
+-- (Phase F trở về trước), CHECK constraint không thể sửa bằng ALTER TABLE;
+-- cần wipe + bootstrap lại nếu muốn enforce chặt. App-layer vẫn ghi đúng
+-- entity_type, CHECK chỉ là defense-in-depth.
 
 CREATE TABLE IF NOT EXISTS audit_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  entity_type TEXT NOT NULL CHECK (entity_type IN ('project','phase','bundle','task','daily_log','user')),
+  entity_type TEXT NOT NULL CHECK (entity_type IN ('project','phase','bundle','task','daily_log','task_help_message','user')),
   entity_id INTEGER NOT NULL,
   action TEXT NOT NULL CHECK (action IN ('create','update','delete','status_change','login','logout','resolve')),
   old_values TEXT,  -- JSON snapshot trước
@@ -205,7 +272,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);
 
 -- ============================================================================
--- 5. Sessions (auth) — giữ nguyên
+-- 6. Sessions (auth) — giữ nguyên
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -220,7 +287,16 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
 -- ============================================================================
--- 6. Triggers (auto-rollup progress — Phase B đã loại bỏ JS rollup trùng)
+-- 7. Triggers (auto-update updated_at)
+-- ============================================================================
+--
+-- Phase G6: SỬA COMMENT. Trigger CHỈ update updated_at. Progress rollup được
+-- thực hiện ở JS (routes/tasks.js:recomputeRollup) vì:
+--   - Cần JOIN các bảng con theo hierarchy thật (task→bundle→phase→project)
+--   - Cần biết entity gốc là gì (progress của task đổi → rollup lên bundle, etc.)
+--   - SQLite trigger không có cách clean để "biết" parent chain từ con update.
+-- Trigger rollup tự động (theo comment cũ) KHÔNG tồn tại — đã bị loại bỏ từ
+-- Phase B vì không hoạt động đúng với hierarchy 4-tier.
 -- ============================================================================
 
 CREATE TRIGGER IF NOT EXISTS users_updated AFTER UPDATE ON users
@@ -237,5 +313,3 @@ CREATE TRIGGER IF NOT EXISTS bundles_updated AFTER UPDATE ON bundles
 
 CREATE TRIGGER IF NOT EXISTS tasks_updated AFTER UPDATE ON tasks
   BEGIN UPDATE tasks SET updated_at = datetime('now') WHERE id = NEW.id; END;
-
--- Phase E: bỏ trigger subtasks_updated (bảng subtasks đã bị xoá)

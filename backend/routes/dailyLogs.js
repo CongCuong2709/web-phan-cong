@@ -4,9 +4,13 @@
  * Phase E refactor: bỏ SubTask tier; daily_log giờ FK trực tiếp vào tasks.
  * Mount tại /api/daily-logs (bulk) và /api/tasks/:taskId/logs (per-task).
  *
+ * Phase G1 refactor: dùng INSERT ... ON CONFLICT(task_id, log_date) DO UPDATE
+ *   thay cho SELECT-then-UPDATE/INSERT cũ. Atomic, không race condition khi 2
+ *   request đồng thời cho cùng (task_id, log_date).
+ *
  * Endpoints:
  *   GET    /api/tasks/:taskId/logs                — List logs của 1 task
- *   POST   /api/tasks/:taskId/logs                — Thêm log
+ *   POST   /api/tasks/:taskId/logs                — UPSERT daily log (1 task/ngày)
  *   DELETE /api/daily-logs/:id                    — Xoá log (manager+)
  *   GET    /api/daily-logs                        — List tất cả (bulk)
  */
@@ -32,10 +36,11 @@ router.get('/tasks/:taskId/logs', (req, res) => {
 });
 
 /** POST /api/tasks/:taskId/logs — UPSERT daily log.
- *  Phase F: 1 task có nhiều ngày, 1 ngày chỉ 1 log.
- *  Pattern: nếu đã có row cho (task_id, log_date) → UPDATE; nếu chưa → INSERT.
- *  Không dùng UNIQUE constraint ở schema (cho phép nhiều row cùng ngày nếu cần audit lịch sử
- *  sau này), nên thực hiện UPSERT trong transaction ở đây.
+ *  Phase G1: 1 câu INSERT ... ON CONFLICT(task_id, log_date) DO UPDATE — atomic.
+ *  Trước đây: SELECT trước rồi UPDATE/INSERT → race condition khi concurrent.
+ *
+ *  Nếu log mới có progress khác task.progress → update tasks.progress trong
+ *  cùng transaction (đảm bảo consistency với audit_log).
  */
 router.post('/tasks/:taskId/logs', (req, res) => {
   const taskId = Number(req.params.taskId);
@@ -54,24 +59,34 @@ router.post('/tasks/:taskId/logs', (req, res) => {
   const result = body.result ?? '';
   const obstacle = body.obstacle ?? '';
 
+  // Validate log_date format
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(logDate)) {
+    return res.status(400).json({ error: 'invalid_log_date', message: 'log_date phải có format YYYY-MM-DD.' });
+  }
+
   let savedId = 0;
   let action = 'create';
+  let previousProgress = task.progress;
   tx(() => {
-    // Tìm row cùng (task_id, log_date) — nếu có → UPDATE; nếu không → INSERT
+    // Check existence TRƯỚC để phân biệt create vs update cho response.
+    // Lưu ý: chỉ để set "action" field — actual UPSERT vẫn dùng ON CONFLICT
+    // nên atomic. Hai request đồng thời có thể cùng thấy "create" trong action
+    // nhưng DB chỉ có 1 row (UNIQUE constraint + ON CONFLICT).
     const existing = db.prepare(
       'SELECT id FROM daily_logs WHERE task_id = ? AND log_date = ?'
     ).get(taskId, logDate);
 
-    if (existing) {
-      stmt.upsertDailyLogForToday.run(description, result, obstacle, progress, req.user.id, taskId, logDate);
-      savedId = existing.id;
-      action = 'update';
-    } else {
-      const info = stmt.insertDailyLog.run(
-        taskId, logDate, description, result, obstacle, progress, req.user.id,
-      );
-      savedId = Number(info.lastInsertRowid);
-    }
+    // Phase G1: ON CONFLICT — atomic UPSERT, không race.
+    stmt.upsertDailyLog.run(
+      taskId, logDate, description, result, obstacle, progress, req.user.id,
+    );
+
+    // Lấy id của row (dù mới insert hay update).
+    const final = db.prepare(
+      'SELECT id FROM daily_logs WHERE task_id = ? AND log_date = ?'
+    ).get(taskId, logDate);
+    savedId = final?.id ?? 0;
+    action = existing ? 'update' : 'create';
 
     // Audit
     db.prepare(`
@@ -90,11 +105,12 @@ router.post('/tasks/:taskId/logs', (req, res) => {
     );
 
     // Phase F: nếu log mới có progress khác task.progress → update tasks.progress
-    if (progress !== task.progress) {
+    if (progress !== previousProgress) {
       stmt.updateTask.run(
         task.title, task.description, task.owner_user_id, task.assigned_by_user_id,
         task.department_code, task.start_date, task.end_date,
-        progress, task.status, task.priority, task.is_today, task.collapsed,
+        progress, task.status, task.priority,
+        task.is_today ?? 0, task.is_today_date ?? null, task.collapsed,
         task.blocker_note || '',
         taskId,
       );

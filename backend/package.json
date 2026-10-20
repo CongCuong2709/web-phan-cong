@@ -12,6 +12,8 @@
     "start": "node server.js",
     "seed": "tsx scripts/seed.ts",
     "seed:test": "tsx scripts/seed-test-fixtures.ts",
+    "migrate": "node scripts/run-migration.mjs",
+    "reset:db": "node ../wipe-db.mjs",
     "test": "vitest run",
     "test:integration": "vitest run test/integration",
     "test:watch": "vitest"

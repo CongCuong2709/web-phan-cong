@@ -1,5 +1,5 @@
 /**
- * routes/tasks.js — UNIFIED task CRUD cho schema v3 (4-tier normalized)
+ * routes/tasks.js — UNIFIED task CRUD cho schema v6 (4-tier normalized)
  *
  * Phase C refactor: 1 endpoint /api/tasks nhưng dispatch theo tier:
  *   tier 1 → bảng projects
@@ -15,16 +15,17 @@
  *   GET    /api/tasks/:tier/:id      — Chi tiết theo tier
  *   POST   /api/tasks                — Tạo mới (dispatch theo tier)
  *   PATCH  /api/tasks/:tier/:id      — Update theo tier
- *   DELETE /api/tasks/:tier/:id      — Xoá theo tier
- *   POST   /api/tasks/:tier/:id/notes    — Thêm note
+ *   DELETE /api/tasks/:tier/:id      — Xoá theo tier (T4 snapshot daily_logs/help_messages)
+ *   POST   /api/tasks/:tier/:id/notes    — Thêm note (reserved)
  *   POST   /api/tasks/:tier/:id/approve  — Manager duyệt
- *   POST   /api/tasks/:tier/:id/help     — NV xin hỗ trợ
+ *   POST   /api/tasks/:tier/:id/blocker  — NV ghi blocker_note (Phase F)
  *   POST   /api/tasks/:tier/:id/toggle   — Đổi status
  *
- * Phase B:
- *   - canTransition() enforce state machine
- *   - authorize() dùng centralized policy
- *   - recomputeRollup() respect manual status (Fix C9)
+ * Phase G:
+ *   - recomputeRollup dùng subquery UPDATE single-statement (atomic)
+ *   - DELETE T4 snapshot daily_logs + help_messages vào audit_log trước khi CASCADE xoá
+ *   - created_by_user_id + is_today_date support
+ *   - canSee T2/T3 giữ nguyên "org-level" (xem CHÍNH SÁCH ở policies.js)
  */
 
 import { Router } from 'express';
@@ -42,6 +43,12 @@ function dateMinusDays(isoDate, days) {
   const d = new Date(isoDate + 'T00:00:00');
   d.setDate(d.getDate() - days);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Validate YYYY-MM-DD. Return true nếu hợp lệ hoặc null/undefined. */
+function isIsoDate(s) {
+  if (!s) return true;
+  return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
 
 /** Normalize status text legacy → enum. */
@@ -63,9 +70,18 @@ function normalizePriority(p) {
   return 'normal';
 }
 
-/** canSee: filter theo role + dept. */
+/**
+ * canSee: filter theo role + dept.
+ *
+ * Phase G doc:
+ *   - T1 (project) là BGĐ-owned → admin/director/manager thấy hết (BGĐ-owned,
+ *     không gắn department_code).
+ *   - T2/T3 (phase/bundle) KHÔNG có department_code → "org-level" theo thiết kế.
+ *     policies.js:task:read xử lý: manager cùng dept nào cũng thấy (vì
+ *     inDepartment(user, null) = true). Đây là policy hiện tại, không phải bug.
+ *   - T4 (task) có department_code → manager phải cùng phòng ban.
+ */
 function canSee(user, item) {
-  // item phải có tier, department_code (nếu có), owner_username_str
   if (user.role === 'admin' || user.role === 'director') return true;
   if (user.role === 'manager') {
     if (item.tier === 1) return true; // BGĐ-owned project
@@ -76,64 +92,84 @@ function canSee(user, item) {
   return true;
 }
 
-/** Auto-rollup progress — Phase C: giờ rollup theo hierarchy thật (task → bundle → phase → project). */
+/**
+ * Auto-rollup progress — Phase G: single-statement UPDATE với subquery.
+ *
+ * Atomic vì SQLite thực thi mỗi UPDATE trong 1 statement; kết hợp với việc
+ * gọi trong tx() (caller), toàn bộ chain rollup an toàn concurrent.
+ *
+ * Status rollup vẫn ở JS vì:
+ *   - Cần respect manual status (Fix C9): nếu parent.status đang ở trạng thái
+ *     manual (pending_approval/blocked/done) thì KHÔNG auto-override.
+ *   - Cần compute new_status dựa trên progress_rollup mới.
+ *
+ * @param {number} taskId
+ */
 function recomputeRollup(taskId) {
   if (!taskId) return;
   const task = stmt.getTaskBundlePhase.get(taskId);
   if (!task) return;
 
-  // 1. Tính avg progress của T4 tasks trong bundle
+  // 1. Bundle: AVG(progress) của tasks trong bundle
   if (task.bundle_id) {
-    const children = stmt.getChildrenProgress.all(task.bundle_id);
-    if (children.length > 0) {
-      const avg = Math.round(children.reduce((a, c) => a + c.progress, 0) / children.length);
-      const bundle = stmt.getBundle.get(task.bundle_id);
-      if (bundle) {
-        const newStatus = avg === 100 ? 'done' : avg > 90 ? 'pending_approval' : 'doing';
-        // B6: respect manual status
-        const AUTOMATIC = new Set(['pending', 'doing']);
-        if (AUTOMATIC.has(bundle.status)) {
-          db.prepare('UPDATE bundles SET progress_rollup = ?, status = ? WHERE id = ?')
-            .run(avg, newStatus, task.bundle_id);
-        } else {
-          db.prepare('UPDATE bundles SET progress_rollup = ? WHERE id = ?').run(avg, task.bundle_id);
-        }
+    db.prepare(`
+      UPDATE bundles
+      SET progress_rollup = COALESCE(
+        (SELECT ROUND(AVG(progress)) FROM tasks WHERE bundle_id = ?),
+        0
+      )
+      WHERE id = ?
+    `).run(task.bundle_id, task.bundle_id);
+    // Status auto-override (respect manual)
+    const bundle = stmt.getBundle.get(task.bundle_id);
+    if (bundle) {
+      const newStatus = bundle.progress_rollup === 100 ? 'done'
+        : bundle.progress_rollup > 90 ? 'pending_approval' : 'doing';
+      const AUTOMATIC = new Set(['pending', 'doing']);
+      if (AUTOMATIC.has(bundle.status) && bundle.status !== newStatus) {
+        db.prepare('UPDATE bundles SET status = ? WHERE id = ?').run(newStatus, task.bundle_id);
       }
     }
   }
-  // 2. Rollup bundle → phase
+
+  // 2. Phase: AVG(progress_rollup) của bundles trong phase
   if (task.phase_id) {
-    const phaseBundles = db.prepare('SELECT progress_rollup FROM bundles WHERE phase_id = ?').all(task.phase_id);
-    if (phaseBundles.length > 0) {
-      const avg = Math.round(phaseBundles.reduce((a, c) => a + (c.progress_rollup || 0), 0) / phaseBundles.length);
-      const phase = stmt.getPhase.get(task.phase_id);
-      if (phase) {
-        const newStatus = avg === 100 ? 'done' : avg > 90 ? 'pending_approval' : 'doing';
-        const AUTOMATIC = new Set(['pending', 'doing']);
-        if (AUTOMATIC.has(phase.status)) {
-          db.prepare('UPDATE phases SET progress_rollup = ?, status = ? WHERE id = ?')
-            .run(avg, newStatus, task.phase_id);
-        } else {
-          db.prepare('UPDATE phases SET progress_rollup = ? WHERE id = ?').run(avg, task.phase_id);
-        }
+    db.prepare(`
+      UPDATE phases
+      SET progress_rollup = COALESCE(
+        (SELECT ROUND(AVG(progress_rollup)) FROM bundles WHERE phase_id = ?),
+        0
+      )
+      WHERE id = ?
+    `).run(task.phase_id, task.phase_id);
+    const phase = stmt.getPhase.get(task.phase_id);
+    if (phase) {
+      const newStatus = phase.progress_rollup === 100 ? 'done'
+        : phase.progress_rollup > 90 ? 'pending_approval' : 'doing';
+      const AUTOMATIC = new Set(['pending', 'doing']);
+      if (AUTOMATIC.has(phase.status) && phase.status !== newStatus) {
+        db.prepare('UPDATE phases SET status = ? WHERE id = ?').run(newStatus, task.phase_id);
       }
     }
   }
-  // 3. Rollup phase → project
+
+  // 3. Project: AVG(progress_rollup) của phases trong project
   if (task.project_id) {
-    const projectPhases = db.prepare('SELECT progress_rollup FROM phases WHERE project_id = ?').all(task.project_id);
-    if (projectPhases.length > 0) {
-      const avg = Math.round(projectPhases.reduce((a, c) => a + (c.progress_rollup || 0), 0) / projectPhases.length);
-      const project = stmt.getProject.get(task.project_id);
-      if (project) {
-        const newStatus = avg === 100 ? 'done' : avg > 90 ? 'pending_approval' : 'doing';
-        const AUTOMATIC = new Set(['pending', 'doing']);
-        if (AUTOMATIC.has(project.status)) {
-          db.prepare('UPDATE projects SET progress_rollup = ?, status = ? WHERE id = ?')
-            .run(avg, newStatus, task.project_id);
-        } else {
-          db.prepare('UPDATE projects SET progress_rollup = ? WHERE id = ?').run(avg, task.project_id);
-        }
+    db.prepare(`
+      UPDATE projects
+      SET progress_rollup = COALESCE(
+        (SELECT ROUND(AVG(progress_rollup)) FROM phases WHERE project_id = ?),
+        0
+      )
+      WHERE id = ?
+    `).run(task.project_id, task.project_id);
+    const project = stmt.getProject.get(task.project_id);
+    if (project) {
+      const newStatus = project.progress_rollup === 100 ? 'done'
+        : project.progress_rollup > 90 ? 'pending_approval' : 'doing';
+      const AUTOMATIC = new Set(['pending', 'doing']);
+      if (AUTOMATIC.has(project.status) && project.status !== newStatus) {
+        db.prepare('UPDATE projects SET status = ? WHERE id = ?').run(newStatus, task.project_id);
       }
     }
   }
@@ -170,6 +206,19 @@ function resolveOwner(req) {
     return { ownerId: u.id, source: 'username' };
   }
   return { ownerId: req.user.id, source: 'fallback' };
+}
+
+/**
+ * Resolve created_by_user_id. Mặc định = req.user.id (người tạo request).
+ * Cho phép override qua body.created_by_user_id (chỉ admin mới nên — caller
+ * kiểm tra authorize 'task:create' đã cover).
+ */
+function resolveCreatedBy(req) {
+  const body = req.body || {};
+  if (body.created_by_user_id && Number.isFinite(Number(body.created_by_user_id))) {
+    return Number(body.created_by_user_id);
+  }
+  return req.user.id;
 }
 
 /** Audit log helper. */
@@ -217,8 +266,6 @@ router.get('/:tier(\\d+)/:id(\\d+)', (req, res) => {
   if (!canSee(req.user, enriched)) {
     return res.status(403).json({ error: 'forbidden' });
   }
-  // Phase F: chi tra ve item. 3 sub-resource cu (notes/deliverables/helpMessages) da
-  // xoa. daily_logs frontend lay rieng qua GET /api/daily-logs?taskId=...
   return res.json({ item: enriched });
 });
 
@@ -236,6 +283,12 @@ router.post('/', (req, res) => {
   if (ownerResult.source === 'username_not_found') {
     return res.status(404).json({ error: 'owner_username_not_found', message: `Không tìm thấy user '${ownerResult.username}'.` });
   }
+  const createdById = resolveCreatedBy(req);
+
+  // Validate dates
+  if (!isIsoDate(body.start_date) || !isIsoDate(body.end_date)) {
+    return res.status(400).json({ error: 'invalid_date', message: 'start_date và end_date phải có format YYYY-MM-DD.' });
+  }
 
   let lastId = 0;
   let entityType = '';
@@ -252,7 +305,8 @@ router.post('/', (req, res) => {
     if (tierNum === 1) {
       const info = stmt.insertProject.run(
         code, title, body.description || '',
-        ownerResult.ownerId, startDate, endDate, status,
+        ownerResult.ownerId, createdById,
+        startDate, endDate, status,
         body.collapsed ? 1 : 0,
       );
       lastId = Number(info.lastInsertRowid);
@@ -262,7 +316,8 @@ router.post('/', (req, res) => {
       if (!projectId) return res.status(400).json({ error: 'parent_id_required', message: 'Phase phải thuộc 1 project.' });
       const info = stmt.insertPhase.run(
         projectId, code, title, body.description || '',
-        ownerResult.ownerId, startDate, endDate, status,
+        ownerResult.ownerId, createdById,
+        startDate, endDate, status,
         body.management_notes || '',
         body.blocker_alert || null,
         body.collapsed ? 1 : 0,
@@ -274,21 +329,30 @@ router.post('/', (req, res) => {
       if (!phaseId) return res.status(400).json({ error: 'parent_id_required', message: 'Bundle phải thuộc 1 phase.' });
       const info = stmt.insertBundle.run(
         phaseId, code, title, body.description || '',
-        ownerResult.ownerId, startDate, endDate, status,
+        ownerResult.ownerId, createdById,
+        startDate, endDate, status,
         body.collapsed ? 1 : 0,
       );
       lastId = Number(info.lastInsertRowid);
       entityType = 'bundle';
     } else { // tier 4
       const bundleId = body.parent_id ? Number(body.parent_id) : null; // null OK (standalone)
+      // Phase G2: is_today_date mặc định = hôm nay nếu is_today=1, else null
+      const isToday = body.is_today ? 1 : 0;
+      const isTodayDate = isToday
+        ? (body.is_today_date ?? new Date().toISOString().slice(0, 10))
+        : null;
+      if (isTodayDate && !isIsoDate(isTodayDate)) {
+        return res.status(400).json({ error: 'invalid_is_today_date' });
+      }
       const info = stmt.insertTask.run(
         bundleId, code, title, body.description || '',
-        ownerResult.ownerId,
+        ownerResult.ownerId, createdById,
         body.assigned_by_user_id ? Number(body.assigned_by_user_id) : req.user.id,
         body.department_code ?? null,
         startDate, endDate,
         Number(body.progress ?? 0), status, priority,
-        body.is_today ? 1 : 0,
+        isToday, isTodayDate,
         body.collapsed ? 1 : 0,
       );
       lastId = Number(info.lastInsertRowid);
@@ -312,6 +376,18 @@ router.patch('/:tier(\\d+)/:id(\\d+)', (req, res) => {
   if (!authz.ok) return res.status(authz.status).json(authz);
 
   const body = req.body || {};
+
+  // Validate date fields nếu có
+  if (body.start_date !== undefined && !isIsoDate(body.start_date)) {
+    return res.status(400).json({ error: 'invalid_start_date' });
+  }
+  if (body.end_date !== undefined && !isIsoDate(body.end_date)) {
+    return res.status(400).json({ error: 'invalid_end_date' });
+  }
+  if (body.is_today_date !== undefined && body.is_today_date !== null && !isIsoDate(body.is_today_date)) {
+    return res.status(400).json({ error: 'invalid_is_today_date' });
+  }
+
   const oldValues = { ...item };
 
   // Validate status transition (state machine)
@@ -327,6 +403,9 @@ router.patch('/:tier(\\d+)/:id(\\d+)', (req, res) => {
   }
 
   let updated = null;
+  let progressChanged = false;
+  let oldProgress = item.progress;
+  let newProgress = oldProgress;
   tx(() => {
     if (tier === 1) {
       stmt.updateProject.run(
@@ -367,8 +446,22 @@ router.patch('/:tier(\\d+)/:id(\\d+)', (req, res) => {
       );
       updated = stmt.getBundle.get(id);
     } else { // tier 4
-      const oldProgress = item.progress;
-      const newProgress = Number(body.progress ?? oldProgress);
+      oldProgress = item.progress;
+      newProgress = Number(body.progress ?? oldProgress);
+      progressChanged = newProgress !== oldProgress;
+
+      // Phase G2: nếu is_today bật lên → set is_today_date = today() nếu client không truyền
+      let nextIsToday = body.is_today !== undefined ? (body.is_today ? 1 : 0) : item.is_today;
+      let nextIsTodayDate = body.is_today_date !== undefined
+        ? body.is_today_date
+        : item.is_today_date;
+      if (nextIsToday === 1 && !nextIsTodayDate) {
+        nextIsTodayDate = new Date().toISOString().slice(0, 10);
+      }
+      if (nextIsToday === 0) {
+        nextIsTodayDate = null;
+      }
+
       stmt.updateTask.run(
         body.title ?? item.title,
         body.description ?? item.description,
@@ -382,14 +475,14 @@ router.patch('/:tier(\\d+)/:id(\\d+)', (req, res) => {
         newProgress,
         body.status ?? item.status,
         body.priority ? normalizePriority(body.priority) : item.priority,
-        body.is_today !== undefined ? (body.is_today ? 1 : 0) : item.is_today,
+        nextIsToday, nextIsTodayDate,
         body.collapsed !== undefined ? (body.collapsed ? 1 : 0) : item.collapsed,
         body.blocker_note ?? item.blocker_note ?? '',
         id,
       );
       updated = stmt.getTask.get(id);
-      // Rollup nếu progress đổi
-      if (newProgress !== oldProgress) {
+      // Rollup nếu progress đổi (cùng tx → atomic)
+      if (progressChanged) {
         recomputeRollup(id);
       }
     }
@@ -406,7 +499,12 @@ router.patch('/:tier(\\d+)/:id(\\d+)', (req, res) => {
   return res.json({ item: enrichWithTier(updated, tier) });
 });
 
-/** DELETE /api/tasks/:tier/:id — Admin only. */
+/** DELETE /api/tasks/:tier/:id — Admin only.
+ *  Phase G: T4 delete SNAPSHOT daily_logs + help_messages vào audit_log trước
+ *  khi CASCADE xoá. T1/T2/T3 delete CASCADE xuống con — không snapshot từng
+ *  descendant (sẽ nặng) nhưng ghi log "cascade_delete" vào audit_log của
+ *  parent để trace.
+ */
 router.delete('/:tier(\\d+)/:id(\\d+)', (req, res) => {
   const tier = Number(req.params.tier);
   const id = Number(req.params.id);
@@ -417,10 +515,23 @@ router.delete('/:tier(\\d+)/:id(\\d+)', (req, res) => {
   if (!authz.ok) return res.status(authz.status).json(authz);
 
   tx(() => {
-    logAudit(
-      tier === 1 ? 'project' : tier === 2 ? 'phase' : tier === 3 ? 'bundle' : 'task',
-      id, 'delete', item, null, req,
-    );
+    // Phase G: snapshot sub-resources TRƯỚC khi CASCADE xoá
+    if (tier === 4) {
+      const logs = stmt.listDailyLogsForTaskForSnapshot.all(id);
+      const helps = stmt.listHelpMessagesForTaskForSnapshot.all(id);
+      const snapshot = {
+        task: { id, code: item.code, title: item.title, ...item },
+        daily_logs: logs,
+        help_messages: helps,
+      };
+      logAudit('task', id, 'delete', snapshot, null, req);
+    } else {
+      // T1/T2/T3: ghi log cascade metadata
+      logAudit(
+        tier === 1 ? 'project' : tier === 2 ? 'phase' : 'bundle',
+        id, 'delete', { ...item, _cascade_note: 'Children records (phases/bundles/tasks/daily_logs/help_messages) cascaded.' }, null, req,
+      );
+    }
     if (tier === 1) stmt.deleteProject.run(id);
     else if (tier === 2) stmt.deletePhase.run(id);
     else if (tier === 3) stmt.deleteBundle.run(id);
@@ -432,8 +543,19 @@ router.delete('/:tier(\\d+)/:id(\\d+)', (req, res) => {
 // ============================================================================
 // Sub-resources
 // ============================================================================
-// Phase F: chi con daily_logs la sub-resource 1:N cua task.
-// Da xoa: notes, deliverables, help_messages endpoints (cac bang tuong ung da drop).
+
+/** GET /api/tasks/4/:id/help-messages — List lịch sử escalation (Phase G7). */
+router.get('/:tier(\\d+)/:id(\\d+)/help-messages', (req, res) => {
+  const tier = Number(req.params.tier);
+  if (tier !== 4) return res.status(400).json({ error: 'help_messages_only_for_task' });
+  const id = Number(req.params.id);
+  const task = stmt.getTask.get(id);
+  if (!task) return res.status(404).json({ error: 'task_not_found' });
+  const authz = authorize('task:read', req.user, { task: { ...task, tier: 4 } });
+  if (!authz.ok) return res.status(authz.status).json(authz);
+  const items = stmt.listHelpMessagesByTask.all(id);
+  return res.json({ items });
+});
 
 /** POST /api/tasks/:tier/:id/approve — Manager nghiệm thu. */
 router.post('/:tier(\\d+)/:id(\\d+)/approve', (req, res) => {
@@ -451,10 +573,21 @@ router.post('/:tier(\\d+)/:id(\\d+)/approve', (req, res) => {
 
   tx(() => {
     const progress = tier === 4 && item.deliverable_completed ? 100 : (item.progress || 0);
-    if (tier === 1) stmt.updateProject.run(item.title, item.description, item.owner_user_id, item.start_date, item.end_date, 'done', item.collapsed, id);
-    else if (tier === 2) stmt.updatePhase.run(item.title, item.description, item.owner_user_id, item.start_date, item.end_date, 'done', item.management_notes, item.blocker_alert, item.collapsed, id);
-    else if (tier === 3) stmt.updateBundle.run(item.title, item.description, item.owner_user_id, item.start_date, item.end_date, 'done', item.collapsed, id);
-    else stmt.updateTask.run(item.title, item.description, item.owner_user_id, item.assigned_by_user_id, item.department_code, item.start_date, item.end_date, progress, 'done', item.priority, item.is_today, item.collapsed, item.blocker_note || '', id);
+    if (tier === 1) {
+      stmt.updateProject.run(item.title, item.description, item.owner_user_id, item.start_date, item.end_date, 'done', item.collapsed, id);
+    } else if (tier === 2) {
+      stmt.updatePhase.run(item.title, item.description, item.owner_user_id, item.start_date, item.end_date, 'done', item.management_notes, item.blocker_alert, item.collapsed, id);
+    } else if (tier === 3) {
+      stmt.updateBundle.run(item.title, item.description, item.owner_user_id, item.start_date, item.end_date, 'done', item.collapsed, id);
+    } else {
+      stmt.updateTask.run(
+        item.title, item.description, item.owner_user_id, item.assigned_by_user_id,
+        item.department_code, item.start_date, item.end_date,
+        progress, 'done', item.priority,
+        item.is_today ?? 0, item.is_today_date ?? null, item.collapsed,
+        item.blocker_note || '', id,
+      );
+    }
     logAudit(
       tier === 1 ? 'project' : tier === 2 ? 'phase' : tier === 3 ? 'bundle' : 'task',
       id, 'status_change', { status: item.status }, { status: 'done' }, req,
@@ -467,9 +600,8 @@ router.post('/:tier(\\d+)/:id(\\d+)/approve', (req, res) => {
 });
 
 /** POST /api/tasks/:tier/:id/blocker — NV ghi 1 dong `blocker_note` cho task (Phase F).
- *  Thay the POST /help (da xoa). Frontend:
- *    POST { taskId, note } → 200 { blocker_note }
- *  Quyen: owner task hoac admin/manager trong phong ban.
+ *  Phase G7: đồng thời INSERT 1 row vào task_help_messages để giữ lịch sử.
+ *  Quyen: owner task hoặc admin/manager trong phòng ban.
  */
 router.post('/:tier(\\d+)/:id(\\d+)/blocker', (req, res) => {
   const tier = Number(req.params.tier);
@@ -485,18 +617,46 @@ router.post('/:tier(\\d+)/:id(\\d+)/blocker', (req, res) => {
   const note = String(body.note ?? '').trim();
   if (!note) return res.status(400).json({ error: 'note_required' });
 
+  let helpMsgId = 0;
   tx(() => {
     stmt.updateTask.run(
       task.title, task.description, task.owner_user_id, task.assigned_by_user_id,
       task.department_code, task.start_date, task.end_date,
-      task.progress, task.status, task.priority, task.is_today, task.collapsed,
-      note, // ← blocker_note
+      task.progress, task.status, task.priority,
+      task.is_today ?? 0, task.is_today_date ?? null, task.collapsed,
+      note, // ← blocker_note (current state)
       id,
     );
+    // Phase G7: snapshot vào help_messages history
+    const info = stmt.insertHelpMessage.run(id, note, req.user.id);
+    helpMsgId = Number(info.lastInsertRowid);
     logAudit('task', id, 'update', { blocker_note: task.blocker_note || '' }, { blocker_note: note }, req);
+    logAudit('task_help_message', helpMsgId, 'create', null, { task_id: id, body: note }, req);
   });
 
-  return res.json({ item: enrichWithTier(stmt.getTask.get(id), tier), blocker_note: note });
+  return res.json({ item: enrichWithTier(stmt.getTask.get(id), tier), blocker_note: note, help_message_id: helpMsgId });
+});
+
+/** POST /api/tasks/4/:id/help-messages/:msgId/resolve — Manager đánh dấu help message đã xử lý.
+ *  Phase G7: bổ sung cho blocker_note (current state).
+ */
+router.post('/:tier(\\d+)/:id(\\d+)/help-messages/:msgId(\\d+)/resolve', (req, res) => {
+  const tier = Number(req.params.tier);
+  if (tier !== 4) return res.status(400).json({ error: 'help_messages_only_for_task' });
+  const id = Number(req.params.id);
+  const msgId = Number(req.params.msgId);
+  const task = stmt.getTask.get(id);
+  if (!task) return res.status(404).json({ error: 'task_not_found' });
+  const authz = authorize('task:edit', req.user, { task: { ...task, tier: 4 } });
+  if (!authz.ok) return res.status(authz.status).json(authz);
+  if (!['admin', 'manager'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'forbidden', message: 'Chỉ admin/manager mới resolve help message.' });
+  }
+  tx(() => {
+    stmt.resolveHelpMessage.run(req.user.id, msgId, id);
+    logAudit('task_help_message', msgId, 'resolve', { is_resolved: 0 }, { is_resolved: 1, resolved_by: req.user.username }, req);
+  });
+  return res.json({ ok: true });
 });
 
 /** POST /api/tasks/:tier/:id/toggle — Owner tick. */
@@ -520,12 +680,41 @@ router.post('/:tier(\\d+)/:id(\\d+)/toggle', (req, res) => {
     stmt.updateTask.run(
       task.title, task.description, task.owner_user_id, task.assigned_by_user_id,
       task.department_code, task.start_date, task.end_date,
-      nextProgress, next, task.priority, task.is_today, task.collapsed,
+      nextProgress, next, task.priority,
+      task.is_today ?? 0, task.is_today_date ?? null, task.collapsed,
       task.blocker_note || '',
       id,
     );
     logAudit('task', id, 'status_change', { status: task.status }, { status: next }, req);
     recomputeRollup(id);
+  });
+
+  const updated = stmt.getTask.get(id);
+  return res.json({ item: enrichWithTier(updated, tier) });
+});
+
+/** POST /api/tasks/4/:id/toggle-today — Owner mark/unmark "today". Phase G2.
+ *  Khi bật: set is_today=1, is_today_date=today().
+ *  Khi tắt: set is_today=0, is_today_date=null.
+ *  Tự động reset qua view: query "today" = is_today=1 AND is_today_date=date('now').
+ */
+router.post('/:tier(\\d+)/:id(\\d+)/toggle-today', (req, res) => {
+  const tier = Number(req.params.tier);
+  if (tier !== 4) return res.status(400).json({ error: 'toggle_today_only_for_task' });
+  const id = Number(req.params.id);
+  const task = stmt.getTask.get(id);
+  if (!task) return res.status(404).json({ error: 'not_found' });
+  const enriched = enrichWithTier(task, tier);
+  const authz = authorize('task:toggle', req.user, { task: enriched });
+  if (!authz.ok) return res.status(authz.status).json(authz);
+
+  const currentlyToday = task.is_today === 1 && task.is_today_date === new Date().toISOString().slice(0, 10);
+  const nextIsToday = currentlyToday ? 0 : 1;
+  const nextIsTodayDate = nextIsToday === 1 ? new Date().toISOString().slice(0, 10) : null;
+
+  tx(() => {
+    stmt.setTaskToday.run(nextIsToday, nextIsTodayDate, id);
+    logAudit('task', id, 'update', { is_today: task.is_today, is_today_date: task.is_today_date }, { is_today: nextIsToday, is_today_date: nextIsTodayDate }, req);
   });
 
   const updated = stmt.getTask.get(id);

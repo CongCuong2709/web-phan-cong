@@ -330,13 +330,15 @@ console.log('📊 Inserting project hierarchy…');
 
 // --- Tier 1: Project ---
 const projectInfo = db.prepare(`
-  INSERT INTO projects (code, title, description, owner_user_id, start_date, end_date, status)
-  VALUES (?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO projects (code, title, description, owner_user_id, created_by_user_id,
+    start_date, end_date, status)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `).run(
   'DA-68',
   'Hồ sơ hoàn công dự án 68',
   'Dự án trọng điểm khối 68: từ thiết kế & pháp lý → lựa chọn nhà thầu → chuẩn bị khởi công → thi công → nghiệm thu hoàn công → bàn giao → thanh quyết toán.',
   userIds['hung'],
+  userIds['admin'],  // Phase G3: created_by
   '2026-10-10',
   '2026-10-29',
   'doing',
@@ -345,23 +347,25 @@ const projectId = Number(projectInfo.lastInsertRowid);
 
 // --- Tier 2: Phases ---
 const insertPhase = db.prepare(`
-  INSERT INTO phases (project_id, code, title, description, owner_user_id,
+  INSERT INTO phases (project_id, code, title, description, owner_user_id, created_by_user_id,
     start_date, end_date, status, management_notes, blocker_alert)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 // --- Tier 3: Bundles ---
 const insertBundle = db.prepare(`
-  INSERT INTO bundles (phase_id, code, title, description, owner_user_id,
+  INSERT INTO bundles (phase_id, code, title, description, owner_user_id, created_by_user_id,
     start_date, end_date, status)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 // --- Tier 4: Tasks ---
+// Phase G3: created_by_user_id, assigned_by_user_id. Phase G2: is_today_date.
 const insertTask = db.prepare(`
-  INSERT INTO tasks (bundle_id, code, title, description, owner_user_id,
-    department_code, start_date, end_date, progress, status, priority, is_today)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO tasks (bundle_id, code, title, description,
+    owner_user_id, created_by_user_id, assigned_by_user_id, department_code,
+    start_date, end_date, progress, status, priority, is_today, is_today_date)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const insertedTasks: { id: number; code: string; title: string }[] = [];
@@ -457,6 +461,7 @@ for (const p of phases) {
     p.title,
     p.description,
     userIds[p.owner],
+    userIds[p.owner],  // Phase G3: created_by = owner (manager tự tạo phase của mình)
     p.start,
     p.end,
     'doing',
@@ -497,6 +502,7 @@ for (const p of phases) {
       nameInfo.title,                                // bundle title (theo bảng trên)
       nameInfo.description,                          // banner cho hạng mục
       userIds[bundleOwner],
+      userIds[bundleOwner],                          // Phase G3: created_by
       bStartDate,
       bEndDate,
       'doing',
@@ -510,13 +516,16 @@ for (const p of phases) {
         t.title,                                             // 3. title
         `Kết quả đầu ra: ${t.deliverable}`,                  // 4. description
         userIds[t.owner],                                    // 5. owner_user_id
-        t.dept,                                              // 6. department_code
-        t.start,                                             // 7. start_date
-        t.end,                                               // 8. end_date
-        t.progress ?? 0,                                     // 9. progress
-        t.status ?? 'pending',                               // 10. status
-        t.priority ?? 'normal',                              // 11. priority
-        0,                                                   // 12. is_today
+        userIds[bundleOwner],                                // 6. created_by_user_id (manager tạo)
+        userIds[bundleOwner],                                // 7. assigned_by_user_id (cùng người tạo)
+        t.dept,                                              // 8. department_code
+        t.start,                                             // 9. start_date
+        t.end,                                               // 10. end_date
+        t.progress ?? 0,                                     // 11. progress
+        t.status ?? 'pending',                               // 12. status
+        t.priority ?? 'normal',                              // 13. priority
+        0,                                                   // 14. is_today
+        null,                                                // 15. is_today_date (chưa mark today)
       );
       insertedTasks.push({ id: Number(info.lastInsertRowid), code: t.code, title: t.title });
     }
@@ -598,6 +607,35 @@ if (t2_04) {
 }
 
 // ============================================================================
+// 6b. Phase G7: Help messages history demo (lịch sử escalation)
+// ============================================================================
+
+console.log('💬 Inserting help_messages history demo on T2-04…');
+if (t2_04) {
+  const insertHelp = db.prepare(`
+    INSERT INTO task_help_messages (task_id, body, author_user_id)
+    VALUES (?, ?, ?)
+  `);
+  // Cùng nội dung với blocker_note hiện tại, để demo flow
+  insertHelp.run(
+    t2_04,
+    'Cần BGĐ xác nhận ngân hàng bảo lãnh trước khi phát hành thư bảo lãnh.',
+    userIds['cuong'],  // manager KTTC gửi
+  );
+  // Một message nữa của admin resolve
+  const info = db.prepare(`
+    INSERT INTO task_help_messages (task_id, body, author_user_id, is_resolved, resolved_by_user_id, resolved_at)
+    VALUES (?, ?, ?, 1, ?, datetime('now'))
+  `).run(
+    t2_04,
+    'Đã xác nhận với ngân hàng Vietcombank chi nhánh X, thư bảo lãnh dự kiến phát hành 16/10.',
+    userIds['admin'],
+    userIds['admin'],
+  );
+  console.log(`   - 2 help messages (1 resolved, 1 open)`);
+}
+
+// ============================================================================
 // 7. Audit log demo
 // ============================================================================
 
@@ -649,7 +687,7 @@ db.close();
 console.log('\n✅ Seed "Hồ sơ hoàn công dự án 68" complete!');
 console.log('   - 4 departments, 11 users (giữ nguyên dàn nhân sự cũ)');
 console.log(`   - 1 project "DA-68" → 7 phases → ${totalBundles.c} bundles (chia theo phòng ban: QLDA/KTTC/TC) → ${taskCount} tasks`);
-console.log('   - 3 daily log demo + 1 blocker_note demo');
+console.log('   - 3 daily log demo + 1 blocker_note demo + 2 help_messages');
 console.log('   - 3 audit log entries');
 console.log('\n   Default password:');
 console.log('   - admin / admin123');

@@ -8,9 +8,17 @@
  *   - Sub-resource (deliverable, help message, daily_log, note) là 1:N với task
  *   - Audit log đổi tên `history_entries` → `audit_log`, có JSON snapshot
  *
+ * Phase G (2026-10 — BẢN NÀY):
+ *   - G1: ON CONFLICT UPSERT cho daily_logs (atomic, hết race)
+ *   - G2: is_today_date trên tasks (hết "today vĩnh viễn")
+ *   - G3: created_by_user_id trên 4 tier
+ *   - G7: task_help_messages cho lịch sử escalation
+ *   - Migration script: backend/scripts/run-migration.mjs
+ *
  * Phase B:
- *   - Bỏ JS rollup trùng với trigger (xem stateMachine.js + recomputeRollup trong routes)
  *   - PRAGMA journal_mode = WAL, foreign_keys = ON
+ *   - Progress rollup vẫn ở JS (routes/tasks.js:recomputeRollup). Trigger
+ *     CHỈ update updated_at, không rollup progress.
  */
 
 import { DatabaseSync } from 'node:sqlite';
@@ -22,6 +30,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'database.db');
 const SCHEMA_PATH = path.join(__dirname, 'sql', 'schema.sql');
+const MIGRATION_PATH = path.join(__dirname, 'sql', 'migration.sql');
 
 const isFreshDb = !fs.existsSync(DB_PATH);
 
@@ -39,6 +48,20 @@ if (isFreshDb) {
   const schema = fs.readFileSync(SCHEMA_PATH, 'utf8');
   db.exec(schema);
   console.log('[db] Schema loaded.');
+} else {
+  // Phase G: với DB đã có data, áp dụng migration idempotent.
+  // Migration áp dụng CREATE UNIQUE INDEX/IF NOT EXISTS an toàn.
+  // ALTER TABLE ... ADD COLUMN có try/catch trong run-migration.mjs,
+  // ở đây chỉ chạy các câu IF NOT EXISTS để tránh duplicate-column error.
+  try {
+    if (fs.existsSync(MIGRATION_PATH)) {
+      const mig = fs.readFileSync(MIGRATION_PATH, 'utf8');
+      db.exec(mig);
+    }
+  } catch (err) {
+    // Lỗi từ migration không nên block app khởi động — log warning.
+    console.warn('[db] Migration step warning:', err.message);
+  }
 }
 
 /**
@@ -103,9 +126,11 @@ export const stmt = {
     FROM projects p LEFT JOIN users u ON u.id = p.owner_user_id
     WHERE p.id = ?
   `),
+  // Phase G3: thêm created_by_user_id
   insertProject: db.prepare(`
-    INSERT INTO projects (code, title, description, owner_user_id, start_date, end_date, status, collapsed)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO projects (code, title, description, owner_user_id, created_by_user_id,
+      start_date, end_date, status, collapsed)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
   updateProject: db.prepare(`
     UPDATE projects SET
@@ -131,10 +156,11 @@ export const stmt = {
     FROM phases ph LEFT JOIN users u ON u.id = ph.owner_user_id
     WHERE ph.id = ?
   `),
+  // Phase G3: thêm created_by_user_id
   insertPhase: db.prepare(`
-    INSERT INTO phases (project_id, code, title, description, owner_user_id,
+    INSERT INTO phases (project_id, code, title, description, owner_user_id, created_by_user_id,
       start_date, end_date, status, management_notes, blocker_alert, collapsed)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
   updatePhase: db.prepare(`
     UPDATE phases SET
@@ -164,10 +190,11 @@ export const stmt = {
     FROM bundles b LEFT JOIN users u ON u.id = b.owner_user_id
     WHERE b.id = ?
   `),
+  // Phase G3: thêm created_by_user_id
   insertBundle: db.prepare(`
-    INSERT INTO bundles (phase_id, code, title, description, owner_user_id,
+    INSERT INTO bundles (phase_id, code, title, description, owner_user_id, created_by_user_id,
       start_date, end_date, status, collapsed)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
   updateBundle: db.prepare(`
     UPDATE bundles SET
@@ -207,18 +234,26 @@ export const stmt = {
     FROM tasks t LEFT JOIN users u ON u.id = t.owner_user_id
     WHERE t.bundle_id = ? ORDER BY t.code
   `),
+  // Phase G3: created_by_user_id. Phase G2: is_today_date.
   insertTask: db.prepare(`
-    INSERT INTO tasks (bundle_id, code, title, description, owner_user_id, assigned_by_user_id,
-      department_code, start_date, end_date, progress, status, priority, is_today, collapsed)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tasks (bundle_id, code, title, description,
+      owner_user_id, created_by_user_id, assigned_by_user_id, department_code,
+      start_date, end_date, progress, status, priority,
+      is_today, is_today_date, collapsed)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
   updateTask: db.prepare(`
     UPDATE tasks SET
       title = ?, description = ?, owner_user_id = ?, assigned_by_user_id = ?,
       department_code = ?, start_date = ?, end_date = ?,
-      progress = ?, status = ?, priority = ?, is_today = ?, collapsed = ?,
+      progress = ?, status = ?, priority = ?,
+      is_today = ?, is_today_date = ?, collapsed = ?,
       blocker_note = ?
     WHERE id = ?
+  `),
+  // Phase G2: helper chỉ set is_today + is_today_date (dùng cho toggle today)
+  setTaskToday: db.prepare(`
+    UPDATE tasks SET is_today = ?, is_today_date = ? WHERE id = ?
   `),
   deleteTask: db.prepare('DELETE FROM tasks WHERE id = ?'),
   getChildrenProgress: db.prepare(
@@ -232,8 +267,18 @@ export const stmt = {
   `),
 
   // --- Daily logs (Phase E: FK truc tiep vao tasks, bo subtasks) ---
-  // Phase F: day la sub-resource DUY NHAT con lai tren task (text-only use case).
-  // Da drop: task_deliverables, task_help_messages, task_notes.
+  // Phase G1: ON CONFLICT(task_id, log_date) DO UPDATE — atomic UPSERT.
+  upsertDailyLog: db.prepare(`
+    INSERT INTO daily_logs (task_id, log_date, description, result, obstacle, progress, author_user_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(task_id, log_date) DO UPDATE SET
+      description = excluded.description,
+      result = excluded.result,
+      obstacle = excluded.obstacle,
+      progress = excluded.progress,
+      author_user_id = excluded.author_user_id,
+      created_at = datetime('now')
+  `),
   listDailyLogsByTask: db.prepare(`
     SELECT l.*, u.username AS user_username_str, u.fullname AS user_fullname
     FROM daily_logs l LEFT JOIN users u ON u.id = l.author_user_id
@@ -248,14 +293,43 @@ export const stmt = {
     INSERT INTO daily_logs (task_id, log_date, description, result, obstacle,
       progress, author_user_id) VALUES (?, ?, ?, ?, ?, ?, ?)
   `),
-  // Phase F: UPSERT 1 daily_log/(task,ngay). SQLite dung ON CONFLICT qua unique index.
-  // Tuy nhien, schema khong co UNIQUE constraint, nen query WHERE truoc roi insert.
-  // Pattern nay dat gang ON CONFLICT: lay row cung (task_id, log_date), update neu co, insert neu khong.
+  // Phase G1: KHÔNG còn UPSERT theo pattern SELECT-then-UPDATE. Giữ lại để
+  // test/debug, code chính dùng upsertDailyLog (ON CONFLICT) ở trên.
   upsertDailyLogForToday: db.prepare(`
     UPDATE daily_logs
        SET description = ?, result = ?, obstacle = ?, progress = ?,
            author_user_id = ?, created_at = datetime('now')
      WHERE task_id = ? AND log_date = ?
+  `),
+
+  // --- Task help messages (Phase G7: lịch sử escalation) ---
+  insertHelpMessage: db.prepare(`
+    INSERT INTO task_help_messages (task_id, body, author_user_id)
+    VALUES (?, ?, ?)
+  `),
+  listHelpMessagesByTask: db.prepare(`
+    SELECT m.*, u.username AS author_username_str, u.fullname AS author_fullname
+    FROM task_help_messages m
+    LEFT JOIN users u ON u.id = m.author_user_id
+    WHERE m.task_id = ?
+    ORDER BY m.created_at DESC, m.id DESC
+  `),
+  resolveHelpMessage: db.prepare(`
+    UPDATE task_help_messages
+    SET is_resolved = 1, resolved_by_user_id = ?, resolved_at = datetime('now')
+    WHERE id = ? AND task_id = ?
+  `),
+  // Snapshot toàn bộ help messages của 1 task (dùng khi DELETE task để giữ audit)
+  listHelpMessagesForTaskForSnapshot: db.prepare(`
+    SELECT m.*, u.username AS author_username_str
+    FROM task_help_messages m
+    LEFT JOIN users u ON u.id = m.author_user_id
+    WHERE m.task_id = ?
+    ORDER BY m.created_at ASC
+  `),
+  // Snapshot toàn bộ daily logs của 1 task (dùng khi DELETE task)
+  listDailyLogsForTaskForSnapshot: db.prepare(`
+    SELECT * FROM daily_logs WHERE task_id = ? ORDER BY log_date ASC
   `),
 
   // --- Audit log (Phase D — old schema: history_entries; new: audit_log) ---
@@ -269,9 +343,6 @@ export const stmt = {
     SELECT * FROM audit_log WHERE entity_type = ? AND entity_id = ?
     ORDER BY created_at DESC LIMIT 100
   `),
-
-  // Phase F: help_requests da xoa. Escalation gio thong qua tasks.blocker_note
-  // (NV ghi 1 dong, manager xem khi mo task). Khong can tickets.
 };
 
 export default db;
