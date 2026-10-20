@@ -338,7 +338,7 @@ const projectInfo = db.prepare(`
   'Hồ sơ hoàn công dự án 68',
   'Dự án trọng điểm khối 68: từ thiết kế & pháp lý → lựa chọn nhà thầu → chuẩn bị khởi công → thi công → nghiệm thu hoàn công → bàn giao → thanh quyết toán.',
   userIds['hung'],
-  userIds['admin'],  // Phase G3: created_by
+  userIds['admin'],  // created_by_user_id
   '2026-10-10',
   '2026-10-29',
   'doing',
@@ -360,7 +360,7 @@ const insertBundle = db.prepare(`
 `);
 
 // --- Tier 4: Tasks ---
-// Phase G3: created_by_user_id, assigned_by_user_id. Phase G2: is_today_date.
+// Schema: created_by_user_id, assigned_by_user_id, is_today_date.
 const insertTask = db.prepare(`
   INSERT INTO tasks (bundle_id, code, title, description,
     owner_user_id, created_by_user_id, assigned_by_user_id, department_code,
@@ -461,7 +461,7 @@ for (const p of phases) {
     p.title,
     p.description,
     userIds[p.owner],
-    userIds[p.owner],  // Phase G3: created_by = owner (manager tự tạo phase của mình)
+    userIds[p.owner],  // created_by = owner (manager tự tạo phase của mình)
     p.start,
     p.end,
     'doing',
@@ -502,7 +502,7 @@ for (const p of phases) {
       nameInfo.title,                                // bundle title (theo bảng trên)
       nameInfo.description,                          // banner cho hạng mục
       userIds[bundleOwner],
-      userIds[bundleOwner],                          // Phase G3: created_by
+      userIds[bundleOwner],                          // created_by
       bStartDate,
       bEndDate,
       'doing',
@@ -607,7 +607,7 @@ if (t2_04) {
 }
 
 // ============================================================================
-// 6b. Phase G7: Help messages history demo (lịch sử escalation)
+// 6b. Help messages history demo (lịch sử escalation)
 // ============================================================================
 
 console.log('💬 Inserting help_messages history demo on T2-04…');

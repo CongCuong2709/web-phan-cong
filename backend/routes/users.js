@@ -19,7 +19,7 @@ router.use(requireAuth);
 /** GET /api/users — Tất cả user, hoặc filter theo department. */
 router.get('/', (req, res) => {
   const { department } = req.query;
-  // B3: dùng centralized policy.
+  // Dùng centralized policy (xem lib/policies.js).
   const authz = authorize('user:list', req.user, { department });
   if (!authz.ok) return res.status(authz.status).json(authz);
   let users = stmt.listUsers.all();
@@ -37,7 +37,7 @@ router.get('/', (req, res) => {
 router.get('/:username', (req, res) => {
   const u = stmt.getUserByUsername.get(req.params.username);
   if (!u) return res.status(404).json({ error: 'not_found' });
-  // B3: dùng centralized policy. Truyền targetDepts để check overlap.
+  // Truyền targetDepts để check overlap department.
   const targetDepts = stmt.getUserDepartments.all(u.id).map((d) => d.department_code);
   const authz = authorize('user:read', req.user, { targetDepts });
   if (!authz.ok) return res.status(authz.status).json(authz);

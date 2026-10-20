@@ -144,7 +144,7 @@ export interface TierItemDto {
   parent_id?: number | null;
   department_code?: string | null;
   owner_user_id?: number | null;
-  owner_username?: string | null; // ISS-006: backend tra cứu ID từ username
+  owner_username?: string | null; // Backend tra cứu user_id từ username.
   assigned_by_user_id?: number | null;
   start_date?: string;
   end_date?: string;
@@ -156,7 +156,7 @@ export interface TierItemDto {
   is_today?: number;
   bundle_name?: string | null;
   last_updated?: string | null;
-  /** Phase F: thay task_help_messages 1:N bằng 1 cột text. */
+  /** Escalation NV ↔ Manager (1 dòng text). */
   blocker_note?: string | null;
   blocker_alert?: string | null;
   start_week?: number;
@@ -178,9 +178,7 @@ export interface DailyLogDto {
   progress: number;
 }
 
-// Fix TD-05: typed DTOs thay cho `unknown[]`. TypeScript sẽ bắt lỗi runtime
-// (sai tên field, missing field) ngay lúc compile thay vì chỉ nổn console.
-// Phase F: loại bỏ deliverable_* + help_message_* (3 bảng backend đã xoá).
+// Typed DTOs thay cho `unknown[]` — TypeScript bắt lỗi sai/missing field lúc compile.
 export interface TeamLeadTaskDto {
   id: number;
   code: string;
@@ -194,7 +192,7 @@ export interface TeamLeadTaskDto {
   status: 'pending_approval' | 'need_help' | 'in_progress' | 'done';
   priority?: 'Cao' | 'Thường';
   progress_text?: string;
-  /** Phase F: 1 dòng blocker do NV viết. */
+  /** 1 dòng blocker do NV viết (escalation). */
   blocker_note?: string | null;
 }
 
@@ -216,7 +214,7 @@ export interface EmployeeTaskDto {
   owner_username?: string;
   owner_username_str?: string;
   department_code?: string;
-  /** Phase F: NV viết "đang vướng ở đâu" → manager xem. */
+  /** NV viết "đang vướng ở đâu" — Manager xem khi mở task. */
   blocker_note?: string | null;
 }
 
@@ -299,7 +297,7 @@ export const api = {
     return request<{ ok: boolean; time: string }>('GET', '/api/health');
   },
 
-  // --- Tasks (Phase C: tier-specific endpoints) ---
+  // --- Tasks (tier-specific endpoints) ---
   /**
    * GET /api/tasks — List filtered theo role. Backend trả TẤT CẢ 4 tier
    * với field `tier` set sẵn. Frontend dùng TierItemDto (kèm tier) cho cả 4 loại.
@@ -307,8 +305,7 @@ export const api = {
   async listTasks() {
     return request<{ items: TierItemDto[] }>('GET', '/api/tasks');
   },
-  /** GET /api/tasks/:tier/:id — tier ∈ {1,2,3,4}.
-   *  Phase F: response chỉ trả `{ item }` (notes/deliverables/helpMessages đã xoá). */
+  /** GET /api/tasks/:tier/:id — tier ∈ {1,2,3,4}. Response trả `{ item }`. */
   async getTask(tier: number, id: number) {
     return request<{ item: TierItemDto }>(
       'GET', `/api/tasks/${tier}/${id}`
@@ -327,12 +324,11 @@ export const api = {
     return request('DELETE', `/api/tasks/${tier}/${id}`);
   },
 
-  // --- Sub-resource trên task (Phase F: chi con daily_logs + blocker_note) ---
+  // --- Sub-resource trên task (daily_logs + blocker_note) ---
   async approveTask(tier: number, id: number) {
     return request<{ item: TierItemDto }>('POST', `/api/tasks/${tier}/${id}/approve`);
   },
-  /** POST /api/tasks/4/:id/blocker — NV ghi 1 dòng blocker_note.
-   *  Phase F: thay cho /help endpoint cũ (đã xoá). */
+  /** POST /api/tasks/:id/blocker — NV ghi 1 dòng blocker_note (escalation). */
   async setTaskBlocker(tier: number, id: number, note: string) {
     return request<{ item: TierItemDto; blocker_note: string }>(
       'POST', `/api/tasks/${tier}/${id}/blocker`, { note }
@@ -342,11 +338,11 @@ export const api = {
     return request<{ item: TierItemDto }>('POST', `/api/tasks/${tier}/${id}/toggle`);
   },
 
-  // B7: backward-compat aliases đã xoá. Frontend giờ chỉ dùng /api/tasks.
+  // Backward-compat aliases đã xoá — frontend chỉ dùng /api/tasks.
   // TierItem/TeamLeadTask/EmployeeTask DTO types vẫn dùng cho transforms,
   // nhưng API chỉ có 1 endpoint /api/tasks.
 
-  // --- Daily logs (Phase E: gắn trực tiếp vào task) ---
+  // --- Daily logs (gắn trực tiếp vào task) ---
   async addDailyLog(log: DailyLogDto) {
     return request('POST', `/api/tasks/${log.taskId}/logs`, {
       description: log.description,

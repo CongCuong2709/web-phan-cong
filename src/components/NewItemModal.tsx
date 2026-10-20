@@ -59,8 +59,7 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
   const [parentId, setParentId] = useState('');
   const [ownerUsername, setOwnerUsername] = useState(currentUser.username);
 
-  // MI-03 + 2026-10: dùng startDate + endDate (ISO 'YYYY-MM-DD').
-  // Default: startDate = today, endDate = +30 ngày.
+  // Dùng startDate + endDate (ISO 'YYYY-MM-DD'). Default: startDate = today, endDate = +30 ngày.
   const today = new Date();
   const todayIso = fmtIsoDate(today);
   const in30Days = new Date(today);
@@ -145,7 +144,6 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
       status: 'Chuẩn bị',
       priority,
       description,
-      // Phase F: bỏ deliverables (bảng task_deliverables đã xoá).
       managementNotes: `Mới tạo bởi ${currentUser.fullname}, đang chờ phân bổ chi tiết.`,
       gantt: {
         startWeek: sw,

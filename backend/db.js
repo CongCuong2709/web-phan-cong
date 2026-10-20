@@ -1,24 +1,13 @@
 /**
  * db.js — Database connection dùng `node:sqlite` (built-in từ Node 22.5+).
  *
- * Phase E (2026-10) refactor:
- *   - Xoá bảng `subtasks`; daily_logs FK trực tiếp vào tasks (không qua subtask)
- *   - Schema đổi từ 1 wide-table `tasks` thành 4 bảng projects/phases/bundles/tasks
- *   - Mỗi loại entity có stmt cache riêng (insertX, getX, listX)
- *   - Sub-resource (deliverable, help message, daily_log, note) là 1:N với task
- *   - Audit log đổi tên `history_entries` → `audit_log`, có JSON snapshot
+ * Schema gồm 4 tier (projects / phases / bundles / tasks) + sub-resource 1:N
+ * (daily_logs, task_help_messages, audit_log). Mỗi entity có stmt cache riêng.
  *
- * Phase G (2026-10 — BẢN NÀY):
- *   - G1: ON CONFLICT UPSERT cho daily_logs (atomic, hết race)
- *   - G2: is_today_date trên tasks (hết "today vĩnh viễn")
- *   - G3: created_by_user_id trên 4 tier
- *   - G7: task_help_messages cho lịch sử escalation
- *   - Migration script: backend/scripts/run-migration.mjs
- *
- * Phase B:
  *   - PRAGMA journal_mode = WAL, foreign_keys = ON
- *   - Progress rollup vẫn ở JS (routes/tasks.js:recomputeRollup). Trigger
- *     CHỈ update updated_at, không rollup progress.
+ *   - Progress rollup ở JS (xem routes/tasks.js:recomputeRollup); trigger DB
+ *     chỉ update updated_at, không rollup.
+ *   - Lịch sử thay đổi lớn (Phase B/C/D/E/F/G): xem CHANGELOG.md.
  */
 
 import { DatabaseSync } from 'node:sqlite';
@@ -49,10 +38,9 @@ if (isFreshDb) {
   db.exec(schema);
   console.log('[db] Schema loaded.');
 } else {
-  // Phase G: với DB đã có data, áp dụng migration idempotent.
-  // Migration áp dụng CREATE UNIQUE INDEX/IF NOT EXISTS an toàn.
-  // ALTER TABLE ... ADD COLUMN có try/catch trong run-migration.mjs,
-  // ở đây chỉ chạy các câu IF NOT EXISTS để tránh duplicate-column error.
+  // Với DB đã có data, áp dụng migration idempotent (CREATE UNIQUE INDEX / IF NOT EXISTS).
+  // ALTER TABLE có try/catch trong run-migration.mjs; ở đây chỉ chạy IF NOT EXISTS
+  // để tránh duplicate-column error.
   try {
     if (fs.existsSync(MIGRATION_PATH)) {
       const mig = fs.readFileSync(MIGRATION_PATH, 'utf8');
@@ -80,8 +68,8 @@ export function tx(fn) {
 }
 
 /**
- * Statement cache (Phase C: chuẩn hoá theo entity).
- * Mỗi statement được prepare 1 lần, gọi nhiều lần.
+ * Statement cache — mỗi entity có stmt riêng (insertX, getX, listX).
+ * Prepare 1 lần, gọi nhiều lần.
  */
 export const stmt = {
   // --- Users ---
@@ -126,7 +114,7 @@ export const stmt = {
     FROM projects p LEFT JOIN users u ON u.id = p.owner_user_id
     WHERE p.id = ?
   `),
-  // Phase G3: thêm created_by_user_id
+  // Audit columns: created_by_user_id
   insertProject: db.prepare(`
     INSERT INTO projects (code, title, description, owner_user_id, created_by_user_id,
       start_date, end_date, status, collapsed)
@@ -156,7 +144,7 @@ export const stmt = {
     FROM phases ph LEFT JOIN users u ON u.id = ph.owner_user_id
     WHERE ph.id = ?
   `),
-  // Phase G3: thêm created_by_user_id
+  // Audit columns: created_by_user_id
   insertPhase: db.prepare(`
     INSERT INTO phases (project_id, code, title, description, owner_user_id, created_by_user_id,
       start_date, end_date, status, management_notes, blocker_alert, collapsed)
@@ -190,7 +178,7 @@ export const stmt = {
     FROM bundles b LEFT JOIN users u ON u.id = b.owner_user_id
     WHERE b.id = ?
   `),
-  // Phase G3: thêm created_by_user_id
+  // Audit columns: created_by_user_id
   insertBundle: db.prepare(`
     INSERT INTO bundles (phase_id, code, title, description, owner_user_id, created_by_user_id,
       start_date, end_date, status, collapsed)
@@ -234,7 +222,7 @@ export const stmt = {
     FROM tasks t LEFT JOIN users u ON u.id = t.owner_user_id
     WHERE t.bundle_id = ? ORDER BY t.code
   `),
-  // Phase G3: created_by_user_id. Phase G2: is_today_date.
+  // Audit columns: created_by_user_id, assigned_by_user_id. Today tracking: is_today_date.
   insertTask: db.prepare(`
     INSERT INTO tasks (bundle_id, code, title, description,
       owner_user_id, created_by_user_id, assigned_by_user_id, department_code,
@@ -251,7 +239,7 @@ export const stmt = {
       blocker_note = ?
     WHERE id = ?
   `),
-  // Phase G2: helper chỉ set is_today + is_today_date (dùng cho toggle today)
+  // Toggle "today" — set đồng thời is_today + is_today_date.
   setTaskToday: db.prepare(`
     UPDATE tasks SET is_today = ?, is_today_date = ? WHERE id = ?
   `),
@@ -266,8 +254,8 @@ export const stmt = {
     WHERE t.id = ?
   `),
 
-  // --- Daily logs (Phase E: FK truc tiep vao tasks, bo subtasks) ---
-  // Phase G1: ON CONFLICT(task_id, log_date) DO UPDATE — atomic UPSERT.
+  // --- Daily logs (FK trực tiếp vào tasks, không qua subtasks) ---
+  // ON CONFLICT(task_id, log_date) DO UPDATE — atomic UPSERT.
   upsertDailyLog: db.prepare(`
     INSERT INTO daily_logs (task_id, log_date, description, result, obstacle, progress, author_user_id)
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -293,8 +281,8 @@ export const stmt = {
     INSERT INTO daily_logs (task_id, log_date, description, result, obstacle,
       progress, author_user_id) VALUES (?, ?, ?, ?, ?, ?, ?)
   `),
-  // Phase G1: KHÔNG còn UPSERT theo pattern SELECT-then-UPDATE. Giữ lại để
-  // test/debug, code chính dùng upsertDailyLog (ON CONFLICT) ở trên.
+  // UPSERT theo pattern SELECT-then-UPDATE — giữ để test/debug.
+  // Code chính dùng upsertDailyLog (ON CONFLICT) ở trên.
   upsertDailyLogForToday: db.prepare(`
     UPDATE daily_logs
        SET description = ?, result = ?, obstacle = ?, progress = ?,
@@ -302,7 +290,7 @@ export const stmt = {
      WHERE task_id = ? AND log_date = ?
   `),
 
-  // --- Task help messages (Phase G7: lịch sử escalation) ---
+  // --- Task help messages (lịch sử escalation 1:N) ---
   insertHelpMessage: db.prepare(`
     INSERT INTO task_help_messages (task_id, body, author_user_id)
     VALUES (?, ?, ?)
@@ -332,7 +320,7 @@ export const stmt = {
     SELECT * FROM daily_logs WHERE task_id = ? ORDER BY log_date ASC
   `),
 
-  // --- Audit log (Phase D — old schema: history_entries; new: audit_log) ---
+  // --- Audit log (JSON snapshot; schema mới thay cho history_entries cũ) ---
   insertAuditLog: db.prepare(`
     INSERT INTO audit_log (entity_type, entity_id, action,
       old_values, new_values,

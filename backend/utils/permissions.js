@@ -47,7 +47,7 @@ export function canCreateTiers(role) {
   }
 }
 
-/** Kiểm tra user có sửa 1 Task cụ thể không (ISS-007: thay canEditTierItem). */
+/** Kiểm tra user có sửa 1 Task cụ thể không (thay cho canEditTierItem cũ). */
 export function canEditTask(user, item) {
   if (!user || !item) return false;
   if (user.role === 'admin') return true;
@@ -65,7 +65,7 @@ export const canEditDeliverable = canEditTask;
 
 /** Quyền ghi nhật ký thi công (DailyLog) cho 1 task.
  *
- * Phase E: bỏ SubTask, daily_log giờ FK trực tiếp vào tasks. Quyền dựa trên:
+ * Quyền dựa trên:
  *   - admin: always
  *   - director: read-only (không ghi log)
  *   - manager: cùng department với task

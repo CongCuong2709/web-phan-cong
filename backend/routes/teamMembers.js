@@ -1,7 +1,7 @@
 /**
  * routes/teamMembers.js — Derive team members từ users + tier items.
  *
- * Trước đây: frontend dùng hardcoded CONSTRUCTION_TEAM_MEMBERS từ constructionData.ts
+ * Trước đây frontend hardcode CONSTRUCTION_TEAM_MEMBERS trong source — giờ lấy từ DB.
  * → "dữ liệu lạ" không khớp DB.
  *
  * Bây giờ: backend derive từ users (role employee/manager) + tier items (count tasks)
@@ -26,8 +26,7 @@ router.get('/', (req, res) => {
   `).all();
 
   // Lấy tất cả T4 tasks (assignable to employees) + count theo owner
-  // Phase C: tasks table giờ chỉ chứa tier 4 (bundle_id optional).
-  // Status giờ là enum (`blocked`/`doing`/...).
+  // Status là enum `blocked`/`doing`/...; tier 4 có bundle_id optional.
   const allT4 = db.prepare(`
     SELECT id, owner_user_id, department_code, status, progress, code, title
     FROM tasks

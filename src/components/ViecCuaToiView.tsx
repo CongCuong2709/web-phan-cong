@@ -20,7 +20,7 @@ interface ViecCuaToiViewProps {
   dailyLogs: DailyLog[];
   onToggleDone: (taskId: string) => void;
   onStartTask: (taskId: string) => void;
-  /** Phase F: callback ghi daily_log 4 cột cho 1 task (per-row, ít dùng hơn Save All). */
+  /** Callback ghi daily_log 4 cột cho 1 task (per-row, ít dùng hơn Save All). */
   onAddDailyLog: (taskId: string, description: string, result: string, obstacle: string, progress: number) => void;
   /** Save All — App.tsx batch xử lý N entries, gom toast thành summary 1 cái. */
   onSaveAllLogs: (entries: SaveLogEntry[]) => void;
@@ -286,9 +286,7 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
               </span>
               <span>+ Tự tạo thêm việc cá nhân</span>
             </button>
-            {/* Phase F: bỏ nút "Báo cáo nhanh cho Trưởng phòng" + hỗ trợ
-                nhân viên. Escalation giờ là tasks.blocker_note (NV ghi 1 dòng
-                qua modal "Báo cáo vướng mắc" trên từng task). */}
+            {/* Escalation qua tasks.blocker_note (NV ghi 1 dòng qua modal "Báo cáo vướng mắc" trên từng task). */}
             {isManager && (
               <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#eff4ff] text-[#434655] text-[12px]">
                 <span className="material-symbols-outlined text-[16px]">info</span>

@@ -1,12 +1,11 @@
 /**
  * routes/dailyLogs.js — DailyLog CRUD (nhật ký thi công).
  *
- * Phase E refactor: bỏ SubTask tier; daily_log giờ FK trực tiếp vào tasks.
+ * daily_log FK trực tiếp vào tasks (không qua subtask).
  * Mount tại /api/daily-logs (bulk) và /api/tasks/:taskId/logs (per-task).
  *
- * Phase G1 refactor: dùng INSERT ... ON CONFLICT(task_id, log_date) DO UPDATE
- *   thay cho SELECT-then-UPDATE/INSERT cũ. Atomic, không race condition khi 2
- *   request đồng thời cho cùng (task_id, log_date).
+ * UPSERT dùng INSERT ... ON CONFLICT(task_id, log_date) DO UPDATE — atomic,
+ * không race condition khi 2 request đồng thời cho cùng (task_id, log_date).
  *
  * Endpoints:
  *   GET    /api/tasks/:taskId/logs                — List logs của 1 task
@@ -36,8 +35,7 @@ router.get('/tasks/:taskId/logs', (req, res) => {
 });
 
 /** POST /api/tasks/:taskId/logs — UPSERT daily log.
- *  Phase G1: 1 câu INSERT ... ON CONFLICT(task_id, log_date) DO UPDATE — atomic.
- *  Trước đây: SELECT trước rồi UPDATE/INSERT → race condition khi concurrent.
+ *  INSERT ... ON CONFLICT(task_id, log_date) DO UPDATE — atomic.
  *
  *  Nếu log mới có progress khác task.progress → update tasks.progress trong
  *  cùng transaction (đảm bảo consistency với audit_log).
@@ -76,7 +74,7 @@ router.post('/tasks/:taskId/logs', (req, res) => {
       'SELECT id FROM daily_logs WHERE task_id = ? AND log_date = ?'
     ).get(taskId, logDate);
 
-    // Phase G1: ON CONFLICT — atomic UPSERT, không race.
+    // ON CONFLICT (task_id, log_date) — atomic UPSERT, không race.
     stmt.upsertDailyLog.run(
       taskId, logDate, description, result, obstacle, progress, req.user.id,
     );
@@ -104,7 +102,7 @@ router.post('/tasks/:taskId/logs', (req, res) => {
       (req.headers['user-agent'] || '').slice(0, 255),
     );
 
-    // Phase F: nếu log mới có progress khác task.progress → update tasks.progress
+    // Đồng bộ progress: nếu log mới có progress khác task.progress → update tasks.progress.
     if (progress !== previousProgress) {
       stmt.updateTask.run(
         task.title, task.description, task.owner_user_id, task.assigned_by_user_id,

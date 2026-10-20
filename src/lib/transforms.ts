@@ -69,8 +69,8 @@ export function extractBackendId(id: string | number | null | undefined): number
 }
 
 /**
- * Map 1 row task từ backend (Phase C: 4-tier normalized) → TierItem shape frontend.
- * Backend giờ trả về items với field `tier` set sẵn (1-4).
+ * Map 1 row task từ backend (4-tier normalized) → TierItem shape frontend.
+ * Backend trả items với field `tier` set sẵn (1-4).
  * start_date/end_date là source of truth; daysRemaining derive runtime.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -83,11 +83,7 @@ export function apiToTierItem(api: any): TierItem {
   // daysRemaining: compute runtime từ endDate
   const daysRemaining = endDate ? computeDaysRemaining(endDate) : undefined;
 
-  // Phase F: deliverables + help_messages đã bị xoá. TierItem không còn
-  // chứa các field này. Sub-resource duy nhất còn lại là daily_logs
-  // (fetch riêng qua getDailyLogsByTask).
-  //
-  // parentId cũng dùng composite id `<parentTier>-<parentNumericId>` để tránh nhầm
+  // parentId dùng composite id `<parentTier>-<parentNumericId>` để tránh nhầm
   // giữa các tier khi walk cây. Parent tier luôn = child.tier - 1:
   //   T2 → parent = T1, T3 → parent = T2, T4 → parent = T3.
   return {
@@ -122,10 +118,9 @@ export function apiToTierItem(api: any): TierItem {
     description: String(api.description || ''),
     managementNotes: String(api.management_notes || ''),
     blockerAlert: api.blocker_alert as string | undefined,
-    // Phase F: 1 cột blocker_note thay cho task_help_messages 1:N.
+    // 1 cột blocker_note (escalation NV ↔ Manager).
     blockerNote: String(api.blocker_note || ''),
-    // Phase C: gantt.startWeek/endWeek derive runtime từ start_date/end_date
-    // (B6: bỏ denormalized columns khỏi schema — 1 nguồn sự thật).
+    // gantt.startWeek/endWeek derive runtime từ start_date/end_date — 1 nguồn sự thật.
     gantt: {
       startWeek: computeWeekFromDate(api.start_date),
       endWeek: computeWeekFromDate(api.end_date),
@@ -178,8 +173,7 @@ function computeDaysRemaining(endDateIso: string): number {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function apiToTeamLeadTask(api: any): TeamLeadTask {
-  // Phase F: backend trả unified Task. deliverable_* / help_message_* đã bỏ.
-  // Chỉ còn blocker_note (1 cột text).
+  // Backend trả unified Task — chỉ có blocker_note (1 cột text) cho escalation.
   const statusMap: Record<string, TeamLeadTask['status']> = {
     'pending': 'in_progress',
     'doing': 'in_progress',
@@ -203,7 +197,7 @@ export function apiToTeamLeadTask(api: any): TeamLeadTask {
     status: statusMap[String(api.status)] || 'in_progress',
     priority: priorityEnumToVi(api.priority) as TeamLeadTask['priority'],
     progressText: api.progress != null ? `${api.progress}%` : undefined,
-    // Phase F: 1 dòng blocker_note thay cho helpMessage 1:N cũ.
+    // 1 dòng blocker_note thay cho helpMessage 1:N cũ.
     blockerNote: String(api.blocker_note || ''),
   };
 }
@@ -214,9 +208,8 @@ export function apiToTeamLeadTask(api: any): TeamLeadTask {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function apiToEmployeeTask(api: any): EmployeeTask {
-  // ISS-007: backend giờ là unified Task. Map status enum sang EmployeeTask enum.
-  // Phase F: notesCount/notes đã bỏ (task_notes bảng xoá). currentDeliverable là
-  // trường DERIVED — không có sẵn trên /api/tasks; App.tsx sẽ merge từ
+  // Map status enum từ unified Task sang EmployeeTask enum.
+  // currentDeliverable là trường DERIVED — không có sẵn trên /api/tasks; App.tsx sẽ merge từ
   // daily_log.result của HÔM NAY sau khi fetch xong Promise.all ở useEffect login.
   // Hàm này chỉ trả về baseline (''). Đừng tự fill ở đây — sẽ tạo duplicate logic.
   const statusMap: Record<string, EmployeeTask['status']> = {
@@ -234,14 +227,13 @@ export function apiToEmployeeTask(api: any): EmployeeTask {
     bundleName: String(api.bundle_name || '—'),
     title: String(api.title || ''),
     description: String(api.description || ''),
-    // Phase F: currentDeliverable không còn từ task_deliverables. Sẽ được fill
-    // từ daily_log.result hôm nay qua useEffect (xem ViecCuaToiView).
+    // currentDeliverable fill từ daily_log.result hôm nay qua useEffect (xem ViecCuaToiView).
     currentDeliverable: '',
     lastUpdated: String(api.last_updated || ''),
     deadline: String(api.end_date || ''),
     isToday: Boolean(api.is_today),
     status: statusMap[String(api.status)] || 'doing',
-    // Manager = assigned_by (người giao task). ISS-007 lưu đúng field này.
+    // Manager = assigned_by (người giao task).
     manager: {
       name: String(api.assigned_by_fullname ?? api.owner_fullname ?? '—'),
       role: 'Trưởng phòng phụ trách',
@@ -249,9 +241,9 @@ export function apiToEmployeeTask(api: any): EmployeeTask {
     },
     ownerUsername: (api.owner_username_str as string | undefined) || undefined,
     department: api.department_code as EmployeeTask['department'],
-    // Phase F: blocker_note thay cho help_requests 1:N cũ.
+    // blocker_note (NV viết, Manager xem khi mở task).
     blockerNote: String(api.blocker_note || ''),
-    // Fix #1: tiến độ từ API (tasks.progress). App.tsx sẽ override bằng
+    // Tiến độ từ API (tasks.progress). App.tsx sẽ override bằng
     // daily_log.progress của HÔM NAY nếu có, để slider hiển thị giá trị mới nhất.
     progress: Number(api.progress ?? 0),
   };
@@ -280,7 +272,7 @@ export function apiToTeamMember(api: any): TeamMember {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// DailyLog (Phase E: taskId thay subtaskId)
+// DailyLog (taskId thay subtaskId)
 // ─────────────────────────────────────────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -319,7 +311,7 @@ export function apiToHistoryEntry(api: any): HistoryEntry {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Date helpers (Phase C: derive Gantt metadata từ dates, không lưu DB)
+// Date helpers (derive Gantt metadata từ dates, không lưu DB)
 // ─────────────────────────────────────────────────────────────────────
 
 /**

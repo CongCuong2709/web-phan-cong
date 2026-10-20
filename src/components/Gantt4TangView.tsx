@@ -166,7 +166,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
     Math.min(timeline.columnsCount - 1, Math.floor((timeline.todayLeftPct / 100) * timeline.columnsCount))
   );
 
-  // Dynamic filter + DFS tree order (Fix: trước đây chỉ filter nên render theo thứ tự
+  // Dynamic filter + DFS tree order (filter mà vẫn giữ thứ tự cây).
   // push của mảng gốc → T1, hết T2, hết T3, hết T4. Giờ sort theo cây: T1 → T2 con →
   // T3 con → T4 con).
   const filteredItems = useMemo(() => {

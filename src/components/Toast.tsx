@@ -2,8 +2,6 @@ import React from 'react';
 
 interface ToastProps {
   message: string | null;
-  // Fix Bổ sung-5: thêm 'error' type — đỏ, icon error. Trước đây thiếu nên phải
-  // fake bằng 'warning' cho mọi lỗi API.
   type?: 'success' | 'info' | 'warning' | 'error';
 }
 

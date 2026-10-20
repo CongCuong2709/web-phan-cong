@@ -21,7 +21,7 @@ import taskRoutes from './routes/tasks.js';
 import dailyLogRoutes from './routes/dailyLogs.js';
 import historyRoutes from './routes/history.js';
 import teamMemberRoutes from './routes/teamMembers.js';
-// Phase F: helpRequests route đã deprecated (file còn nhưng return 410). Không mount nữa.
+// helpRequests route deprecated — file còn nhưng trả 410 Gone. Không mount.
 
 const PORT = Number(process.env.PORT) || 3000;
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
@@ -50,16 +50,16 @@ app.get('/api/health', (_req, res) => {
 // --- Routes ---
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
-// ISS-007: unified tasks route — thay thế tier-items, team-tasks, employee-tasks
+// Unified tasks route — thay thế tier-items, team-tasks, employee-tasks cũ.
 app.use('/api/tasks', taskRoutes);
 app.use('/api/tier-items', taskRoutes);  // backward-compat alias
 app.use('/api/team-tasks', taskRoutes);   // backward-compat alias
 app.use('/api/employee-tasks', taskRoutes); // backward-compat alias
-// Phase E: thay subtasks routes bằng dailyLogs routes
-//   GET  /api/tasks/:taskId/logs     - list logs của 1 task
-//   POST /api/tasks/:taskId/logs     - thêm log
-//   GET  /api/daily-logs             - list tất cả (cho Báo cáo)
-//   DELETE /api/daily-logs/:id       - xoá log
+// Daily-log routes:
+//   GET    /api/tasks/:taskId/logs  - list logs của 1 task
+//   POST   /api/tasks/:taskId/logs  - thêm log
+//   GET    /api/daily-logs          - list tất cả (cho Báo cáo)
+//   DELETE /api/daily-logs/:id      - xoá log
 app.use('/api', dailyLogRoutes);
 app.use('/api/team-members', teamMemberRoutes);
 app.use('/api/history', historyRoutes);

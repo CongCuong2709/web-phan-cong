@@ -1,8 +1,8 @@
-// db-audit.mjs — Verify schema + data (Phase G — 2026-10)
+// db-audit.mjs — Verify schema + data (dev tool)
 //
-// Phase F đã drop: task_deliverables, task_help_messages (Phase G restore lại
-// với tên task_help_messages, KHÔNG phải task_help_messages), help_requests.
-// Phase G thêm: is_today_date, created_by_user_id, task_help_messages.
+// Checks: tables/rows count, UNIQUE index trên daily_logs(task_id, log_date),
+// audit columns (is_today_date, created_by_user_id) trên 4 tier, sample data
+// để spot-check sau khi migrate.
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,14 +30,14 @@ const counts = {
 };
 console.log('Row counts:', JSON.stringify(counts, null, 2));
 
-// Phase G: check UNIQUE constraint trên daily_logs
+// Check UNIQUE constraint trên daily_logs(task_id, log_date).
 const uniqueIdx = db.prepare(`
   SELECT name FROM sqlite_master
   WHERE type='index' AND name='idx_daily_logs_task_date_unique'
 `).get();
 console.log('UNIQUE index on daily_logs(task_id, log_date):', uniqueIdx ? '✅' : '❌');
 
-// Phase G: check is_today_date + created_by_user_id tồn tại
+// Check audit columns tồn tại.
 function hasColumn(table, column) {
   return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
 }

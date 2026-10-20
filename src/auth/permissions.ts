@@ -87,14 +87,11 @@ export function canEditTierItem(
   return item.tier === 4 && item.ownerUsername === user.username;
 }
 
-// Phase F: canEditDeliverable đã bỏ (bảng task_deliverables đã xoá).
-// Nếu cần tương đương trong tương lai, alias lại = canEditTierItem.
-
 /** Cho phép đổi trạng thái (status dropdown) — same guard as edit. */
 export const canChangeStatus = canEditTierItem;
 
 // ---------------------------------------------------------------------------
-// DailyLog (nhật ký thi công) — Phase E: gắn trực tiếp vào task
+// DailyLog (nhật ký thi công — gắn trực tiếp vào task)
 // ---------------------------------------------------------------------------
 
 /**
@@ -120,7 +117,7 @@ export function canAddDailyLog(
 }
 
 // ---------------------------------------------------------------------------
-// TeamLeadTask (giao việc nhóm) — Phase F: bỏ QuickHelpRequest (help_requests đã xoá)
+// TeamLeadTask (giao việc nhóm)
 // ---------------------------------------------------------------------------
 
 /** Quyền duyệt nghiệm thu 1 task. */
@@ -146,8 +143,8 @@ export const canResolveHelp = canApproveTask;
 // ---------------------------------------------------------------------------
 
 /**
- * Tìm manager đầu tiên của user (dùng cho C4 fix sắp tới — hiển thị "Trưởng phòng
- * giao" đúng người thay vì chính employee).
+ * Tìm manager đầu tiên của user — dùng để hiển thị "Trưởng phòng giao" đúng người
+ * thay vì chính employee.
  */
 export function findManagerOf(
   user: User,

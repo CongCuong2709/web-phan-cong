@@ -1,7 +1,7 @@
 /**
  * routes/tasks.js — UNIFIED task CRUD cho schema v6 (4-tier normalized)
  *
- * Phase C refactor: 1 endpoint /api/tasks nhưng dispatch theo tier:
+ * 1 endpoint /api/tasks, dispatch theo tier:
  *   tier 1 → bảng projects
  *   tier 2 → bảng phases
  *   tier 3 → bảng bundles
@@ -18,14 +18,13 @@
  *   DELETE /api/tasks/:tier/:id      — Xoá theo tier (T4 snapshot daily_logs/help_messages)
  *   POST   /api/tasks/:tier/:id/notes    — Thêm note (reserved)
  *   POST   /api/tasks/:tier/:id/approve  — Manager duyệt
- *   POST   /api/tasks/:tier/:id/blocker  — NV ghi blocker_note (Phase F)
+ *   POST   /api/tasks/:tier/:id/blocker  — NV ghi blocker_note
  *   POST   /api/tasks/:tier/:id/toggle   — Đổi status
  *
- * Phase G:
- *   - recomputeRollup dùng subquery UPDATE single-statement (atomic)
- *   - DELETE T4 snapshot daily_logs + help_messages vào audit_log trước khi CASCADE xoá
- *   - created_by_user_id + is_today_date support
- *   - canSee T2/T3 giữ nguyên "org-level" (xem CHÍNH SÁCH ở policies.js)
+ * Lưu ý:
+ *   - recomputeRollup dùng subquery UPDATE single-statement (atomic).
+ *   - DELETE T4 snapshot daily_logs + help_messages vào audit_log trước khi CASCADE xoá.
+ *   - canSee T2/T3 giữ nguyên "org-level" (xem CHÍNH SÁCH ở policies.js).
  */
 
 import { Router } from 'express';
@@ -73,9 +72,7 @@ function normalizePriority(p) {
 /**
  * canSee: filter theo role + dept.
  *
- * Phase G doc:
- *   - T1 (project) là BGĐ-owned → admin/director/manager thấy hết (BGĐ-owned,
- *     không gắn department_code).
+ *   - T1 (project) là BGĐ-owned → admin/director/manager thấy hết (không gắn department_code).
  *   - T2/T3 (phase/bundle) KHÔNG có department_code → "org-level" theo thiết kế.
  *     policies.js:task:read xử lý: manager cùng dept nào cũng thấy (vì
  *     inDepartment(user, null) = true). Đây là policy hiện tại, không phải bug.
@@ -93,7 +90,7 @@ function canSee(user, item) {
 }
 
 /**
- * Auto-rollup progress — Phase G: single-statement UPDATE với subquery.
+ * Auto-rollup progress — single-statement UPDATE với subquery.
  *
  * Atomic vì SQLite thực thi mỗi UPDATE trong 1 statement; kết hợp với việc
  * gọi trong tx() (caller), toàn bộ chain rollup an toàn concurrent.
@@ -337,7 +334,7 @@ router.post('/', (req, res) => {
       entityType = 'bundle';
     } else { // tier 4
       const bundleId = body.parent_id ? Number(body.parent_id) : null; // null OK (standalone)
-      // Phase G2: is_today_date mặc định = hôm nay nếu is_today=1, else null
+      // is_today_date mặc định = hôm nay nếu is_today=1, else null.
       const isToday = body.is_today ? 1 : 0;
       const isTodayDate = isToday
         ? (body.is_today_date ?? new Date().toISOString().slice(0, 10))
@@ -450,7 +447,7 @@ router.patch('/:tier(\\d+)/:id(\\d+)', (req, res) => {
       newProgress = Number(body.progress ?? oldProgress);
       progressChanged = newProgress !== oldProgress;
 
-      // Phase G2: nếu is_today bật lên → set is_today_date = today() nếu client không truyền
+      // Nếu is_today bật lên → set is_today_date = today() khi client không truyền.
       let nextIsToday = body.is_today !== undefined ? (body.is_today ? 1 : 0) : item.is_today;
       let nextIsTodayDate = body.is_today_date !== undefined
         ? body.is_today_date
@@ -500,10 +497,9 @@ router.patch('/:tier(\\d+)/:id(\\d+)', (req, res) => {
 });
 
 /** DELETE /api/tasks/:tier/:id — Admin only.
- *  Phase G: T4 delete SNAPSHOT daily_logs + help_messages vào audit_log trước
- *  khi CASCADE xoá. T1/T2/T3 delete CASCADE xuống con — không snapshot từng
- *  descendant (sẽ nặng) nhưng ghi log "cascade_delete" vào audit_log của
- *  parent để trace.
+ *  T4 delete SNAPSHOT daily_logs + help_messages vào audit_log trước khi CASCADE xoá.
+ *  T1/T2/T3 delete CASCADE xuống con — không snapshot từng descendant (sẽ nặng) nhưng
+ *  ghi log "cascade_delete" vào audit_log của parent để trace.
  */
 router.delete('/:tier(\\d+)/:id(\\d+)', (req, res) => {
   const tier = Number(req.params.tier);
@@ -515,7 +511,7 @@ router.delete('/:tier(\\d+)/:id(\\d+)', (req, res) => {
   if (!authz.ok) return res.status(authz.status).json(authz);
 
   tx(() => {
-    // Phase G: snapshot sub-resources TRƯỚC khi CASCADE xoá
+    // Snapshot sub-resources trước khi CASCADE xoá (giữ truy vết audit).
     if (tier === 4) {
       const logs = stmt.listDailyLogsForTaskForSnapshot.all(id);
       const helps = stmt.listHelpMessagesForTaskForSnapshot.all(id);
@@ -544,7 +540,7 @@ router.delete('/:tier(\\d+)/:id(\\d+)', (req, res) => {
 // Sub-resources
 // ============================================================================
 
-/** GET /api/tasks/4/:id/help-messages — List lịch sử escalation (Phase G7). */
+/** GET /api/tasks/4/:id/help-messages — List lịch sử escalation. */
 router.get('/:tier(\\d+)/:id(\\d+)/help-messages', (req, res) => {
   const tier = Number(req.params.tier);
   if (tier !== 4) return res.status(400).json({ error: 'help_messages_only_for_task' });
@@ -599,9 +595,9 @@ router.post('/:tier(\\d+)/:id(\\d+)/approve', (req, res) => {
   return res.json({ item: enrichWithTier(updated, tier) });
 });
 
-/** POST /api/tasks/:tier/:id/blocker — NV ghi 1 dong `blocker_note` cho task (Phase F).
- *  Phase G7: đồng thời INSERT 1 row vào task_help_messages để giữ lịch sử.
- *  Quyen: owner task hoặc admin/manager trong phòng ban.
+/** POST /api/tasks/:tier/:id/blocker — NV ghi 1 dòng `blocker_note` cho task.
+ *  Đồng thời INSERT 1 row vào task_help_messages để giữ lịch sử.
+ *  Quyền: owner task hoặc admin/manager trong phòng ban.
  */
 router.post('/:tier(\\d+)/:id(\\d+)/blocker', (req, res) => {
   const tier = Number(req.params.tier);
@@ -627,7 +623,7 @@ router.post('/:tier(\\d+)/:id(\\d+)/blocker', (req, res) => {
       note, // ← blocker_note (current state)
       id,
     );
-    // Phase G7: snapshot vào help_messages history
+    // Ghi lịch sử escalation vào help_messages.
     const info = stmt.insertHelpMessage.run(id, note, req.user.id);
     helpMsgId = Number(info.lastInsertRowid);
     logAudit('task', id, 'update', { blocker_note: task.blocker_note || '' }, { blocker_note: note }, req);
@@ -637,9 +633,7 @@ router.post('/:tier(\\d+)/:id(\\d+)/blocker', (req, res) => {
   return res.json({ item: enrichWithTier(stmt.getTask.get(id), tier), blocker_note: note, help_message_id: helpMsgId });
 });
 
-/** POST /api/tasks/4/:id/help-messages/:msgId/resolve — Manager đánh dấu help message đã xử lý.
- *  Phase G7: bổ sung cho blocker_note (current state).
- */
+/** POST /api/tasks/4/:id/help-messages/:msgId/resolve — Manager đánh dấu help message đã xử lý. */
 router.post('/:tier(\\d+)/:id(\\d+)/help-messages/:msgId(\\d+)/resolve', (req, res) => {
   const tier = Number(req.params.tier);
   if (tier !== 4) return res.status(400).json({ error: 'help_messages_only_for_task' });
@@ -693,7 +687,7 @@ router.post('/:tier(\\d+)/:id(\\d+)/toggle', (req, res) => {
   return res.json({ item: enrichWithTier(updated, tier) });
 });
 
-/** POST /api/tasks/4/:id/toggle-today — Owner mark/unmark "today". Phase G2.
+/** POST /api/tasks/4/:id/toggle-today — Owner mark/unmark "today".
  *  Khi bật: set is_today=1, is_today_date=today().
  *  Khi tắt: set is_today=0, is_today_date=null.
  *  Tự động reset qua view: query "today" = is_today=1 AND is_today_date=date('now').

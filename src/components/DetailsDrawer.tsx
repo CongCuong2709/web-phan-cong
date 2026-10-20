@@ -17,11 +17,11 @@ interface DetailsDrawerProps {
   onUpdateItem: (updated: TierItem) => void;
   dailyLogs?: DailyLog[];
   history?: HistoryEntry[];
-  /** Fix TD-07: cần truyền allTierItems để compute descendants khi filter history. */
+  /** Cần truyền allTierItems để compute descendants khi filter history. */
   allTierItems?: TierItem[];
   /**
-   * Phase E: gọi khi user ghi nhật ký thi công cho task (T4). Tham số đầu
-   * tiên là taskId (composite '<tier>-<num>'), không còn qua subtask.
+   * Gọi khi user ghi nhật ký thi công cho task (T4). Tham số đầu tiên là
+   * taskId (composite '<tier>-<num>').
    */
   onAddDailyLog?: (
     taskId: string,
@@ -88,11 +88,9 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
       .sort((a, b) => (a.logDate < b.logDate ? 1 : -1));
   }, [dailyLogs, formData]);
 
-  // Fix TD-07: history filter đúng theo ý đồ — bao gồm:
-  //  1. History của chính item hiện tại
-  //  2. History của tất cả descendants (cây con) — bubbled-down
-  // Bug cũ:
-  //   - `formData.parentId === null` không bao giờ đúng vì parentId là `string | undefined`
+  // History filter bao gồm:
+//  1. History của chính item hiện tại
+//  2. History của tất cả descendants (cây con) — bubbled-down
   //   - Không bao giờ có descendant history vì comment `false` cố ý
   //   - Hệ quả: T2/T3 chỉ thấy history của chính nó, bỏ sót audit log của các T3/T4 con
   const itemHistory = useMemo(() => {
@@ -114,8 +112,7 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
 
   if (!isOpen || !formData) return null;
 
-  // Phase F: bỏ handleToggleDeliverable (bảng task_deliverables đã xoá).
-  // Tiến độ task giờ update qua daily_log.progress (xem routes/dailyLogs.js).
+  // Tiến độ task update qua daily_log.progress (xem routes/dailyLogs.js).
 
   const handleSave = () => {
     if (formData) {
@@ -342,7 +339,7 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
             )}
           </div>
 
-          {/* 7. Blocker Note (chỉ T4) — Phase F: thay cho helpMessage 1:N cũ */}
+          {/* 7. Blocker Note (chỉ T4) — NV viết, Manager xem */}
           {formData.tier === 4 && (
             <div className="bg-white p-3.5 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
               <label className="text-[11px] font-semibold text-[#565e74] uppercase tracking-wider block mb-1.5">
@@ -389,7 +386,7 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
             )}
           </div>
 
-          {/* 9. NHẬT KÝ THI CÔNG (chỉ T4) — Phase E: gắn trực tiếp vào task, không qua subtask */}
+          {/* 9. NHẬT KÝ THI CÔNG (chỉ T4) — gắn trực tiếp vào task */}
           {formData.tier === 4 && (
             <div className="bg-white p-3.5 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
               <div className="flex items-center justify-between mb-2">

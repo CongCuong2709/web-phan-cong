@@ -2,7 +2,7 @@
  * policies.js — Centralized authorization policies.
  *
  * Mục tiêu: 1 nguồn sự thật cho "ai được phép làm gì".
- * Trước đây: `if (req.user.role !== 'admin')` rải rác khắp 7 route handler.
+ * Trước khi có policy module, code dùng `if (req.user.role !== 'admin')` rải rác khắp route handler.
  * Bây giờ: mỗi route gọi `authorize('task:delete', user, { task })`.
  *
  * Action naming convention: `<entity>:<verb>`
@@ -11,9 +11,7 @@
  *   - user:list / user:read
  *   - history:read_all
  *
- * Phase E: bỏ `subtask:*` policies (SubTask tier đã xoá).
- * Phase F: bỏ `task:request_help` + `help_request:resolve` (help_requests đã xoá).
- *          Escalation giờ dùng `task:edit` để ghi `tasks.blocker_note`.
+ * Escalation dùng `task:edit` để ghi `tasks.blocker_note`.
  *
  * Return: { ok: true } hoặc { ok: false, status, error, message }
  */
@@ -88,7 +86,7 @@ const POLICIES = {
     return allow();
   },
 
-  // Phase F: 'task:request_help' đã bỏ. Escalation giờ dùng 'task:edit' để ghi blocker_note.
+  // 'task:request_help' đã bỏ — escalation dùng 'task:edit' để ghi blocker_note.
   'task:request_help': () => deny(410, 'gone', 'task:request_help đã bị bỏ. Dùng task:edit để ghi tasks.blocker_note.'),
 
   'task:toggle': (user, { task }) => {
@@ -116,7 +114,7 @@ const POLICIES = {
     return allow(); // T1/T2/T3 = read-only context
   },
 
-  // ── Daily log (Phase E: gắn trực tiếp vào task, bỏ subtask) ─────────
+  // ── Daily log (gắn trực tiếp vào task) ─────────
   'daily_log:create': (user, { task }) => {
     if (!canAddDailyLog(user, task)) {
       return deny(403, 'forbidden',

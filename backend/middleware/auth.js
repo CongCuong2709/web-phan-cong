@@ -57,8 +57,7 @@ export function requireAuth(req, res, next) {
       return res.status(401).json({ error: 'user_inactive', message: 'Tài khoản đã bị vô hiệu hoá.' });
     }
     // Attach departments as ARRAY for RBAC checks (đồng nhất với /api/auth/login
-    // route trả về array, không phải CSV string). B6: đã xoá tham chiếu đến file
-    // employeeTasks.js/teamLeadTasks.js cũ (đã bị xoá ở phase cleanup trước).
+    // route trả về array, không phải CSV string).
     const deptRows = stmt.getUserDepartments.all(user.id);
     user.departments = deptRows.map((d) => d.department_code);
     req.user = user;

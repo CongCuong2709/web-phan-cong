@@ -1,10 +1,9 @@
 /**
  * Core type definitions for 4-Tier Enterprise Execution System & Team Workspace.
  *
- * Phase F (2026-10): simplified for text-only daily-log use case.
- *   - Drop Deliverable, TaskNote, QuickHelpRequest interfaces (3 bảng backend đã xoá).
- *   - Task gắn 1 cột `blockerNote` (thay task_help_messages 1:N).
- *   - dailyLogs là sub-resource DUY NHẤT còn lại trên task.
+ *   - Task gắn 1 cột `blockerNote` (escalation NV ↔ Manager).
+ *   - dailyLogs là sub-resource 1:N duy nhất còn lại trên task.
+ *   - Lịch sử thay đổi lớn (Phase B/C/D/E/F/G): xem CHANGELOG.md.
  */
 
 export type TierLevel = 1 | 2 | 3 | 4;
@@ -51,9 +50,9 @@ export const ROLE_LABEL: Record<Role, string> = {
 };
 
 // ============================================================================
-// ISS-007: Unified Task type — single source of truth cho mọi loại "đầu việc".
-// Thay thế 3 bảng backend cũ (tier_items, team_lead_tasks, employee_tasks) và
-// 3 type frontend cũ (TierItem, TeamLeadTask, EmployeeTask).
+// `Task` — single source of truth cho mọi loại "đầu việc".
+// Thay thế 3 type frontend cũ (TierItem, TeamLeadTask, EmployeeTask) — vẫn giữ
+// làm alias cho tới khi GiaoViecNhomView / ViecCuaToiView migrate xong.
 // ============================================================================
 
 export type TaskStatus = 'pending' | 'doing' | 'done' | 'pending_approval' | 'blocked';
@@ -70,8 +69,7 @@ export type TaskPriority = 'low' | 'normal' | 'high' | 'critical';
  *
  * Mọi view (Gantt 4 tầng, Giao việc nhóm, Việc của tôi) đều dùng chung 1 type này.
  *
- * Phase F: loại bỏ deliverable* / helpMessage* / notes* (3 bảng backend đã xoá).
- *           Thêm `blockerNote` (1 cột text — escalation thay cho help_requests).
+ * `blockerNote` (1 cột text) là kênh escalation NV ↔ Manager.
  */
 export interface Task {
   id: string;
@@ -111,8 +109,7 @@ export interface Task {
   bundleName?: string;
   lastUpdated?: string;
 
-  // Phase F: NV ghi 1 dòng "đang vướng ở đâu / cần hỗ trợ gì".
-  // Manager xem khi mở task (thay cho help_requests 1:N cũ).
+  // NV viết 1 dòng "đang vướng ở đâu / cần hỗ trợ gì" — Manager xem khi mở task.
   blockerNote?: string;
 
   // Management
@@ -127,7 +124,7 @@ export interface Task {
 }
 
 /**
- * TierItem — DEPRECATED. Use `Task` instead (ISS-007).
+ * TierItem — DEPRECATED. Use `Task` instead.
  *
  * Giữ lại để backward-compat với components đang dùng các field display như
  * `tierName`, `tierBadge`, `owner` (object thay vì id). Transform runtime ở
@@ -150,15 +147,12 @@ export interface TierItem extends Omit<Task, 'status' | 'priority' | 'ownerUserI
   ownerUsername?: string;
   ownerUserId?: string;
   ownerFullname?: string;
-  // Phase F: bỏ `deliverables` (interface Deliverable đã xoá, bảng task_deliverables đã xoá).
-  // Tiến độ task giờ tính từ MAX(daily_logs.progress) thay vì deliverables hoàn thành.
+  // Tiến độ task tính từ MAX(daily_logs.progress).
 }
 
 /**
- * TeamLeadTask — DEPRECATED. Use `Task` instead (ISS-007).
+ * TeamLeadTask — DEPRECATED. Use `Task` instead.
  * Giữ lại để GiaoViecNhomView không phải refactor toàn bộ.
- *
- * Phase F: loại bỏ deliverableType/text/fileName/helpMessage (3 bảng backend đã xoá).
  */
 export interface TeamLeadTask {
   id: string;
@@ -173,19 +167,17 @@ export interface TeamLeadTask {
   deadline?: string;
   status: 'pending_approval' | 'need_help' | 'in_progress' | 'done';
   priority?: 'Cao' | 'Thường';
-  /** Phase F: 1 dòng blocker do NV viết (thay helpMessage 1:N cũ). */
+  /** NV viết "đang vướng ở đâu / cần hỗ trợ gì" — Manager xem khi mở task. */
   blockerNote?: string;
   /** Hiển thị rollup progress mới nhất (lấy từ daily_logs.progress). */
   progressText?: string;
 }
 
 /**
- * EmployeeTask — DEPRECATED. Use `Task` instead (ISS-007).
+ * EmployeeTask — DEPRECATED. Use `Task` instead.
  * Giữ lại để ViecCuaToiView không phải refactor toàn bộ.
  *
- * Phase F: loại bỏ currentDeliverable (chuyển sang daily_log.result),
- *          notesCount/notes (bảng task_notes đã xoá, dùng daily_log.description).
- *          Thêm blockerNote.
+ * `currentDeliverable` đồng bộ với daily_log.result hôm nay; `blockerNote` cho escalation.
  */
 export interface EmployeeTask {
   id: string;
@@ -193,7 +185,7 @@ export interface EmployeeTask {
   bundleName: string;
   title: string;
   description: string;
-  /** Phase F: text kết quả bàn giao inline (giờ sync với daily_log.result hôm nay). */
+  /** Text kết quả bàn giao inline — sync với daily_log.result hôm nay. */
   currentDeliverable: string;
   lastUpdated: string;
   deadline: string;
@@ -215,7 +207,7 @@ export interface EmployeeTask {
   ownerUsername?: string;
   /** Department for manager cross-check. */
   department?: Department;
-  /** Phase F: NV viết "đang vướng ở đâu" → manager xem. */
+  /** NV viết "đang vướng ở đâu" — Manager xem khi mở task. */
   blockerNote?: string;
 }
 
@@ -241,8 +233,7 @@ export interface TeamMember {
  * Construction-domain extensions: each T4 task can have several Daily Logs
  * (Nhật ký thi công) — sub-resource 1:N duy nhất còn lại.
  *
- * Phase E: bỏ SubTask tier. Task là leaf (T4 nhỏ nhất).
- * Phase F: 1 log/(task,ngày) — UPSERT ở routes/dailyLogs.js.
+ * 1 log/(task, ngày) — UPSERT atomic ở routes/dailyLogs.js.
  */
 export interface DailyLog {
   id: string;

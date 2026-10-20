@@ -16,17 +16,15 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
   onOpenNewTaskModal,
   onOpenNewBundleModal,
 }) => {
-  // Phase F: bỏ onResolveHelp / onPreviewDeliverable / onSendMessage.
-  // task_help_messages + task_deliverables + messages đã xoá. Escalation giờ
-  // qua tasks.blocker_note (manager xem khi mở task — DetailsDrawer).
+  // Escalation qua tasks.blocker_note (manager xem khi mở task — DetailsDrawer).
   const [filter, setFilter] = useState<'all' | 'pending' | 'need_help' | 'done'>('pending');
   const [memberFilter, setMemberFilter] = useState<string | null>(null);
 
   // Filtered task list
   const filteredTasks = tasks.filter((t) => {
-    // C10 fix: filter theo ownerUsername (key ổn định) thay vì ownerName (string display).
-    // Trước đây so sánh tên → nếu 2 người trùng tên hiển thị thì filter sai.
-    // Fallback so sánh tên nếu seed data chưa có username.
+    // Filter theo ownerUsername (key ổn định) thay vì ownerName (string display)
+    // — tránh nhầm khi 2 người trùng tên hiển thị. Fallback so sánh tên nếu
+    // seed data chưa có username.
     if (
       memberFilter &&
       t.ownerUsername !== memberFilter &&
@@ -231,8 +229,7 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                 onClick={() => setMemberFilter(null)}
                 className="px-2.5 py-1 bg-[#eff4ff] text-[#004ac6] text-[11px] font-semibold rounded hover:bg-[#dce9ff]"
               >
-                {/* Fix TD-06: hiển thị TÊN thay vì raw value. Trước đây memberFilter
-                    có thể là username ("nv_an") → UI hiển thị kỳ lạ. */}
+                {/* Hiển thị TÊN thay vì raw value. memberFilter có thể là username ("nv_an"). */}
                 Đang lọc:{' '}
                 {teamMembers.find((m) => m.username === memberFilter)?.name ??
                   teamMembers.find((m) => m.name === memberFilter)?.name ??
@@ -480,9 +477,7 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                           </span>
                         </div>
 
-                        {/* Phase F: hiển thị blocker_note (text 1 dòng) thay cho
-                            helpMessage 1:N cũ. Manager đọc "Vướng mắc" tại đây
-                            mà không cần mở task. */}
+                        {/* Blocker Note — Manager đọc "Vướng mắc" tại đây mà không cần mở task. */}
                         {task.blockerNote ? (
                           <div className="p-2.5 bg-white rounded-lg border border-red-200 text-[13px] text-[#0b1c30] flex items-start gap-2 shadow-sm">
                             <span className="material-symbols-outlined text-[18px] text-[#ba1a1a] shrink-0 mt-0.5">
@@ -493,7 +488,7 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                               {task.blockerNote}”
                             </span>
                           </div>
-                        ) : null /* Phase F: bỏ preview deliverable - bảng đã xoá */}
+                        ) : null}
 
                         {/* Metadata row */}
                         <div className="flex items-center gap-3 text-[11px] text-[#565e74] mt-0.5 flex-wrap">
@@ -531,8 +526,7 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                       </div>
                     </div>
 
-                    {/* Actions — Phase F: bỏ onSendMessage + onResolveHelp.
-                        Manager escalation giờ qua tasks.blocker_note (xem khi mở task). */}
+                    {/* Actions — Manager escalation qua tasks.blocker_note (xem khi mở task). */}
                     <div className="flex items-center gap-2 self-end lg:self-center shrink-0">
                       {isPending && (
                         <button

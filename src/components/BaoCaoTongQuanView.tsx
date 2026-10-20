@@ -37,7 +37,7 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
   const tier2Items = tierItems.filter((i) => i.tier === 2);
   const tier3Items = tierItems.filter((i) => i.tier === 3);
 
-  // MI-07: header phụ thuộc ngày thực + số thành viên thực (Fix hardcode cũ).
+  // Header phụ thuộc ngày thực + số thành viên thực (không hardcode).
   const now = new Date();
   const currentQuarter = Math.floor(now.getMonth() / 3) + 1;
   const currentYear = now.getFullYear();
@@ -66,9 +66,9 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
   // Lọc logs theo ngày hiện tại (local date, không UTC), filter theo phòng ban
   // của currentUser nếu là manager, group theo phòng ban, tóm tắt per nhân viên.
   //
-  // Fix bug cũ: `now.toISOString().slice(0, 10)` trả về ngày UTC, không phải
-  // local. Với user GMT+7, trước 7h sáng local, `today` là NGÀY HÔM QUA theo
-  // UTC → bỏ sót log hôm nay / hiển thị nhầm log hôm qua.
+  // Dùng local date (formatLocalDate) thay vì `toISOString().slice(0, 10)` (UTC).
+  // Với user GMT+7, trước 7h sáng local, `today` theo UTC là NGÀY HÔM QUA → bỏ sót
+  // log hôm nay / hiển thị nhầm log hôm qua.
   const today = (() => {
     const d = new Date();
     const yyyy = d.getFullYear();
@@ -174,8 +174,7 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
   );
 
   // Click-to-expand một nhân viên để xem chi tiết các log hôm nay.
-  // Trước đây UI chỉ hiển thị số liệu tóm tắt, user không xem được nội dung log
-  // → phải mở từng task chi tiết mới biết nhân viên ghi gì → UX gap.
+  // (UI trước đây chỉ hiển thị số liệu tóm tắt — user phải mở từng task mới biết NV ghi gì.)
   const [expandedUsername, setExpandedUsername] = useState<string | null>(null);
 
   return (

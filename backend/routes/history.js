@@ -1,7 +1,7 @@
 /**
  * routes/history.js — Read-only audit log.
  *
- * Phase D: rename từ history_entries → audit_log, thêm JSON snapshot.
+ * Schema mới: audit_log (JSON snapshot), thay cho history_entries cũ.
  * Endpoints:
  *   GET /api/history?entity_type=task&entity_id=12  — Lịch sử 1 entity
  *   GET /api/history?limit=50                       — Global recent (admin only)
@@ -29,7 +29,7 @@ router.get('/', (req, res) => {
     return res.json({ items });
   }
 
-  // Global list — B3: dùng centralized policy.
+  // Dùng centralized policy (xem lib/policies.js).
   const authz = authorize('history:read_all', req.user, {});
   if (!authz.ok) return res.status(authz.status).json(authz);
   const cap = Math.min(Number(limit) || 50, 200);

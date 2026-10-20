@@ -12,7 +12,7 @@ import {
 } from './types';
 
 // ─────────────────────────────────────────────────────────────────────
-// Helper maps: Tiếng Việt (UI) ↔ enum DB (ISS-007 unified)
+// Helper maps: Tiếng Việt (UI) ↔ enum DB
 // ─────────────────────────────────────────────────────────────────────
 
 /** Map UI status tiếng Việt → enum DB. */
@@ -109,17 +109,16 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // ISS-007: Single source of truth — 1 endpoint /api/tasks cho cả 3 view
+      // Single source of truth — 1 endpoint /api/tasks cho cả 3 view
       // (Gantt, Giao việc nhóm, Việc của tôi). Transform sang 3 derived types.
       // Lưu ý: /api/tasks trả về DỮ LIỆU CẢ 4 TIER. Chỉ tier 4 mới là "đầu việc"
       // cá nhân (team lead / employee view) — tier 1/2/3 (dự án / giai đoạn / hạng mục)
       // chỉ hiển thị trên cây Gantt. Nếu không filter, manager xem "Việc của tôi"
       // sẽ thấy cả project/phase/bundle (vì seed cho manager làm owner) → bug.
       //
-      // Phase F: tasks.currentDeliverable đã bỏ (chuyển sang daily_logs.result).
       // Phải chạy Promise.all với /api/daily-logs để merge log hôm nay vào
       // employeeTasks ngay từ đầu — nếu không, sau reload Status Strip sẽ
-      // hiển thị "Chưa nộp" dù DB đã có daily_log.result thật (bug trước đây).
+      // hiển thị "Chưa nộp" dù DB đã có daily_log.result thật.
       const [tasksRes, logRes, memRes, histRes] = await Promise.all([
         api.listTasks(),
         api.listDailyLogs(),
@@ -361,8 +360,6 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
   const [selectedItemForDrawer, setSelectedItemForDrawer] = useState<TierItem | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isNewItemModalOpen, setIsNewItemModalOpen] = useState(false);
-  // Phase F: previewTask (DeliverablePreviewModal) + messageTarget (MessageModal) đã bỏ.
-  // 3 bảng sub-resource tương ứng (task_deliverables, task_help_messages, messages) đã xoá.
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isNewPersonalTaskOpen, setIsNewPersonalTaskOpen] = useState(false);
 
@@ -406,7 +403,7 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
         children.reduce((acc, c) => acc + c.progress, 0) / children.length
       );
       parent.progress = avg;
-      // ISS-007: TierItem.status là Tiếng Việt (string union). Cast any-string.
+      // TierItem.status là Tiếng Việt (string union). Cast any-string.
       const status = parent.status as string;
       if (avg === 100) parent.status = 'Đã xong' as TierItem['status'];
       else if (avg > 90) parent.status = 'Sắp xong' as TierItem['status'];
@@ -426,7 +423,7 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     for (const item of itemsMap.values()) {
       if (item.tier === 2) applyRollup(item, childrenByParent.get(item.id) ?? [], false);
     }
-    // Tier 1 ← Tier 2 (Fix Bổ sung-1: Tier 1 giờ update status)
+    // Tier 1 ← Tier 2 (Tier 1 cho phép update status)
     for (const item of itemsMap.values()) {
       if (item.tier === 1) applyRollup(item, childrenByParent.get(item.id) ?? [], true);
     }
@@ -436,8 +433,7 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
 
   /** Cập nhật 1 item trong cây 4 tầng + sync backend (backend tự rollup). */
   const handleUpdateTierItem = (updated: TierItem) => {
-    // B9: bỏ dual-write rollup ở FE — backend giờ tự tính qua trigger + recomputeRollup.
-    // FE chỉ giữ optimistic update cho UX mượt; backend là source of truth.
+    // FE chỉ giữ optimistic update cho UX mượt; backend là source of truth (xem recomputeRollup).
     const newItems = tierItems.map((item) => (item.id === updated.id ? updated : item));
     setTierItems(newItems);
     setSelectedItemForDrawer(updated);
@@ -489,7 +485,6 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
       status: newItemData.status || 'Chuẩn bị',
       priority: newItemData.priority || 'Trung bình',
       description: newItemData.description || 'Chưa có mô tả',
-      // Phase F: bỏ deliverables (bảng task_deliverables đã xoá).
       managementNotes: newItemData.managementNotes || `Tạo bởi ${user.fullname}.`,
       gantt: newItemData.gantt || {
         startWeek: 2,
@@ -520,7 +515,7 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
       title: newItem.title,
       parent_id: parentNumericId,
       department_code: newItem.department,
-      // ISS-006 fix: gửi owner_username thay vì undefined → backend tra cứu ID
+      // Gửi owner_username để backend tra cứu user_id (thay vì để undefined).
       owner_username: newItem.ownerUsername,
       progress: newItem.progress,
       // Map status VN → enum DB
@@ -537,7 +532,6 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     if (result.ok && result.data?.item?.id != null) {
       // Replace local id bằng composite id mới từ backend (giữ tier để walk cây đúng).
       const backendCompositeId = toCompositeId(newItem.tier, result.data.item.id);
-      // Replace local id bằng backend id trong state (fix Bổ sung-3)
       // Đồng thời cập nhật code nếu backend đã generate lại (vd: NEW-XXXXXX)
       const backendItem = result.data.item;
       setTierItems((prev) =>
@@ -587,16 +581,13 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     // Dual-write: sync lên backend (id là composite "<tier>-<num>").
     const numId = extractBackendId(taskId);
     if (Number.isFinite(numId)) {
-      // Phase C: cần tier để dispatch; tìm trong tierItems.
+      // Cần tier để dispatch; tìm trong tierItems.
       const found = tierItems.find((t) => String(t.id) === String(taskId));
       const tier = found?.tier ?? 4;
       fireAndForget(api.approveTask(tier, numId), `approveTask#${taskId}`);
     }
     showToast('Đã phê duyệt nghiệm thu công việc!');
   };
-
-  // Phase F: handleResolveHelp đã bỏ. Escalation giờ là tasks.blocker_note
-  // (NV ghi 1 dòng, manager xem khi mở task). Không cần ticket workflow.
 
   /** Toggle trạng thái done/doing của EmployeeTask — sync backend. */
   const handleToggleEmployeeTask = (taskId: string) => {
@@ -617,7 +608,7 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     // Sync lên backend — chỉ gọi nếu id trỏ về row thật (composite "<tier>-<num>").
     const numId = extractBackendId(taskId);
     if (Number.isFinite(numId)) {
-      // Phase C: cần tier; lookup trong tierItems (đã merge từ 4 bảng).
+      // Cần tier; lookup trong tierItems.
       const found = tierItems.find((t) => String(t.id) === String(taskId));
       const tier = found?.tier ?? 4;
       fireAndForget(
@@ -644,16 +635,7 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     }
   };
 
-  // Phase F: handleUpdateEmployeeDeliverable đã bỏ. "Kết quả bàn giao" giờ
-  // là daily_log.result của ngày hôm nay. ViecCuaToiView gọi onAddDailyLog.
-
-  // Phase F: handleAddEmployeeNote đã bỏ (task_notes bảng xoá). Ghi chú
-  // cho sếp giờ dùng daily_log.obstacle hoặc tasks.blocker_note.
-
-  // Phase F: handleSendHelpRequest đã bỏ (help_requests bảng xoá).
-  // Escalation giờ là 1 dòng tasks.blocker_note (NV viết trong ViecCuaToiView).
-
-  /** Set blocker_note trên task — escalation thay cho help_requests cũ. */
+  /** Set blocker_note trên task — escalation NV ↔ Manager. */
   const handleSetBlocker = (taskId: string, note: string) => {
     const trimmed = note.trim();
     setEmployeeTasks((prev) =>
@@ -702,13 +684,11 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
           : `${ROLE_HELLO[user.role]} · ${user.departments[0] ?? ''}`,
         avatar: manager?.avatar ?? user.avatar ?? '',
       },
-      // Phase F: bỏ notesCount/notes (task_notes bảng xoá). Nội dung `notes`
-      // từ NewPersonalTaskModal giờ được lưu trong description + daily_log.
+      // `notes` từ NewPersonalTaskModal lưu vào description + daily_log.
     };
 
     setEmployeeTasks((prev) => [newTask, ...prev]);
     logHistory('task', newTask.id, `Tạo việc cá nhân: "${title}"`);
-    // Phase C: dùng createTask chuẩn (không còn alias createEmployeeTask).
     fireAndForget(
       api.createTask({
         tier: 4,
@@ -989,10 +969,6 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
           })
           .map((u) => ({ username: u.username, fullname: u.fullname }))}
       />
-
-      {/* Phase F: DeliverablePreviewModal + MessageModal đã bỏ.
-            Hai component này chỉ render preview file PDF/spreadsheet/photo và
-            nhắn tin 1-1 — tương ứng với 2 bảng đã xoá. */}
 
       {/* Export Report Modal */}
       <ExportModal
