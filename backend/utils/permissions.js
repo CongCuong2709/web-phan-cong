@@ -1,116 +1,40 @@
 /**
- * permissions.js — Backend RBAC. Mirror của src/auth/permissions.ts (frontend).
+ * permissions.js — DEPRECATED SHIM. Dùng `lib/policies.js` thay thế.
  *
- * ⚠️ QUAN TRỌNG: Frontend checks chỉ để ẩn UI; backend checks mới là
- * boundary thật. Mọi route handler phải gọi các helper dưới đây trước
- * khi mutate dữ liệu.
+ * Toàn bộ luật RBAC đã được hợp nhất vào `lib/policies.js` (nguồn chuẩn duy
+ * nhất). File này chỉ còn lại để các import cũ không vỡ ngay lập tức.
+ *
+ * ⚠️ Không thêm logic mới vào đây. Mọi import mới phải trỏ thẳng về
+ * `lib/policies.js`. Xem CHANGELOG.md mục "Hợp nhất RBAC".
  */
 
-import { db } from '../db.js';
+import { authorize } from '../lib/policies.js';
+
+export {
+  inDepartment,
+  canCreateTiers,
+  canEditTask,
+  canAddDailyLog,
+  loadTaskIfEditable,
+  uid,
+  authorize,
+} from '../lib/policies.js';
+
+// Backward-compat aliases (từng là 3 nơi chứa luật riêng, nay trỏ về 1 nguồn).
+export { canEditTask as canEditTierItem } from '../lib/policies.js';
+export { canEditTask as canEditDeliverable } from '../lib/policies.js';
+export { loadTaskIfEditable as loadTierItemIfEditable } from '../lib/policies.js';
 
 /**
- * @typedef {Object} User
- * @property {number} id
- * @property {string} username
- * @property {string} role        - 'admin' | 'director' | 'manager' | 'employee'
- * @property {string} departments - CSV string from user_departments (e.g. "QLDA,KTTC")
- */
-
-/**
- * Normalize departments → array. Accept cả 2 format:
- *   - Array: ['QLDA', 'KTTC']
- *   - CSV string: "QLDA,KTTC" (backward-compat với SQL GROUP_CONCAT)
- *   - null/undefined → []
- */
-function parseDepartments(depts) {
-  if (!depts) return [];
-  if (Array.isArray(depts)) return depts.filter(Boolean);
-  return String(depts).split(',').filter(Boolean);
-}
-
-/** User thuộc department hay không. Admin (không có dept) = all-access. */
-export function inDepartment(user, department) {
-  if (!department) return true;
-  const depts = parseDepartments(user.departments);
-  if (depts.length === 0) return true; // admin sentinel
-  return depts.includes(department);
-}
-
-/** Tầng user được phép tạo. */
-export function canCreateTiers(role) {
-  switch (role) {
-    case 'admin': return [1, 2, 3, 4];
-    case 'director': return [1, 2];
-    case 'manager': return [3, 4];
-    case 'employee':
-    default: return [4];
-  }
-}
-
-/** Kiểm tra user có sửa 1 Task cụ thể không (thay cho canEditTierItem cũ). */
-export function canEditTask(user, item) {
-  if (!user || !item) return false;
-  if (user.role === 'admin') return true;
-  if (user.role === 'director') return false;
-  if (user.role === 'manager') return inDepartment(user, item.department_code);
-  // employee: only own T4
-  return item.tier === 4 && item.owner_username_str === user.username;
-}
-
-/** Backward-compat alias. */
-export const canEditTierItem = canEditTask;
-
-/** Tương tự edit cho deliverable (inline columns của tasks). */
-export const canEditDeliverable = canEditTask;
-
-/** Quyền ghi nhật ký thi công (DailyLog) cho 1 task.
+ * @deprecated Dùng `authorize('task:approve', user, { task })`.
+ * Giữ lại vì chưa có call site nào chuyển sang policy layer.
  *
- * Quyền dựa trên:
- *   - admin: always
- *   - director: read-only (không ghi log)
- *   - manager: cùng department với task
- *   - employee: chỉ owner của task
+ * Ở đây KHÔNG viết lại luật — chỉ gọi policy chuẩn để không tạo thêm 1 nơi
+ * chứa quy tắc. `task` có thể undefined (guard trước đó cho manager pass).
  */
-export function canAddDailyLog(user, task) {
-  if (!user || !task) return false;
-  if (user.role === 'admin') return true;
-  if (user.role === 'director') return false;
-  if (user.role === 'manager') {
-    return inDepartment(user, task.department_code);
-  }
-  // employee: chỉ owner
-  return task.owner_user_id === user.id;
-}
-
-/** Quyền duyệt nghiệm thu team task. */
 export function canApproveTask(user, task) {
   if (!user) return false;
-  if (user.role === 'admin') return true;
-  if (user.role === 'director') return false;
-  if (user.role === 'manager') {
-    if (!task) return true;
-    return inDepartment(user, task.department_code);
-  }
-  return false;
+  return authorize('task:approve', user, {
+    task: task ?? { department_code: null },
+  }).ok;
 }
-
-/** Tạo ID unique. Crypto-randomUUID nếu có, fallback timestamp+random. */
-export function uid(prefix = 'id') {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-    return `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
-  }
-  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-/** Lấy task + check quyền edit trong 1 bước. */
-export function loadTaskIfEditable(user, taskId) {
-  const row = db.prepare(`SELECT t.*, u.username AS owner_username_str
-    FROM tasks t LEFT JOIN users u ON u.id = t.owner_user_id
-    WHERE t.id = ?`).get(taskId);
-  if (!row) return { error: 'not_found' };
-  if (!canEditTask(user, row)) return { error: 'forbidden' };
-  return { item: row };
-}
-
-/** Backward-compat alias. */
-export const loadTierItemIfEditable = loadTaskIfEditable;

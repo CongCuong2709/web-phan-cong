@@ -22,7 +22,7 @@
  *   }
  */
 
-import { inDepartment } from '../utils/permissions.js';
+import { inDepartment } from './policies.js';
 
 /** Transition table: from -> [allowed to]. */
 const TRANSITIONS = {

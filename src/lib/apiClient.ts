@@ -147,38 +147,103 @@ export interface LoginResponse {
   };
 }
 
+/**
+ * TaskApiRowDto — 1 row của `GET /api/tasks` (và `GET /api/tasks/:tier/:id`).
+ *
+ * Đây là shape THẬT của response sau khi backend hợp nhất 4 bảng
+ * projects/phases/bundles/tasks về 1 endpoint và gắn `tier` vào mỗi row
+ * (xem backend/routes/tasks.js `enrichWithTier`). Mọi field là optional vì
+ * mỗi tier có cột riêng: `progress` chỉ có ở T4, `progress_rollup` chỉ có ở
+ * T1–T3, `bundle_name` chỉ có ở T4.
+ *
+ * Field có hậu tố `_str` là alias do SQL JOIN tạo ra (vd `owner_username_str`).
+ */
+export interface TaskApiRowDto {
+  id: number;
+  /** Tier 1=project, 2=phase, 3=bundle, 4=task. Do backend gắn, không có trong DB. */
+  tier: 1 | 2 | 3 | 4;
+
+  // ── Common (mọi tier) ──
+  code: string;
+  title: string;
+  description: string;
+  owner_user_id: number;
+  created_by_user_id: number;
+  status: 'pending' | 'doing' | 'done' | 'pending_approval' | 'blocked';
+  start_date: string | null;
+  end_date: string | null;
+  collapsed: number;
+  created_at: string;
+  updated_at: string;
+  /** LEFT JOIN users — có thể null nếu owner đã bị xoá. */
+  owner_username_str: string | null;
+  owner_fullname: string | null;
+
+  // ── T1 project ──
+  // (project là root, không có parent FK)
+
+  // ── T2 phase ──
+  project_id?: number | null;
+
+  // ── T3 bundle ──
+  phase_id?: number | null;
+
+  // ── T4 task ──
+  bundle_id: number | null;
+  assigned_by_user_id?: number | null;
+  department_code: string | null;
+  priority: 'low' | 'normal' | 'high' | 'critical';
+  progress: number;
+  is_today: number;
+  is_today_date: string | null;
+  blocker_note: string;
+  assigned_by_username_str?: string | null;
+  assigned_by_fullname?: string | null;
+  /** LEFT JOIN bundles — tên hạng mục cha (chỉ T4). */
+  bundle_name?: string | null;
+
+  // ── T1/T2/T3 rollup ──
+  progress_rollup?: number;
+
+  // ── T2 only ──
+  management_notes?: string;
+  blocker_alert?: string | null;
+}
+
+/**
+ * TierItemDto — payload gửi lên khi tạo item mới (`POST /api/tasks`).
+ * Khác `TaskApiRowDto`: đây là input, không phải output.
+ */
 export interface TierItemDto {
   id?: number;
   code?: string;
   tier: 1 | 2 | 3 | 4;
   title: string;
+  /**
+   * Id của cha theo tier (T2→project_id, T3→phase_id, T4→bundle_id).
+   * Backend nhận đúng tên `parent_id` và dispatch theo `tier`
+   * (xem routes/tasks.js POST). Bắt buộc với T2/T3; T4 có thể null.
+   */
   parent_id?: number | null;
-  department_code?: string | null;
+  /** Backend nhận `owner_username` và tự tra `owner_user_id`. */
+  owner_username?: string | null;
   owner_user_id?: number | null;
-  owner_username?: string | null; // Backend tra cứu user_id từ username.
-  assigned_by_user_id?: number | null;
-  start_date?: string;
-  end_date?: string;
+  department_code?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
   progress?: number;
   status?: string;
   priority?: string;
   description?: string;
   management_notes?: string;
-  is_today?: number;
-  bundle_name?: string | null;
-  last_updated?: string | null;
-  /** Escalation NV ↔ Manager (1 dòng text). */
-  blocker_note?: string | null;
   blocker_alert?: string | null;
-  start_week?: number;
-  end_week?: number;
   collapsed?: number;
-  owner_username_str?: string;
-  owner_fullname?: string;
-  assigned_by_username_str?: string;
-  assigned_by_fullname?: string;
-  created_at?: string;
-  updated_at?: string;
+  created_by_user_id?: number;
+  assigned_by_user_id?: number | null;
+  /** Chỉ T4: đánh dấu "việc hôm nay". */
+  is_today?: number;
+  /** Chỉ T4: ngày cụ thể của cờ hôm nay (YYYY-MM-DD). */
+  is_today_date?: string | null;
 }
 
 export interface DailyLogDto {
@@ -189,59 +254,24 @@ export interface DailyLogDto {
   progress: number;
 }
 
-// Typed DTOs thay cho `unknown[]` — TypeScript bắt lỗi sai/missing field lúc compile.
-export interface TeamLeadTaskDto {
-  id: number;
-  code: string;
-  title: string;
-  category?: string;
-  owner_fullname?: string;
-  owner_username_str?: string;
-  department_code?: string;
-  submitted_at: string;
-  deadline?: string;
-  status: 'pending_approval' | 'need_help' | 'in_progress' | 'done';
-  priority?: 'Cao' | 'Thường';
-  progress_text?: string;
-  /** 1 dòng blocker do NV viết (escalation). */
-  blocker_note?: string | null;
-}
-
-export interface EmployeeTaskDto {
-  id: number;
-  code: string;
-  bundle_name?: string;
-  title: string;
-  description?: string;
-  current_deliverable?: string;
-  last_updated?: string;
-  deadline?: string;
-  is_today?: number | boolean;
-  status: 'doing' | 'done' | 'pending';
-  manager_fullname?: string;
-  manager_username?: string;
-  manager_avatar_url?: string;
-  owner_fullname?: string;
-  owner_username?: string;
-  owner_username_str?: string;
-  department_code?: string;
-  /** NV viết "đang vướng ở đâu" — Manager xem khi mở task. */
-  blocker_note?: string | null;
-}
+/** TeamLeadTaskDto / EmployeeTaskDto đã bị xoá: `/api/tasks` đã hợp nhất 4 tier
+ * về 1 endpoint. `transforms.ts` nhận `TaskApiRowDto` rồi phân nhánh theo tier. */
 
 export interface TeamMemberDto {
-  id?: number;
+  id: string;
   username: string;
-  name?: string;
-  role?: string;
-  avatar?: string;
-  activeTasks?: number;
-  onTimeRate?: string;
-  statusText?: string;
-  statusType?: 'busy' | 'idle' | 'need_help';
-  workloadPercent?: number;
-  needHelp?: boolean;
+  name: string;
+  role: string;
   department?: string;
+  statusText: string;
+  /** Backend trả 'good' | 'warning' | 'idle' (xem routes/teamMembers.js:62). */
+  statusType: 'good' | 'warning' | 'idle';
+  activeTasks: number;
+  totalTasks?: number;
+  needHelp: boolean;
+  workloadPercent: number;
+  onTimeRate?: string;
+  avatar?: string;
 }
 
 export interface DailyLogRowDto {
@@ -249,23 +279,43 @@ export interface DailyLogRowDto {
   task_id: number;
   log_date: string;
   description: string;
-  result?: string;
-  obstacle?: string;
+  result: string | null;
+  obstacle: string | null;
   progress: number;
   author_user_id: number;
-  user_username_str?: string;
-  user_fullname?: string;
+  /** LEFT JOIN users — tên người viết log. */
+  user_username_str: string | null;
+  user_fullname: string | null;
   created_at: string;
 }
 
 export interface HistoryEntryDto {
   id: number;
-  entity_type: 'project' | 'phase' | 'bundle' | 'task' | 'daily_log' | 'team_lead_task' | 'employee_task';
+  entity_type: 'project' | 'phase' | 'bundle' | 'task' | 'daily_log' | 'task_help_message' | 'user';
   entity_id: number;
   action: string;
-  author_user_id?: number;
-  author_username?: string;
-  author_fullname?: string;
+  actor_user_id: number | null;
+  /** Snapshot tên user tại thời điểm ghi — giữ lại kể cả user đã bị xoá. */
+  actor_username: string | null;
+  actor_ip?: string | null;
+  old_values: string | null;
+  new_values: string | null;
+  created_at: string;
+  /** LEFT JOIN users trong routes/history.js — có thể null nếu actor đã xoá. */
+  author_username_str?: string | null;
+  author_fullname_str?: string | null;
+}
+
+export interface HelpMessageDto {
+  id: number;
+  task_id: number;
+  body: string;
+  author_user_id: number;
+  author_fullname?: string | null;
+  author_username?: string | null;
+  is_resolved: number;
+  resolved_by_user_id?: number | null;
+  resolved_at?: string | null;
   created_at: string;
 }
 
@@ -317,27 +367,27 @@ export const api = {
     return request<{ user: import('./apiClient').MeUser }>('GET', '/api/auth/me');
   },
 
-  // --- Tasks (tier-specific endpoints) ---
+  // --- Tasks (unified 4-tier endpoint) ---
   /**
-   * GET /api/tasks — List filtered theo role. Backend trả TẤT CẢ 4 tier
-   * với field `tier` set sẵn. Frontend dùng TierItemDto (kèm tier) cho cả 4 loại.
+   * GET /api/tasks — List theo role. Backend trả TẤT CẢ 4 tier, mỗi row có
+   * field `tier` (1–4). `canSee` lọc theo role + department phía backend.
    */
   async listTasks() {
-    return request<{ items: TierItemDto[] }>('GET', '/api/tasks');
+    return request<{ items: TaskApiRowDto[] }>('GET', '/api/tasks');
   },
   /** GET /api/tasks/:tier/:id — tier ∈ {1,2,3,4}. Response trả `{ item }`. */
   async getTask(tier: number, id: number) {
-    return request<{ item: TierItemDto }>(
+    return request<{ item: TaskApiRowDto }>(
       'GET', `/api/tasks/${tier}/${id}`
     );
   },
   /** POST /api/tasks — body chứa `tier` để dispatch. */
   async createTask(item: TierItemDto) {
-    return request<{ item: TierItemDto }>('POST', '/api/tasks', item);
+    return request<{ item: TaskApiRowDto }>('POST', '/api/tasks', item);
   },
   /** PATCH /api/tasks/:tier/:id. */
   async updateTask(tier: number, id: number, patch: Partial<TierItemDto>) {
-    return request<{ item: TierItemDto }>('PATCH', `/api/tasks/${tier}/${id}`, patch);
+    return request<{ item: TaskApiRowDto }>('PATCH', `/api/tasks/${tier}/${id}`, patch);
   },
   /** DELETE /api/tasks/:tier/:id. */
   async deleteTask(tier: number, id: number) {
@@ -346,21 +396,25 @@ export const api = {
 
   // --- Sub-resource trên task (daily_logs + blocker_note) ---
   async approveTask(tier: number, id: number) {
-    return request<{ item: TierItemDto }>('POST', `/api/tasks/${tier}/${id}/approve`);
+    return request<{ item: TaskApiRowDto }>('POST', `/api/tasks/${tier}/${id}/approve`);
   },
-  /** POST /api/tasks/:id/blocker — NV ghi 1 dòng blocker_note (escalation). */
+  /** POST /api/tasks/4/:id/blocker — NV ghi 1 dòng blocker_note (escalation). */
   async setTaskBlocker(tier: number, id: number, note: string) {
-    return request<{ item: TierItemDto; blocker_note: string }>(
+    return request<{ item: TaskApiRowDto; blocker_note: string }>(
       'POST', `/api/tasks/${tier}/${id}/blocker`, { note }
     );
   },
   async toggleTask(tier: number, id: number) {
-    return request<{ item: TierItemDto }>('POST', `/api/tasks/${tier}/${id}/toggle`);
+    return request<{ item: TaskApiRowDto }>('POST', `/api/tasks/${tier}/${id}/toggle`);
   },
-
-  // Backward-compat aliases đã xoá — frontend chỉ dùng /api/tasks.
-  // TierItem/TeamLeadTask/EmployeeTask DTO types vẫn dùng cho transforms,
-  // nhưng API chỉ có 1 endpoint /api/tasks.
+  /** POST /api/tasks/4/:id/toggle-today — bật/tắt cờ "việc hôm nay". */
+  async toggleToday(tier: number, id: number) {
+    return request<{ item: TaskApiRowDto }>('POST', `/api/tasks/${tier}/${id}/toggle-today`);
+  },
+  /** GET /api/tasks/4/:id/help-messages — lịch sử escalation. */
+  async listHelpMessages(tier: number, id: number) {
+    return request<{ items: HelpMessageDto[] }>('GET', `/api/tasks/${tier}/${id}/help-messages`);
+  },
 
   // --- Daily logs (gắn trực tiếp vào task) ---
   async addDailyLog(log: DailyLogDto) {

@@ -1,20 +1,24 @@
 /**
- * permissions.ts — Single source of truth cho RBAC.
+ * permissions.ts — Lớp ẩn/hiện UI (frontend view-layer).
  *
- * Mọi quyết định "user X có được phép làm hành động Y trên entity Z không?"
- * phải đi qua các helper trong file này. Tránh inline check rải rác ở component.
+ * ⚠️ KHÔNG phải boundary bảo mật. File này chỉ quyết định "nút bấm có hiện ra
+ * không" để UX không tệ. Mọi request vẫn phải bị backend từ chối nếu user thiếu
+ * quyền. Nguồn chuẩn duy nhất cho luật RBAC là `backend/lib/policies.js`
+ * (`authorize(action, user, ctx)`).
  *
- * Quy tắc nghiệp vụ (đã thống nhất với BGĐ):
+ * Vì sao vẫn còn file mirror ở frontend:
+ *   Component render đồng bộ, không thể chờ round-trip API trước mỗi lần quyết
+ *   định hiển thị. Nhưng để tránh lệch logic, các quy tắc ở đây chỉ mô tả
+ *   *hành vi hiện tại* và được ghi chú rõ policy backend tương ứng.
+ *   Khi đổi quyền, đổi `backend/lib/policies.js` TRƯỚC, rồi cập nhật ở đây.
+ *
+ * Quy tắc nghiệp vụ (đã thống nhất với BGĐ — nguồn: policies.js):
  *
  *   admin     : full quyền (đọc + sửa + tạo) trên mọi phòng ban.
  *   director  : chỉ đọc, KHÔNG sửa dữ liệu (executive mode).
- *               Tạo được T1 (Dự án) và T2 (Giai đoạn) — để BGĐ có thể
- *               khởi tạo khung điều hành mới mà không phụ thuộc admin.
+ *               Tạo được T1 (Dự án) và T2 (Giai đoạn).
  *   manager   : chỉ trong phòng ban mình. Tạo T3 + T4.
- *   employee  : chỉ T4 của chính mình. Chỉ ghi nhật ký thi công của task mình được giao.
- *
- * Lưu ý: Khi có backend thật, các helper này vẫn dùng được để ẩn UI;
- * backend phải tự enforce lại ở middleware (frontend không phải boundary).
+ *   employee  : chỉ T4 của chính mình. Chỉ ghi nhật ký của task mình được giao.
  */
 
 import type {
@@ -31,8 +35,9 @@ import type {
 
 /**
  * Kiểm tra user có "thấy" item thuộc phòng ban `department` không.
- * - Admin sentinel (departments.length === 0, không có dept nào) → coi như all-access.
- * - Item không gắn department → ai cũng thấy (legacy/seed data).
+ * Mirror: policies.js `inDepartment`.
+ * - Item không gắn department → ai cũng thấy (T2/T3 là org-level).
+ * - Admin sentinel (departments rỗng) → all-access.
  */
 export function inDepartment(user: User, department?: Department | string): boolean {
   if (!department) return true;
@@ -53,7 +58,7 @@ export function uid(prefix = 'id'): string {
 
 /**
  * Tầng user được phép tạo mới trên Gantt.
- * Dùng cho NewItemModal (đã được thực hiện ở A1 fix).
+ * Mirror: policies.js `canCreateTiers` (dùng bởi policy `task:create`).
  */
 export function canCreateTiers(role: User['role']): TierLevel[] {
   switch (role) {
@@ -70,8 +75,8 @@ export function canCreateTiers(role: User['role']): TierLevel[] {
 }
 
 /**
- * Quyết định user có sửa được 1 TierItem cụ thể không.
- * Logic khớp với fix A4 (chi tiết guard trong DetailsDrawer trước đó).
+ * Quyết định user có sửa được 1 TierItem cụ thể không (để bật/tắt nút Sửa).
+ * Mirror: policies.js `canEditTask` (dùng bởi policy `task:edit`).
  */
 export function canEditTierItem(
   user: User | null | undefined,
@@ -87,7 +92,7 @@ export function canEditTierItem(
   return item.tier === 4 && item.ownerUsername === user.username;
 }
 
-/** Cho phép đổi trạng thái (status dropdown) — same guard as edit. */
+/** Cho phép đổi trạng thái (status dropdown) — cùng guard với edit. */
 export const canChangeStatus = canEditTierItem;
 
 // ---------------------------------------------------------------------------
@@ -95,7 +100,9 @@ export const canChangeStatus = canEditTierItem;
 // ---------------------------------------------------------------------------
 
 /**
- * Quyền ghi nhật ký thi công (DailyLog) cho 1 task.
+ * Quyền hiện nút "Ghi nhật ký".
+ * Mirror: policies.js `canAddDailyLog` (dùng bởi policy `daily_log:create`).
+ *
  * Theo nghiệp vụ xây dựng:
  *   - admin: luôn được
  *   - director: read-only (không ghi log)
@@ -120,7 +127,10 @@ export function canAddDailyLog(
 // TeamLeadTask (giao việc nhóm)
 // ---------------------------------------------------------------------------
 
-/** Quyền duyệt nghiệm thu 1 task. */
+/**
+ * Quyền hiện nút nghiệm thu.
+ * Mirror: policies.js policy `task:approve`.
+ */
 export function canApproveTask(
   user: User | null | undefined,
   task?: TeamLeadTask
@@ -139,12 +149,15 @@ export function canApproveTask(
 export const canResolveHelp = canApproveTask;
 
 // ---------------------------------------------------------------------------
-// Misc: dùng cho phòng ban resolver khi tạo task cá nhân (sẽ áp dụng ở Sprint 4)
+// Misc
 // ---------------------------------------------------------------------------
 
 /**
  * Tìm manager đầu tiên của user — dùng để hiển thị "Trưởng phòng giao" đúng người
  * thay vì chính employee.
+ *
+ * Đây là tra cứu dữ liệu thuần túy (hiển thị tên), KHÔNG phải kiểm tra quyền —
+ * không cần mirror sang backend.
  */
 export function findManagerOf(
   user: User,

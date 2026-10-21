@@ -21,7 +21,6 @@ import taskRoutes from './routes/tasks.js';
 import dailyLogRoutes from './routes/dailyLogs.js';
 import historyRoutes from './routes/history.js';
 import teamMemberRoutes from './routes/teamMembers.js';
-// helpRequests route deprecated — file còn nhưng trả 410 Gone. Không mount.
 
 const PORT = Number(process.env.PORT) || 3000;
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
@@ -52,9 +51,11 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 // Unified tasks route — thay thế tier-items, team-tasks, employee-tasks cũ.
 app.use('/api/tasks', taskRoutes);
-app.use('/api/tier-items', taskRoutes);  // backward-compat alias
-app.use('/api/team-tasks', taskRoutes);   // backward-compat alias
-app.use('/api/employee-tasks', taskRoutes); // backward-compat alias
+// Aliases cũ — vẫn mount để client cũ không vỡ. Endpoint chuẩn là /api/tasks.
+// Xem CHANGELOG.md Phase D: route & DTO cũ đã bị xoá, chỉ giữ alias tại đây.
+app.use('/api/tier-items', taskRoutes);
+app.use('/api/team-tasks', taskRoutes);
+app.use('/api/employee-tasks', taskRoutes);
 // Daily-log routes:
 //   GET    /api/tasks/:taskId/logs  - list logs của 1 task
 //   POST   /api/tasks/:taskId/logs  - thêm log

@@ -30,8 +30,7 @@
 import { Router } from 'express';
 import { db, stmt, tx } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
-import { authorize } from '../lib/policies.js';
-import { inDepartment, uid } from '../utils/permissions.js';
+import { authorize, inDepartment, uid } from '../lib/policies.js';
 import { canTransition } from '../lib/stateMachine.js';
 
 const router = Router();

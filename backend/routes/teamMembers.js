@@ -11,7 +11,7 @@
 import { Router } from 'express';
 import { db, stmt } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
-import { inDepartment } from '../utils/permissions.js';
+import { inDepartment } from '../lib/policies.js';
 
 const router = Router();
 router.use(requireAuth);

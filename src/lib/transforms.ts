@@ -1,11 +1,16 @@
 /**
  * transforms.ts — Map backend API responses → frontend entity types.
  *
- * Backend (SQLite) trả về schema rút gọn (flat fields) trong khi frontend
- * dùng shape phong phú (nested objects). Module này convert 1-1.
+ * Backend (SQLite) trả về schema rút gọn (flat fields, key snake_case) trong
+ * khi frontend dùng shape phong phú hơn (nested object, key camelCase).
+ * Module này convert 1-1.
  *
- * Lưu ý: các field frontend cần mà backend không có (vd tierName, deliverables)
- * sẽ được fill bằng giá trị mặc định để component render an toàn.
+ * Input type duy nhất: `TaskApiRowDto` (xem lib/apiClient.ts) — mô tả đúng
+ * shape thật của `GET /api/tasks`. Không dùng `any` ở đây: nếu backend đổi
+ * tên cột, TypeScript báo lỗi compile thay vì lỗi runtime im lặng.
+ *
+ * Lưu ý: field nào frontend cần mà backend không trả sẽ fill bằng giá trị mặc
+ * định để component render an toàn (vd `tierName`, `tierBadge`, `gantt`).
  */
 
 import type {
@@ -17,6 +22,12 @@ import type {
   DailyLog,
   HistoryEntry,
 } from '../types';
+import type {
+  TaskApiRowDto,
+  TeamMemberDto,
+  DailyLogRowDto,
+  HistoryEntryDto,
+} from './apiClient';
 
 // ─────────────────────────────────────────────────────────────────────
 // Tier item: backend → frontend
@@ -69,16 +80,14 @@ export function extractBackendId(id: string | number | null | undefined): number
 }
 
 /**
- * Map 1 row task từ backend (4-tier normalized) → TierItem shape frontend.
- * Backend trả items với field `tier` set sẵn (1-4).
+ * Map 1 row từ `GET /api/tasks` → TierItem shape frontend.
  * start_date/end_date là source of truth; daysRemaining derive runtime.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function apiToTierItem(api: any): TierItem {
-  const tier = (api.tier as TierLevel) || 4;
-  const ownerFullname = (api.owner_fullname as string) || '—';
-  const department = (api.department_code as string) || undefined;
-  const endDate = String(api.end_date || '');
+export function apiToTierItem(api: TaskApiRowDto): TierItem {
+  const tier = api.tier;
+  const ownerFullname = api.owner_fullname || '—';
+  const department = api.department_code || undefined;
+  const endDate = api.end_date ?? '';
 
   // daysRemaining: compute runtime từ endDate
   const daysRemaining = endDate ? computeDaysRemaining(endDate) : undefined;
@@ -88,16 +97,16 @@ export function apiToTierItem(api: any): TierItem {
   //   T2 → parent = T1, T3 → parent = T2, T4 → parent = T3.
   return {
     id: toCompositeId(tier, api.id),
-    code: String(api.code || ''),
+    code: api.code,
     tier,
     tierName: TIER_NAMES[tier],
     tierBadge: TIER_BADGES[tier],
-    title: String(api.title || ''),
+    title: api.title,
     // parentId composite để khớp với id của parent (vd "2-2" cho T3 con của T2.id=2)
     parentId:
-      api.bundle_id != null ? toCompositeId(3, api.bundle_id)
-      : api.phase_id != null ? toCompositeId(2, api.phase_id)
-      : api.project_id != null ? toCompositeId(1, api.project_id)
+      tier === 4 && api.bundle_id != null ? toCompositeId(3, api.bundle_id)
+      : tier === 3 && api.phase_id != null ? toCompositeId(2, api.phase_id)
+      : tier === 2 && api.project_id != null ? toCompositeId(1, api.project_id)
       : undefined,
     owner: {
       name: ownerFullname,
@@ -105,21 +114,21 @@ export function apiToTierItem(api: any): TierItem {
       initial: ownerFullname.charAt(0).toUpperCase(),
       avatar: undefined,
     },
-    ownerUsername: (api.owner_username_str as string) || undefined,
+    ownerUsername: api.owner_username_str ?? undefined,
     department: department as TierItem['department'],
-    startDate: String(api.start_date || ''),
+    startDate: api.start_date ?? '',
     endDate,
     daysRemaining,
-    progress: Number(api.progress_rollup ?? api.progress ?? 0),
+    progress: api.progress_rollup ?? api.progress ?? 0,
     // Map status từ enum DB sang tiếng Việt (UI Gantt đang dùng tiếng Việt).
-    status: statusEnumToVi(api.status != null ? String(api.status) : undefined) as TierItem['status'],
-    // Map priority từ enum sang tiếng Việt.
+    status: statusEnumToVi(api.status) as TierItem['status'],
+    // Map priority từ enum sang tiếng Việt. Chỉ T4 có cột priority.
     priority: priorityEnumToVi(api.priority) as TierItem['priority'],
-    description: String(api.description || ''),
-    managementNotes: String(api.management_notes || ''),
-    blockerAlert: api.blocker_alert as string | undefined,
-    // 1 cột blocker_note (escalation NV ↔ Manager).
-    blockerNote: String(api.blocker_note || ''),
+    description: api.description,
+    managementNotes: api.management_notes ?? '',
+    blockerAlert: api.blocker_alert ?? undefined,
+    // 1 cột blocker_note (escalation NV ↔ Manager) — chỉ T4.
+    blockerNote: api.blocker_note ?? '',
     // gantt.startWeek/endWeek derive runtime từ start_date/end_date — 1 nguồn sự thật.
     gantt: {
       startWeek: computeWeekFromDate(api.start_date),
@@ -129,7 +138,7 @@ export function apiToTierItem(api: any): TierItem {
 }
 
 /** Convert status enum DB → Tiếng Việt (cho Gantt view). */
-function statusEnumToVi(s: string | number | null | undefined): string {
+function statusEnumToVi(s: string | null | undefined): string {
   switch (String(s)) {
     case 'done': return 'Đã xong';
     case 'doing': return 'Đang chạy';
@@ -171,8 +180,7 @@ function computeDaysRemaining(endDateIso: string): number {
 // Team lead task
 // ─────────────────────────────────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function apiToTeamLeadTask(api: any): TeamLeadTask {
+export function apiToTeamLeadTask(api: TaskApiRowDto): TeamLeadTask {
   // Backend trả unified Task — chỉ có blocker_note (1 cột text) cho escalation.
   const statusMap: Record<string, TeamLeadTask['status']> = {
     'pending': 'in_progress',
@@ -183,22 +191,22 @@ export function apiToTeamLeadTask(api: any): TeamLeadTask {
   };
   // Composite id (tier + numeric) để không nhầm với tier items ở tier khác.
   // TeamLeadTask hầu hết là T4, nhưng backend có thể trả tier lẫn lộn.
-  const tier: TierLevel = (api.tier as TierLevel) || 4;
+  const tier: TierLevel = api.tier;
   return {
     id: toCompositeId(tier, api.id),
-    code: String(api.code || ''),
-    title: String(api.title || ''),
-    category: String(api.bundle_name || ''),  // dùng bundle_name thay vì category
-    ownerName: String(api.owner_fullname || api.owner_username_str || ''),
-    ownerUsername: (api.owner_username_str as string) || undefined,
-    department: api.department_code as TeamLeadTask['department'],
-    submittedAt: String(api.created_at || ''),  // created_at là proxy submitted_at
-    deadline: (api.end_date as string) || undefined,
-    status: statusMap[String(api.status)] || 'in_progress',
+    code: api.code,
+    title: api.title,
+    category: api.bundle_name ?? '',   // tên hạng mục cha (T3) do backend JOIN sẵn
+    ownerName: api.owner_fullname ?? api.owner_username_str ?? '',
+    ownerUsername: api.owner_username_str ?? undefined,
+    department: (api.department_code ?? undefined) as TeamLeadTask['department'],
+    submittedAt: api.created_at,       // created_at là proxy submitted_at
+    deadline: api.end_date ?? undefined,
+    status: statusMap[api.status] ?? 'in_progress',
     priority: priorityEnumToVi(api.priority) as TeamLeadTask['priority'],
     progressText: api.progress != null ? `${api.progress}%` : undefined,
     // 1 dòng blocker_note thay cho helpMessage 1:N cũ.
-    blockerNote: String(api.blocker_note || ''),
+    blockerNote: api.blocker_note ?? '',
   };
 }
 
@@ -206,8 +214,7 @@ export function apiToTeamLeadTask(api: any): TeamLeadTask {
 // Employee task
 // ─────────────────────────────────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function apiToEmployeeTask(api: any): EmployeeTask {
+export function apiToEmployeeTask(api: TaskApiRowDto): EmployeeTask {
   // Map status enum từ unified Task sang EmployeeTask enum.
   // currentDeliverable là trường DERIVED — không có sẵn trên /api/tasks; App.tsx sẽ merge từ
   // daily_log.result của HÔM NAY sau khi fetch xong Promise.all ở useEffect login.
@@ -220,32 +227,32 @@ export function apiToEmployeeTask(api: any): EmployeeTask {
     'blocked': 'pending',           // blocked → pending cho personal view
   };
   // Composite id để tránh nhầm với tier items ở các tier khác.
-  const tier: TierLevel = (api.tier as TierLevel) || 4;
+  const tier: TierLevel = api.tier;
   return {
     id: toCompositeId(tier, api.id),
-    code: String(api.code || ''),
-    bundleName: String(api.bundle_name || '—'),
-    title: String(api.title || ''),
-    description: String(api.description || ''),
+    code: api.code,
+    bundleName: api.bundle_name ?? '—',
+    title: api.title,
+    description: api.description,
     // currentDeliverable fill từ daily_log.result hôm nay qua useEffect (xem ViecCuaToiView).
     currentDeliverable: '',
-    lastUpdated: String(api.last_updated || ''),
-    deadline: String(api.end_date || ''),
+    lastUpdated: api.updated_at,
+    deadline: api.end_date ?? '',
     isToday: Boolean(api.is_today),
-    status: statusMap[String(api.status)] || 'doing',
+    status: statusMap[api.status] ?? 'doing',
     // Manager = assigned_by (người giao task).
     manager: {
-      name: String(api.assigned_by_fullname ?? api.owner_fullname ?? '—'),
+      name: api.assigned_by_fullname ?? api.owner_fullname ?? '—',
       role: 'Trưởng phòng phụ trách',
       avatar: '',
     },
-    ownerUsername: (api.owner_username_str as string | undefined) || undefined,
-    department: api.department_code as EmployeeTask['department'],
+    ownerUsername: api.owner_username_str ?? undefined,
+    department: (api.department_code ?? undefined) as EmployeeTask['department'],
     // blocker_note (NV viết, Manager xem khi mở task).
-    blockerNote: String(api.blocker_note || ''),
+    blockerNote: api.blocker_note ?? '',
     // Tiến độ từ API (tasks.progress). App.tsx sẽ override bằng
     // daily_log.progress của HÔM NAY nếu có, để slider hiển thị giá trị mới nhất.
-    progress: Number(api.progress ?? 0),
+    progress: api.progress ?? 0,
   };
 }
 
@@ -253,21 +260,21 @@ export function apiToEmployeeTask(api: any): EmployeeTask {
 // Team member (derived từ users + tier items ở backend)
 // ─────────────────────────────────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function apiToTeamMember(api: any): TeamMember {
+export function apiToTeamMember(api: TeamMemberDto): TeamMember {
   return {
-    id: String(api.id || `mem-${api.username}`),
-    name: String(api.name || api.username || ''),
-    role: String(api.role || ''),
-    avatar: String(api.avatar || ''),
-    activeTasks: Number(api.activeTasks ?? 0),
-    onTimeRate: String(api.onTimeRate ?? ''),
-    statusText: String(api.statusText ?? ''),
-    statusType: (api.statusType as TeamMember['statusType']) || 'idle',
-    workloadPercent: Number(api.workloadPercent ?? 0),
-    needHelp: Boolean(api.needHelp),
-    department: api.department || undefined,
-    username: String(api.username || ''),
+    id: api.id,
+    name: api.name,
+    role: api.role,
+    avatar: api.avatar ?? '',
+    activeTasks: api.activeTasks,
+    onTimeRate: api.onTimeRate ?? '',
+    statusText: api.statusText,
+    statusType: api.statusType,
+    workloadPercent: api.workloadPercent,
+    needHelp: api.needHelp,
+    // Backend trả department dạng string; UI giữ union Department hẹp.
+    department: api.department as TeamMember['department'],
+    username: api.username,
   };
 }
 
@@ -275,19 +282,18 @@ export function apiToTeamMember(api: any): TeamMember {
 // DailyLog (taskId thay subtaskId)
 // ─────────────────────────────────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function apiToDailyLog(api: any): DailyLog {
+export function apiToDailyLog(api: DailyLogRowDto): DailyLog {
   return {
     id: String(api.id),
     taskId: String(api.task_id),
-    logDate: String(api.log_date || ''),
-    createdAt: String(api.created_at || ''),
-    description: String(api.description || ''),
+    logDate: api.log_date,
+    createdAt: api.created_at,
+    description: api.description,
     result: api.result ?? undefined,
     obstacle: api.obstacle ?? undefined,
-    progress: Number(api.progress ?? 0),
-    username: String(api.user_username_str || ''),
-    userName: String(api.user_fullname || ''),
+    progress: api.progress,
+    username: api.user_username_str ?? '',
+    userName: api.user_fullname ?? '',
     userRole: undefined,
     userAvatar: undefined,
   };
@@ -297,16 +303,18 @@ export function apiToDailyLog(api: any): DailyLog {
 // HistoryEntry (audit log)
 // ─────────────────────────────────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function apiToHistoryEntry(api: any): HistoryEntry {
+export function apiToHistoryEntry(api: HistoryEntryDto): HistoryEntry {
+  // Ưu tiên tên join từ bảng users; fallback sang snapshot actor_username
+  // trong audit_log (vẫn còn khi user đã bị xoá).
+  const username = api.author_username_str ?? api.actor_username ?? '';
   return {
     id: String(api.id),
-    entityType: (api.entity_type as HistoryEntry['entityType']) || 'task',
-    entityId: String(api.entity_id || ''),
-    action: String(api.action || ''),
-    username: String(api.author_username || ''),
-    userName: String(api.author_fullname || api.author_username || ''),
-    createdAt: String(api.created_at || ''),
+    entityType: api.entity_type,
+    entityId: String(api.entity_id),
+    action: api.action,
+    username,
+    userName: api.author_fullname_str ?? username,
+    createdAt: api.created_at,
   };
 }
 

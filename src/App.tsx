@@ -149,7 +149,7 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
         // Merge log hôm nay vào currentDeliverable / description baseline trước
         // khi set state — đảm bảo render đầu đã có data, không flicker.
         setEmployeeTasks(
-          tier4Only.map((api: any) => {
+          tier4Only.map((api) => {
             const base = apiToEmployeeTask(api);
             const log: ReturnType<typeof apiToDailyLog> | undefined =
               todayLogByTaskNum[api.id];
@@ -472,8 +472,8 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
       management_notes: newItem.managementNotes,
       start_date: newItem.startDate,
       end_date: newItem.endDate,
-      start_week: newItem.gantt.startWeek,
-      end_week: newItem.gantt.endWeek,
+      // Không gửi start_week/end_week: Gantt derive tuần từ start_date/end_date
+      // (xem transforms.ts:computeWeekFromDate) — không lưu 2 nguồn sự thật.
     });
 
     if (result.ok && result.data?.item?.id != null) {

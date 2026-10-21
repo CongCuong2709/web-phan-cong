@@ -197,6 +197,7 @@ export const stmt = {
     SELECT t.*,
       u.username AS owner_username_str, u.fullname AS owner_fullname,
       a.username AS assigned_by_username_str, a.fullname AS assigned_by_fullname,
+      b.title AS bundle_name,
       b.phase_id AS phase_id, ph.project_id AS project_id
     FROM tasks t
       LEFT JOIN users u ON u.id = t.owner_user_id
@@ -209,6 +210,7 @@ export const stmt = {
     SELECT t.*,
       u.username AS owner_username_str, u.fullname AS owner_fullname,
       a.username AS assigned_by_username_str, a.fullname AS assigned_by_fullname,
+      b.title AS bundle_name,
       b.phase_id AS phase_id, ph.project_id AS project_id
     FROM tasks t
       LEFT JOIN users u ON u.id = t.owner_user_id
@@ -218,8 +220,11 @@ export const stmt = {
     WHERE t.id = ?
   `),
   getTasksByBundle: db.prepare(`
-    SELECT t.*, u.username AS owner_username_str, u.fullname AS owner_fullname
-    FROM tasks t LEFT JOIN users u ON u.id = t.owner_user_id
+    SELECT t.*, u.username AS owner_username_str, u.fullname AS owner_fullname,
+      b.title AS bundle_name
+    FROM tasks t
+      LEFT JOIN users u ON u.id = t.owner_user_id
+      LEFT JOIN bundles b ON b.id = t.bundle_id
     WHERE t.bundle_id = ? ORDER BY t.code
   `),
   // Audit columns: created_by_user_id, assigned_by_user_id. Today tracking: is_today_date.

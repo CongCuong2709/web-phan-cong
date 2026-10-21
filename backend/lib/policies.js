@@ -1,12 +1,16 @@
 /**
- * policies.js — Centralized authorization policies.
+ * policies.js — NGUỒN CHUẨN DUY NHẤT cho authorization của hệ thống.
  *
- * Mục tiêu: 1 nguồn sự thật cho "ai được phép làm gì".
- * Trước khi có policy module, code dùng `if (req.user.role !== 'admin')` rải rác khắp route handler.
- * Bây giờ: mỗi route gọi `authorize('task:delete', user, { task })`.
+ * Mọi quyết định "user X có được phép làm hành vi gì trên entity Y không?"
+ * phải resolve về module này. Không được viết `if (req.user.role === 'admin')`
+ * rải rác trong route handler — gọi `authorize(action, user, ctx)`.
  *
- * Action naming convention: `<entity>:<verb>`
- *   - task:create / task:edit / task:delete / task:approve / task:toggle
+ * Hợp nhất (2026-10): gộp helper từ `utils/permissions.js` vào đây để có
+ * đúng MỘT nơi chứa luật RBAC. `utils/permissions.js` giữ lại như
+ * re-export shim để các import cũ không vỡ.
+ *
+ * Naming convention: `<entity>:<verb>`
+ *   - task:create / task:edit / task:delete / task:approve / task:toggle / task:read
  *   - daily_log:create / daily_log:list
  *   - user:list / user:read
  *   - history:read_all
@@ -16,7 +20,98 @@
  * Return: { ok: true } hoặc { ok: false, status, error, message }
  */
 
-import { inDepartment, canEditTask, canCreateTiers, canAddDailyLog } from '../utils/permissions.js';
+import { db } from '../db.js';
+
+// ============================================================================
+// Primitives
+// ============================================================================
+
+/**
+ * @typedef {Object} User
+ * @property {number} id
+ * @property {string} username
+ * @property {string} role        - 'admin' | 'director' | 'manager' | 'employee'
+ * @property {string|string[]} departments - CSV string hoặc array
+ */
+
+/**
+ * Normalize departments → array. Accept cả 2 format:
+ *   - Array: ['QLDA', 'KTTC']
+ *   - CSV string: "QLDA,KTTC" (SQL GROUP_CONCAT)
+ *   - null/undefined → []
+ */
+export function parseDepartments(depts) {
+  if (!depts) return [];
+  if (Array.isArray(depts)) return depts.filter(Boolean);
+  return String(depts).split(',').filter(Boolean);
+}
+
+/**
+ * User thuộc department hay không.
+ * - Item không gắn department → ai cũng thấy.
+ * - Admin sentinel (departments rỗng) → all-access.
+ */
+export function inDepartment(user, department) {
+  if (!department) return true;
+  const depts = parseDepartments(user.departments);
+  if (depts.length === 0) return true; // admin sentinel
+  return depts.includes(department);
+}
+
+/** Tầng user được phép tạo. */
+export function canCreateTiers(role) {
+  switch (role) {
+    case 'admin': return [1, 2, 3, 4];
+    case 'director': return [1, 2];
+    case 'manager': return [3, 4];
+    case 'employee':
+    default: return [4];
+  }
+}
+
+/** User có sửa được item này không. `item` phải có `tier` + `department_code`. */
+export function canEditTask(user, item) {
+  if (!user || !item) return false;
+  if (user.role === 'admin') return true;
+  if (user.role === 'director') return false;
+  if (user.role === 'manager') return inDepartment(user, item.department_code);
+  // employee: only own T4
+  return item.tier === 4 && item.owner_username_str === user.username;
+}
+
+/** User có ghi được daily log cho task này không. */
+export function canAddDailyLog(user, task) {
+  if (!user || !task) return false;
+  if (user.role === 'admin') return true;
+  if (user.role === 'director') return false;
+  if (user.role === 'manager') {
+    return inDepartment(user, task.department_code);
+  }
+  // employee: chỉ owner
+  return task.owner_user_id === user.id;
+}
+
+/** Load task + check quyền edit trong 1 bước. */
+export function loadTaskIfEditable(user, taskId) {
+  const row = db.prepare(`SELECT t.*, u.username AS owner_username_str
+    FROM tasks t LEFT JOIN users u ON u.id = t.owner_user_id
+    WHERE t.id = ?`).get(taskId);
+  if (!row) return { error: 'not_found' };
+  if (!canEditTask(user, row)) return { error: 'forbidden' };
+  return { item: row };
+}
+
+/** Tạo ID unique. Không phải RBAC nhưng nằm cùng nhóm tiện ích backend. */
+export function uid(prefix = 'id') {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
+  }
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// ============================================================================
+// Policy layer
+// ============================================================================
 
 /** Helper: từ chối với status code. */
 function deny(status, error, message) {
@@ -28,8 +123,8 @@ function allow() {
 
 /**
  * Tiers mà role được phép TẠO.
- * (Dùng cho task:create; khác với task:edit vì 1 role có thể edit nhiều
- * tier hơn là tạo — vd director tạo T1/T2 nhưng không edit gì cả.)
+ * (Khác với task:edit vì 1 role có thể edit nhiều tier hơn là tạo —
+ * vd director tạo T1/T2 nhưng không edit gì cả.)
  */
 function canCreateTier(role, tier) {
   if (!Number.isInteger(tier) || tier < 1 || tier > 4) {
@@ -86,9 +181,6 @@ const POLICIES = {
     return allow();
   },
 
-  // 'task:request_help' đã bỏ — escalation dùng 'task:edit' để ghi blocker_note.
-  'task:request_help': () => deny(410, 'gone', 'task:request_help đã bị bỏ. Dùng task:edit để ghi tasks.blocker_note.'),
-
   'task:toggle': (user, { task }) => {
     if (task.owner_user_id !== user.id && user.role !== 'admin') {
       return deny(403, 'forbidden', 'Chỉ owner hoặc admin mới toggle.');
@@ -97,7 +189,8 @@ const POLICIES = {
   },
 
   'task:read': (user, { task }) => {
-    // canSee logic: admin/director thấy hết, manager thấy cùng dept, employee thấy T4 own
+    // canSee logic: admin/director thấy hết, manager thấy cùng dept,
+    // employee thấy T4 own.
     if (user.role === 'admin' || user.role === 'director') return allow();
     if (user.role === 'manager') {
       if (task.tier === 1) return allow(); // read-only T1
@@ -114,7 +207,7 @@ const POLICIES = {
     return allow(); // T1/T2/T3 = read-only context
   },
 
-  // ── Daily log (gắn trực tiếp vào task) ─────────
+  // ── Daily log (gắn trực tiếp vào task) ─────────────────────────────
   'daily_log:create': (user, { task }) => {
     if (!canAddDailyLog(user, task)) {
       return deny(403, 'forbidden',

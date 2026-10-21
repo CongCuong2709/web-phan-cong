@@ -253,7 +253,8 @@ export interface DailyLog {
 
 export interface HistoryEntry {
   id: string;
-  entityType: 'project' | 'phase' | 'bundle' | 'task' | 'daily_log';
+  /** Khớp CHECK constraint của bảng `audit_log` (xem backend/sql/schema.sql). */
+  entityType: 'project' | 'phase' | 'bundle' | 'task' | 'daily_log' | 'task_help_message' | 'user';
   entityId: string;
   action: string;
   username: string;
