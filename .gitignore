@@ -1,9 +1,12 @@
 node_modules/
+package-lock.json
 build/
 dist/
 coverage/
 .DS_Store
 *.log
+*.txt
+*.err
 # Fix C4: file .env chứa JWT_SECRET + config nhạy cảm — KHÔNG commit lên git.
 # (Root .gitignore đã có pattern này; thêm dòng dưới để chắc chắn bao gồm
 # cả backend/.env và root .env.)
@@ -27,6 +30,20 @@ backend/test/
 vitest.config.ts
 backend/vitest.config.ts
 
+# Playwright / E2E Tests
+e2e/
+e2e-report/
+playwright-report/
+test-results/
+playwright.config.ts
+*.last-run.json
+
+# Logs & text output files
+*.log
+*.txt
+vite.err.log
+vite.out.log
+
 # SQLite WAL temporary files (auto-regenerated, never commit)
 *.db-shm
 *.db-wal
@@ -37,3 +54,6 @@ metadata.json
 # Debug & one-time scripts (moved to scripts/ but not committed)
 backend/scripts/debug-*.ts
 backend/scripts/verify-*.ts
+
+# Utility scripts (not needed in production)
+*.mjs

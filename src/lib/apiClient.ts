@@ -15,6 +15,17 @@
 const API_BASE = (import.meta.env.VITE_API_URL as string) || 'http://localhost:3000';
 const TOKEN_KEY = 'mvp_token';
 
+/** User object trả về từ /api/auth/me (subset đủ dùng để restore session). */
+export interface MeUser {
+  id: number;
+  username: string;
+  fullname: string;
+  email?: string;
+  role: 'admin' | 'director' | 'manager' | 'employee';
+  departments: string[];
+  avatar_url?: string;
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Token management
 // ─────────────────────────────────────────────────────────────────────
@@ -295,6 +306,15 @@ export const api = {
   /** GET /api/health — dùng để check backend lên hay chưa */
   async health() {
     return request<{ ok: boolean; time: string }>('GET', '/api/health');
+  },
+
+  /**
+   * GET /api/auth/me — Current authenticated user.
+   * Dùng để restore session sau khi reload: kiểm tra token còn hợp lệ.
+   * Trả về user info (kèm departments) hoặc fail với 401 khi token invalid/expired.
+   */
+  async me() {
+    return request<{ user: import('./apiClient').MeUser }>('GET', '/api/auth/me');
   },
 
   // --- Tasks (tier-specific endpoints) ---

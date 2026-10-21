@@ -6,6 +6,10 @@
  *   2. `mvp_session_v1` — user ID hiện tại, để restore session sau khi F5/reload trang
  *
  * Tất cả data nghiệp vụ (tier items, tasks, members…) đến từ backend API sau login.
+ *
+ * Auto-restore: khi component mount và có token trong localStorage nhưng `user === null`
+ * (do users state bị reset sau reload), gọi /api/auth/me để re-hydrate user + departments.
+ * Nếu token không hợp lệ → 401 → clear session.
  */
 
 import React, {
@@ -65,6 +69,78 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       /* ignore */
     }
   }, [currentUserId]);
+
+  /**
+   * Auto-restore session on mount.
+   *
+   * Sau khi F5/reload, React state `users` rỗng; currentUserId được restore từ
+   * localStorage nhưng `user = useMemo(() => users.find(...), [...])` sẽ trả null
+   * → AppShell render `<LoginPage />` mặc dù token vẫn còn hiệu lực.
+   *
+   * Fix: nếu có token trong localStorage mà `users` rỗng và chưa có user,
+   * gọi /api/auth/me để re-hydrate user. Nếu 401 → clearSession.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      // Có token hợp lệ + đang ở trạng thái login (currentUserId = null sau reload
+      // nhưng session key có data). Tuy nhiên currentUserId đã restore từ loadSessionUserId
+      // nên user = find(...) ?? null. Logic rehydrate: nếu currentUserId có mà user null
+      // → gọi /api/auth/me.
+      // (Đơn giản hơn: chỉ cần có token + users rỗng là rehydrate, độc lập currentUserId.)
+      try {
+        const hasToken =
+          typeof localStorage !== 'undefined' &&
+          !!localStorage.getItem('mvp_token');
+        if (!hasToken) return;
+        // Tránh rehydrate trùng lặp nếu user đã có (vd. vừa setUsers ở login callback)
+        if (users.length > 0) return;
+
+        const r = await api.me();
+        if (cancelled) return;
+        if (r.ok && r.data?.user) {
+          const u = r.data.user;
+          // Populate users state để useMemo `user` resolve được.
+          const backendDepts: Department[] = Array.isArray(u.departments)
+            ? (u.departments as Department[])
+            : [];
+          const hydrated: User = {
+            id: String(u.id),
+            username: u.username,
+            fullname: u.fullname,
+            email: u.email ?? '',
+            role: u.role,
+            departments: backendDepts,
+            initial: u.fullname?.charAt(0) ?? '',
+            avatar: u.avatar_url ?? '',
+          };
+          setUsersState([hydrated]);
+          setCurrentUserId(String(u.id));
+        } else if (!r.ok && (r.error as { error?: string })?.error) {
+          // Token invalid/expired/revoked → clear session
+          const errCode = (r.error as { error?: string }).error;
+          if (
+            errCode === 'invalid_token' ||
+            errCode === 'token_expired' ||
+            errCode === 'session_revoked' ||
+            errCode === 'session_expired' ||
+            errCode === 'user_inactive'
+          ) {
+            setCurrentUserId(null);
+            try {
+              localStorage.removeItem('mvp_token');
+            } catch {/* ignore */}
+          }
+        }
+      } catch {
+        /* network error — giữ state, user sẽ phải login lại */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Chỉ chạy 1 lần khi mount — tránh loop với setUsersState.
 
   const user = useMemo(
     () => users.find((u) => u.id === currentUserId) ?? null,

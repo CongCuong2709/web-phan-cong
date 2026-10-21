@@ -287,6 +287,26 @@ router.post('/', (req, res) => {
     return res.status(400).json({ error: 'invalid_date', message: 'start_date và end_date phải có format YYYY-MM-DD.' });
   }
 
+  // ============================================================
+  // IMPORTANT: All pre-tx() validation MUST send response and early-return.
+  // Sending any response (res.status().json/send) inside tx() callback AND
+  // then letting control flow fall through to the post-tx return causes
+  // ERR_HTTP_HEADERS_SENT. Move validation OUT of tx() below.
+  // ============================================================
+
+  // Validate parent_id (early return BEFORE tx() to avoid double-response)
+  if (tierNum === 2 && !(body.parent_id && Number(body.parent_id))) {
+    return res.status(400).json({ error: 'parent_id_required', message: 'Phase phải thuộc 1 project.' });
+  }
+  if (tierNum === 3 && !(body.parent_id && Number(body.parent_id))) {
+    return res.status(400).json({ error: 'parent_id_required', message: 'Bundle phải thuộc 1 phase.' });
+  }
+
+  // Validate is_today_date format for T4
+  if (tierNum === 4 && body.is_today_date && !isIsoDate(body.is_today_date)) {
+    return res.status(400).json({ error: 'invalid_is_today_date' });
+  }
+
   let lastId = 0;
   let entityType = '';
   tx(() => {
@@ -309,8 +329,7 @@ router.post('/', (req, res) => {
       lastId = Number(info.lastInsertRowid);
       entityType = 'project';
     } else if (tierNum === 2) {
-      const projectId = body.parent_id ? Number(body.parent_id) : null;
-      if (!projectId) return res.status(400).json({ error: 'parent_id_required', message: 'Phase phải thuộc 1 project.' });
+      const projectId = Number(body.parent_id);
       const info = stmt.insertPhase.run(
         projectId, code, title, body.description || '',
         ownerResult.ownerId, createdById,
@@ -322,8 +341,7 @@ router.post('/', (req, res) => {
       lastId = Number(info.lastInsertRowid);
       entityType = 'phase';
     } else if (tierNum === 3) {
-      const phaseId = body.parent_id ? Number(body.parent_id) : null;
-      if (!phaseId) return res.status(400).json({ error: 'parent_id_required', message: 'Bundle phải thuộc 1 phase.' });
+      const phaseId = Number(body.parent_id);
       const info = stmt.insertBundle.run(
         phaseId, code, title, body.description || '',
         ownerResult.ownerId, createdById,
@@ -339,9 +357,6 @@ router.post('/', (req, res) => {
       const isTodayDate = isToday
         ? (body.is_today_date ?? new Date().toISOString().slice(0, 10))
         : null;
-      if (isTodayDate && !isIsoDate(isTodayDate)) {
-        return res.status(400).json({ error: 'invalid_is_today_date' });
-      }
       const info = stmt.insertTask.run(
         bundleId, code, title, body.description || '',
         ownerResult.ownerId, createdById,
@@ -560,6 +575,14 @@ router.post('/:tier(\\d+)/:id(\\d+)/approve', (req, res) => {
   const item = loadItem(tier, id);
   if (!item) return res.status(404).json({ error: 'not_found' });
   const enriched = enrichWithTier(item, tier);
+
+  // Explicit guard: done là terminal — KHÔNG cho phép no-op approve trên task đã done.
+  // Trước đây canTransition('done','done',...) trả {ok:true} do from===to no-op,
+  // cho phép manager "approve" 1 task đã done — gây audit log nhiễu.
+  if (item.status === 'done') {
+    return res.status(403).json({ error: 'invalid_transition', message: 'Task đã done, không thể duyệt lại.' });
+  }
+
   const authz = authorize('task:approve', req.user, { task: enriched });
   if (!authz.ok) return res.status(authz.status).json(authz);
   const tr = canTransition(item.status, 'done', req.user, enriched);
@@ -568,7 +591,11 @@ router.post('/:tier(\\d+)/:id(\\d+)/approve', (req, res) => {
   }
 
   tx(() => {
-    const progress = tier === 4 && item.deliverable_completed ? 100 : (item.progress || 0);
+    // Khi manager approve T4 task → done, đảm bảo progress = 100.
+    // Logic trước dùng `item.deliverable_completed` (field không tồn tại trong schema)
+    // → luôn falsy → giữ progress cũ (0). Fix: force progress=100 khi approve T4.
+    // Cho T1/T2/T3 progress rollup sẽ tự cập nhật qua recomputeRollup.
+    const progress = tier === 4 ? 100 : (item.progress ?? 0);
     if (tier === 1) {
       stmt.updateProject.run(item.title, item.description, item.owner_user_id, item.start_date, item.end_date, 'done', item.collapsed, id);
     } else if (tier === 2) {
@@ -646,10 +673,19 @@ router.post('/:tier(\\d+)/:id(\\d+)/help-messages/:msgId(\\d+)/resolve', (req, r
   if (!['admin', 'manager'].includes(req.user.role)) {
     return res.status(403).json({ error: 'forbidden', message: 'Chỉ admin/manager mới resolve help message.' });
   }
+  let resolved = false;
   tx(() => {
-    stmt.resolveHelpMessage.run(req.user.id, msgId, id);
-    logAudit('task_help_message', msgId, 'resolve', { is_resolved: 0 }, { is_resolved: 1, resolved_by: req.user.username }, req);
+    const result = stmt.resolveHelpMessage.run(req.user.id, msgId, id);
+    // Chỉ ghi audit nếu UPDATE thực sự ảnh hưởng 1 row — trước đây code logAudit
+    // không kiểm tra khiến audit log over-count (đặc biệt msgId không tồn tại).
+    if (result && result.changes > 0) {
+      resolved = true;
+      logAudit('task_help_message', msgId, 'resolve', { is_resolved: 0 }, { is_resolved: 1, resolved_by: req.user.username }, req);
+    }
   });
+  if (!resolved) {
+    return res.status(404).json({ error: 'help_message_not_found', message: `Không tìm thấy help message id=${msgId} của task ${id}.` });
+  }
   return res.json({ ok: true });
 });
 
@@ -663,12 +699,41 @@ router.post('/:tier(\\d+)/:id(\\d+)/toggle', (req, res) => {
   const enriched = enrichWithTier(task, tier);
   const authz = authorize('task:toggle', req.user, { task: enriched });
   if (!authz.ok) return res.status(authz.status).json(authz);
-  const next = task.status === 'done' ? 'doing' : 'done';
+
+  /**
+   * Toggle semantics — nhất quán với state machine (lib/stateMachine.js):
+   *   pending          → doing            (bắt đầu)
+   *   doing            → pending_approval (owner tick xong, chờ manager duyệt)
+   *   pending_approval → doing            (manager/admin trả về)
+   *   blocked          → doing            (gỡ nghẽn)
+   *   done             → KHÔNG toggle (terminal)
+   *
+   * TRƯỚC ĐÂY toggle tính next = (status === 'done' ? 'doing' : 'done') — nhảy thẳng
+   * sang 'done', nhưng state machine KHÔNG cho phép doing→done (done phải qua
+   * manager approve) → toggle luôn trả 403 invalid_transition. Fix: map sang
+   * transition hợp lệ kế tiếp trong state machine.
+   */
+  const TOGGLE_NEXT = {
+    pending: 'doing',
+    doing: 'pending_approval',
+    pending_approval: 'doing',
+    blocked: 'doing',
+  };
+  const next = TOGGLE_NEXT[task.status];
+  if (!next) {
+    return res.status(403).json({
+      error: 'invalid_transition',
+      message: `Task đã ${task.status}, không thể toggle.`,
+    });
+  }
+
   const tr = canTransition(task.status, next, req.user, enriched);
   if (!tr.ok) {
     return res.status(403).json({ error: 'invalid_transition', message: tr.reason });
   }
-  const nextProgress = next === 'done' ? 100 : Math.max(task.progress, 50);
+  // Progress: đạt 100 khi chuyển sang pending_approval (đã tick xong, chờ duyệt),
+  // khi về doing thì giữ tối thiểu 50 (đã có tiến độ).
+  const nextProgress = next === 'pending_approval' ? 100 : Math.max(task.progress, 50);
 
   tx(() => {
     stmt.updateTask.run(

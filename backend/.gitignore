@@ -7,5 +7,14 @@ database.db-wal
 database.db-shm
 database.test.db*
 test/
+tests/
+__tests__/
+*.test.ts
+*.test.js
+*.spec.ts
+*.spec.js
 vitest.config.ts
+
+# Logs & text output files
 *.log
+*.txt
