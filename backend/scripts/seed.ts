@@ -37,10 +37,62 @@ if (!fs.existsSync(DB_PATH)) {
 const db = new DatabaseSync(DB_PATH);
 db.exec('PRAGMA foreign_keys = ON;');
 
+// ============================================================================
+// 0. Căn mốc thời gian — dự án "vừa mới bắt đầu 2 ngày"
+// ============================================================================
+//
+// Toàn bộ ngày trong phần dữ liệu bên dưới được viết theo 1 mốc gốc
+// (BASE_START). Thay vì hardcode lại 50 cặp start/end mỗi khi muốn đổi
+// timeline, mình dịch tất cả theo 1 hằng số → seed chạy bất cứ ngày nào
+// cũng cho ra dự án "vừa bắt đầu", không bao giờ thành dữ liệu cũ/giả.
+//
+//   PROJECT_STARTED_DAYS_AGO = 2  →  start_date của GĐ1 = hôm nay - 2 ngày.
+const BASE_START = '2026-10-10';          // mốc gốc của dữ liệu bên dưới
+const PROJECT_STARTED_DAYS_AGO = 2;        // dự án bắt đầu cách hôm nay 2 ngày
+
+const TODAY = new Date();
+TODAY.setHours(0, 0, 0, 0);
+const DESIRED_START = new Date(TODAY);
+DESIRED_START.setDate(DESIRED_START.getDate() - PROJECT_STARTED_DAYS_AGO);
+const DAY_SHIFT = Math.round(
+  (DESIRED_START.getTime() - new Date(`${BASE_START}T00:00:00`).getTime()) / 86_400_000,
+);
+
+/** YYYY-MM-DD từ Date (giờ địa phương). */
+function toISO(dt: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${dt.getFullYear()}-${p(dt.getMonth() + 1)}-${p(dt.getDate())}`;
+}
+
+/** Dịch 1 ngày YYYY-MM-DD theo DAY_SHIFT (giữ nguyên khoảng cách giữa các mốc). */
+function d(isoStr: string): string {
+  const dt = new Date(`${isoStr}T00:00:00`);
+  dt.setDate(dt.getDate() + DAY_SHIFT);
+  return toISO(dt);
+}
+
+/** Dịch ngày rồi kẹp ≤ hôm nay — log ở tương lai là dữ liệu sai. */
+function dPast(isoStr: string): string {
+  const shifted = d(isoStr);
+  const today = toISO(TODAY);
+  return shifted > today ? today : shifted;
+}
+
+/** Thứ 2 của tuần chứa dt — khoá báo cáo tuần cho demo. */
+function weekStartOf(dt: Date): string {
+  const x = new Date(dt);
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
+  return toISO(x);
+}
+
+console.log(`📅 Timeline: dịch ${DAY_SHIFT >= 0 ? '+' : ''}${DAY_SHIFT} ngày → dự án bắt đầu ${toISO(DESIRED_START)} (${PROJECT_STARTED_DAYS_AGO} ngày trước hôm nay)`);
+
 console.log('🗑️  Clearing existing data…');
 db.exec(`
   DELETE FROM audit_log;
   DELETE FROM daily_logs;
+  DELETE FROM task_help_messages;
+  DELETE FROM weekly_reports;
   DELETE FROM tasks;
   DELETE FROM bundles;
   DELETE FROM phases;
@@ -150,7 +202,7 @@ const phases: Phase[] = [
     description: 'Khảo sát, lập nhiệm vụ thiết kế, thiết kế kỹ thuật, thẩm tra và phê duyệt dự toán.',
     owner: 'hung',  dept: 'QLDA',
     start: '2026-10-10', end: '2026-10-13',
-    management_notes: 'Phối hợp chặt với đơn vị tư vấn thiết kế; cần BGĐ phê duyệt dự toán trước 14/10.',
+    management_notes: 'Phối hợp chặt với đơn vị tư vấn thiết kế; cần BGĐ phê duyệt dự toán trước khi chốt GĐ1.',
     tasks: [
       { code: 'T1-01', title: 'Khảo sát địa chất, địa hình bổ sung (nếu cần)', dept: 'QLDA', owner: 'hung',
         start: '2026-10-10', end: '2026-10-11', deliverable: 'Báo cáo khảo sát đã nghiệm thu', priority: 'high' },
@@ -192,7 +244,7 @@ const phases: Phase[] = [
     description: 'Bàn giao mặt bằng, lập ban chỉ huy, phê duyệt biện pháp thi công, an toàn – PCCC, tạm ứng hợp đồng.',
     owner: 'thanh', dept: 'TC',
     start: '2026-10-14', end: '2026-10-17',
-    management_notes: 'Công trường phải đủ điều kiện khởi công trước 17/10; chú ý bảo hiểm & tạm ứng.',
+    management_notes: 'Công trường phải đủ điều kiện khởi công trước khi vào thi công; chú ý bảo hiểm & tạm ứng.',
     tasks: [
       { code: 'T3-01', title: 'Bàn giao mặt bằng, mốc định vị, cao độ cho nhà thầu', dept: 'TC', owner: 'thanh',
         start: '2026-10-14', end: '2026-10-15', deliverable: 'Biên bản bàn giao mặt bằng', priority: 'critical' },
@@ -300,7 +352,7 @@ const phases: Phase[] = [
     description: 'Tổng hợp khối lượng, đối chiếu phát sinh, thẩm tra quyết toán, thanh toán phần còn lại, hoàn trả bảo hành, quyết toán thuế và lưu trữ hồ sơ.',
     owner: 'cuong', dept: 'KTTC',
     start: '2026-10-26', end: '2026-10-29',
-    management_notes: 'Đóng dự án đúng hạn 29/10; đối chiếu chặt với bộ phận KTTC để tránh sai sót thuế.',
+    management_notes: 'Đóng dự án đúng hạn; đối chiếu chặt với bộ phận KTTC để tránh sai sót thuế.',
     tasks: [
       { code: 'T7-01', title: 'Tổng hợp khối lượng hoàn thành theo hoàn công từng gói thầu', dept: 'QLDA', owner: 'hung',
         start: '2026-10-26', end: '2026-10-27', deliverable: 'Bảng khối lượng quyết toán', priority: 'high' },
@@ -339,8 +391,8 @@ const projectInfo = db.prepare(`
   'Dự án trọng điểm khối 68: từ thiết kế & pháp lý → lựa chọn nhà thầu → chuẩn bị khởi công → thi công → nghiệm thu hoàn công → bàn giao → thanh quyết toán.',
   userIds['hung'],
   userIds['admin'],  // created_by_user_id
-  '2026-10-10',
-  '2026-10-29',
+  d('2026-10-10'),
+  d('2026-10-29'),
   'doing',
 );
 const projectId = Number(projectInfo.lastInsertRowid);
@@ -462,8 +514,8 @@ for (const p of phases) {
     p.description,
     userIds[p.owner],
     userIds[p.owner],  // created_by = owner (manager tự tạo phase của mình)
-    p.start,
-    p.end,
+    p.start && d(p.start),
+    p.end && d(p.end),
     'doing',
     p.management_notes ?? '',
     null,
@@ -488,8 +540,8 @@ for (const p of phases) {
     const bundleOwner = deptManager[dept] ?? p.owner;
     // Trong cùng phase + dept: ngày bắt đầu sớm nhất, ngày kết thúc muộn nhất
     const sortedDates = [...deptTaskList].sort((a, b) => a.start.localeCompare(b.start));
-    const bStartDate = sortedDates[0].start;
-    const bEndDate = sortedDates[sortedDates.length - 1].end;
+    const bStartDate = d(sortedDates[0].start);
+    const bEndDate = d(sortedDates[sortedDates.length - 1].end);
 
     const nameInfo = bundleNames[`${p.code}|${dept}`] ?? {
       title: `${p.title} — phòng ${dept}`,
@@ -519,8 +571,8 @@ for (const p of phases) {
         userIds[bundleOwner],                                // 6. created_by_user_id (manager tạo)
         userIds[bundleOwner],                                // 7. assigned_by_user_id (cùng người tạo)
         t.dept,                                              // 8. department_code
-        t.start,                                             // 9. start_date
-        t.end,                                               // 10. end_date
+        d(t.start),                                          // 9. start_date
+        d(t.end),                                            // 10. end_date
         t.progress ?? 0,                                     // 11. progress
         t.status ?? 'pending',                               // 12. status
         t.priority ?? 'normal',                              // 13. priority
@@ -562,7 +614,7 @@ const t4_02 = findTaskByCode('T4-02'); // Nghiệm thu công việc
 if (t1_03) {
   insertLog.run(
     t1_03,
-    '2026-10-11',
+    dPast('2026-10-11'),
     'Triển khai bản vẽ kiến trúc tầng 1-3, phối hợp MEP',
     'Hoàn tất 60% bản vẽ kiến trúc, MEP còn chờ phản hồi tư vấn PCCC',
     'Đơn vị tư vấn PCCC phản hồi chậm 1 ngày',
@@ -573,9 +625,9 @@ if (t1_03) {
 if (t1_05) {
   insertLog.run(
     t1_05,
-    '2026-10-12',
+    dPast('2026-10-12'),
     'Tổng hợp dự toán các gói thầu, trình BGĐ phê duyệt',
-    'Đã trình BGĐ, kỳ vọng phê duyệt trước 13/10',
+    'Đã trình BGĐ, kỳ vọng phê duyệt sớm trong tuần này',
     '',
     40,
     userIds['hung'],
@@ -584,7 +636,7 @@ if (t1_05) {
 if (t4_02) {
   insertLog.run(
     t4_02,
-    '2026-10-17',
+    dPast('2026-10-17'),
     'Nghiệm thu cốt thép móng đơn, cốp pha cột tầng 1',
     'Đạt yêu cầu, đã lập biên bản',
     '',
@@ -628,7 +680,7 @@ if (t2_04) {
     VALUES (?, ?, ?, 1, ?, datetime('now'))
   `).run(
     t2_04,
-    'Đã xác nhận với ngân hàng Vietcombank chi nhánh X, thư bảo lãnh dự kiến phát hành 16/10.',
+    'Đã xác nhận với ngân hàng Vietcombank chi nhánh X, thư bảo lãnh dự kiến phát hành trong tuần.',
     userIds['admin'],
     userIds['admin'],
   );
@@ -678,6 +730,79 @@ if (firstTaskId) {
 }
 
 // ============================================================================
+// 8. Báo cáo tuần demo (tính năng weekly report)
+// ============================================================================
+//
+// Seed cho TUẦN HIỆN TẠI nên dùng ngay được sau khi npm run seed, không cần
+// tự nhập tay. Bỏ khối này nếu chỉ cần dữ liệu dự án — không entity nào khác
+// phụ thuộc vào nó.
+//
+// Dữ liệu cố tình để "vừa bắt đầu": NV mới có 2-3 dòng, 1 dòng vướng mắc,
+// QL đã phản hồi 1 NV (chỉ đạo + nhận xét + xác nhận) → đủ để demo cả 2 vế
+// (NV đọc phản hồi / QL xem và phản hồi).
+
+console.log('📋 Inserting weekly report demo…');
+const thisWeek = weekStartOf(TODAY);
+const nextWeekEndDate = (() => {
+  const x = new Date(`${thisWeek}T00:00:00`);
+  x.setDate(x.getDate() + 6);
+  return toISO(x);
+})();
+
+const insertWeeklyReport = db.prepare(`
+  INSERT INTO weekly_reports
+    (user_id, week_start, week_end, rows_json, manager_note, ack_user_id, ack_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+`);
+
+const weeklyDemo: Array<{
+  who: string;
+  rows: unknown[];
+  note?: string;
+  ackBy?: string;
+}> = [
+  {
+    who: 'hong',
+    rows: [
+      { id: 'w1', name: 'Khảo sát địa chất, địa hình bổ sung', result: 'Đã hoàn thành khảo sát hiện trường, chờ báo cáo chính thức.', status: 'Hoàn thành', blocker: '' },
+      { id: 'w2', name: 'Lập nhiệm vụ thiết kế', result: 'Dự thảo nhiệm vụ thiết kế đã xong 80%, chờ rà soát nội bộ.', status: 'Đang làm', blocker: '' },
+      { id: 'w3', name: 'Thẩm tra thiết kế, dự toán', result: 'Chưa bắt đầu — chờ có bản vẽ thiết kế.', status: 'Chưa bắt đầu', blocker: 'Cần bản vẽ thiết kế từ đơn vị tư vấn trước khi thẩm tra.' },
+    ],
+    note: 'Tiến độ GĐ1 ổn. Chú ý thẩm tra dự toán phải có bản vẽ thiết kế trước khi tổng hợp.',
+    ackBy: 'hung',
+  },
+  {
+    who: 'nguyet',
+    rows: [
+      { id: 'w1', name: 'Lập và phê duyệt dự toán', result: 'Đã lập dự toán sơ bộ 7 gói thầu, đang đối chiếu với HSMT.', status: 'Đang làm', blocker: '' },
+      { id: 'w2', name: 'Kế hoạch tài chính dự án 68', result: 'Đã dự thảo kế hoạch tài chính 4 quý.', status: 'Đang làm', blocker: 'Chờ số liệu khối lượng từ QLDA để chốt tổng mức đầu tư.' },
+    ],
+  },
+  {
+    who: 'ngoc',
+    rows: [
+      { id: 'w1', name: 'Rà soát hồ sơ nhân sự thi công', result: 'Đã rà soát 18/24 hồ sơ, còn 6 hồ sơ thiếu chứng chỉ.', status: 'Đang làm', blocker: '' },
+    ],
+  },
+];
+
+let weeklyInserted = 0;
+for (const w of weeklyDemo) {
+  const uid = userIds[w.who];
+  if (!uid) continue;
+  insertWeeklyReport.run(
+    uid,
+    thisWeek,
+    nextWeekEndDate,
+    JSON.stringify(w.rows),
+    w.note ?? null,
+    w.ackBy ? userIds[w.ackBy] : null,
+    w.ackBy ? new Date().toISOString().replace('T', ' ').slice(0, 19) : null,
+  );
+  weeklyInserted += 1;
+}
+
+// ============================================================================
 // Summary
 // ============================================================================
 
@@ -685,10 +810,12 @@ db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
 db.close();
 
 console.log('\n✅ Seed "Hồ sơ hoàn công dự án 68" complete!');
+console.log(`   - Timeline: ${toISO(DESIRED_START)} → ${d('2026-10-29')} (dự án mới bắt đầu ${PROJECT_STARTED_DAYS_AGO} ngày)`);
 console.log('   - 4 departments, 11 users (giữ nguyên dàn nhân sự cũ)');
 console.log(`   - 1 project "DA-68" → 7 phases → ${totalBundles.c} bundles (chia theo phòng ban: QLDA/KTTC/TC) → ${taskCount} tasks`);
 console.log('   - 3 daily log demo + 1 blocker_note demo + 2 help_messages');
 console.log('   - 3 audit log entries');
+console.log(`   - ${weeklyInserted} báo cáo tuần (tuần ${thisWeek}), 1 NV đã được QL phản hồi`);
 console.log('\n   Default password:');
 console.log('   - admin / admin123');
 console.log('   - all others / 123456');
