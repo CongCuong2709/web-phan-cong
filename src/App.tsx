@@ -58,6 +58,7 @@ import { Gantt4TangView } from './components/Gantt4TangView';
 import { GiaoViecNhomView } from './components/GiaoViecNhomView';
 import { ViecCuaToiView } from './components/ViecCuaToiView';
 import { BaoCaoTongQuanView } from './components/BaoCaoTongQuanView';
+import { WeeklyReportView } from './components/WeeklyReportView';
 import { DetailsDrawer } from './components/DetailsDrawer';
 import { NewItemModal } from './components/NewItemModal';
 
@@ -830,7 +831,7 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
 
         {activeTab === 'bao-cao' &&
           (user.role === 'employee' ? (
-            <ForbiddenView role="employee" />
+            <WeeklyReportView currentUser={user} />
           ) : (
             <BaoCaoTongQuanView
               tierItems={visibleTierItems}

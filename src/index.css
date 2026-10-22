@@ -107,3 +107,15 @@ body {
 .animate-slideUp {
   animation: slideUp 0.22s ease-out;
 }
+
+/* Weekly Report — dot status (Tailwind v4 không có dot utility sẵn) */
+.dot {
+  width: 8px; height: 8px; border-radius: 999px;
+  display: inline-block; position: absolute;
+  left: 8px; top: 50%; transform: translateY(-50%);
+  pointer-events: none;
+}
+.dot-green { background: #16a34a; }
+.dot-amber { background: #f59e0b; }
+.dot-red   { background: #dc2626; }
+.dot-gray  { background: #9ca3af; }

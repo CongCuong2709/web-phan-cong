@@ -336,6 +336,21 @@ export const stmt = {
     SELECT * FROM audit_log WHERE entity_type = ? AND entity_id = ?
     ORDER BY created_at DESC LIMIT 100
   `),
+
+  // --- Weekly reports (Ponytail: 1 bảng, rows lưu JSON) ---
+  // UPSERT theo (user_id, week_start). Mỗi NV 1 row / tuần.
+  upsertWeeklyReport: db.prepare(`
+    INSERT INTO weekly_reports (user_id, week_start, week_end, rows_json, updated_at)
+    VALUES (?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(user_id, week_start) DO UPDATE SET
+      week_end = excluded.week_end,
+      rows_json = excluded.rows_json,
+      updated_at = datetime('now')
+  `),
+  getWeeklyReport: db.prepare(`
+    SELECT user_id, week_start, week_end, rows_json, updated_at
+    FROM weekly_reports WHERE user_id = ? AND week_start = ?
+  `),
 };
 
 export default db;

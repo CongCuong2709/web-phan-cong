@@ -21,6 +21,7 @@ import taskRoutes from './routes/tasks.js';
 import dailyLogRoutes from './routes/dailyLogs.js';
 import historyRoutes from './routes/history.js';
 import teamMemberRoutes from './routes/teamMembers.js';
+import weeklyReportRoutes from './routes/weeklyReports.js';
 
 const PORT = Number(process.env.PORT) || 3000;
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
@@ -64,6 +65,7 @@ app.use('/api/employee-tasks', taskRoutes);
 app.use('/api', dailyLogRoutes);
 app.use('/api/team-members', teamMemberRoutes);
 app.use('/api/history', historyRoutes);
+app.use('/api/weekly-reports', weeklyReportRoutes);
 
 // --- 404 ---
 app.use('/api/*', (_req, res) => {

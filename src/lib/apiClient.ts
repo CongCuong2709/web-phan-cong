@@ -68,7 +68,7 @@ export type ApiResponse<T = unknown> =
   | { ok: false; error: ApiError; networkError: boolean };
 
 async function request<T = unknown>(
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE' | 'PUT',
   path: string,
   body?: unknown,
   opts: { timeoutMs?: number; requireAuth?: boolean } = {}
@@ -464,7 +464,39 @@ export const api = {
   async listHistory(limit = 50) {
     return request<{ items: HistoryEntryDto[] }>('GET', `/api/history?limit=${limit}`);
   },
+
+  // --- Weekly reports (Ponytail: 2 endpoints) ---
+  /** GET /api/weekly-reports?week=YYYY-MM-DD[&user=<id>] — item null = chưa có report. */
+  async getWeeklyReport(week: string, userId?: number) {
+    const qs = new URLSearchParams({ week });
+    if (userId) qs.set('user', String(userId));
+    return request<{ item: WeeklyReportDto | null; weekBounds?: { start: string; end: string } }>(
+      'GET', `/api/weekly-reports?${qs}`
+    );
+  },
+  /** PUT /api/weekly-reports — body { week_start, rows }. */
+  async putWeeklyReport(body: { week_start: string; rows: WeeklyReportRowDto[] }) {
+    return request<{ ok: boolean; week_start: string; week_end: string; rows: WeeklyReportRowDto[]; updated_at: string }>(
+      'PUT', '/api/weekly-reports', body
+    );
+  },
 };
+
+export interface WeeklyReportRowDto {
+  id: string;
+  name: string;
+  result: string;
+  status: 'Hoàn thành' | 'Đang làm' | 'Chưa bắt đầu' | 'Vướng mắc';
+  blocker: string;
+}
+
+export interface WeeklyReportDto {
+  user_id: number;
+  week_start: string;
+  week_end: string;
+  rows: WeeklyReportRowDto[];
+  updated_at: string;
+}
 
 /**
  * Helper: fire-and-forget helper. Log lỗi nhẹ ra console nhưng không throw.
