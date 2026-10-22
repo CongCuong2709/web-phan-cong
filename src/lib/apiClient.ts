@@ -465,7 +465,7 @@ export const api = {
     return request<{ items: HistoryEntryDto[] }>('GET', `/api/history?limit=${limit}`);
   },
 
-  // --- Weekly reports (Ponytail: 2 endpoints) ---
+  // --- Weekly reports (Ponytail: 4 endpoints) ---
   /** GET /api/weekly-reports?week=YYYY-MM-DD[&user=<id>] — item null = chưa có report. */
   async getWeeklyReport(week: string, userId?: number) {
     const qs = new URLSearchParams({ week });
@@ -474,13 +474,70 @@ export const api = {
       'GET', `/api/weekly-reports?${qs}`
     );
   },
-  /** PUT /api/weekly-reports — body { week_start, rows }. */
+  /** PUT /api/weekly-reports — body { week_start, rows }. Chỉ tuần hiện tại mới OK. */
   async putWeeklyReport(body: { week_start: string; rows: WeeklyReportRowDto[] }) {
     return request<{ ok: boolean; week_start: string; week_end: string; rows: WeeklyReportRowDto[]; updated_at: string }>(
       'PUT', '/api/weekly-reports', body
     );
   },
+  /** GET /api/weekly-reports/history — các tuần đã lập (chỉ tuần có data). */
+  async getWeeklyReportHistory(limit = 26) {
+    return request<{ items: WeeklyReportHistoryDto[] }>(
+      'GET', `/api/weekly-reports/history?limit=${limit}`
+    );
+  },
+  /** GET /api/weekly-reports/team?week= — aggregate theo phòng ban (manager+). */
+  async getWeeklyReportTeam(week: string) {
+    return request<{ items: WeeklyTeamMemberDto[]; week: string }>(
+      'GET', `/api/weekly-reports/team?week=${encodeURIComponent(week)}`
+    );
+  },
+  /**
+   * POST /api/weekly-reports/:userId/review — QL ghi phản hồi.
+   * Chỉ ghi mgr_comment + manager_note + ack; không đụng nội dung NV.
+   */
+  async reviewWeeklyReport(
+    userId: number,
+    body: {
+      week_start: string;
+      manager_note?: string;
+      ack?: boolean;
+      rows?: Array<{ id: string; mgr_comment?: string }>;
+    }
+  ) {
+    return request<{
+      ok: boolean;
+      rows: WeeklyReportRowDto[];
+      manager_note: string;
+      ack_at: string | null;
+    }>('POST', `/api/weekly-reports/${userId}/review`, body);
+  },
 };
+
+/** 1 tuần trong lịch sử (chỉ những tuần thực sự có rows). */
+export interface WeeklyReportHistoryDto {
+  week_start: string;
+  week_end: string;
+  row_count: number;
+  blocked_count: number;
+  updated_at: string;
+}
+
+/** 1 dòng tổng hợp phòng ban — KHÔNG chứa rows (tiết kiệm payload). */
+export interface WeeklyTeamMemberDto {
+  user_id: number;
+  username: string;
+  fullname: string;
+  departments: string[];
+  row_count: number;
+  blocked_count: number;
+  updated_at: string | null;
+  submitted: boolean;
+  /** Thời điểm QL bấm "Xác nhận đã xem" (null = chưa xem). */
+  ack_at: string | null;
+  /** QL đã viết nhận xét chung cho tuần này. */
+  has_note: boolean;
+}
 
 export interface WeeklyReportRowDto {
   id: string;
@@ -488,6 +545,8 @@ export interface WeeklyReportRowDto {
   result: string;
   status: 'Hoàn thành' | 'Đang làm' | 'Chưa bắt đầu' | 'Vướng mắc';
   blocker: string;
+  /** Chỉ đạo của QL cho dòng này (chỉ có khi QL đã phản hồi). */
+  mgr_comment?: string;
 }
 
 export interface WeeklyReportDto {
@@ -495,6 +554,11 @@ export interface WeeklyReportDto {
   week_start: string;
   week_end: string;
   rows: WeeklyReportRowDto[];
+  /** Nhận xét chung của QL cho cả tuần (NV cũng đọc được). */
+  manager_note?: string | null;
+  ack_user_id?: number | null;
+  /** Lúc QL xác nhận đã xem — null = chưa xem. */
+  ack_at?: string | null;
   updated_at: string;
 }
 

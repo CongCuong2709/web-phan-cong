@@ -287,7 +287,40 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
 -- ============================================================================
--- 7. Triggers (auto-update updated_at)
+-- 7. Báo cáo tuần (Weekly Report) — 2026-10
+-- ============================================================================
+--
+-- Ponytail/YAGNI: bảng DUY NHẤT cho toàn bộ nghiệp vụ báo cáo tuần. Rows lưu
+-- dạng JSON thay vì bảng con — không cần chuẩn hoá hoá vì không có truy vấn
+-- theo row (chỉ đọc/cập nhật cả report 1 lần).
+--
+-- Composite PK (user_id, week_start) = đúng 1 report / (nhân viên, tuần).
+--
+-- KHÔNG có FK tới projects/tasks — đặc tả nghiệp vụ cố ý cho phép nhân viên
+-- tự do nhập đầu việc KHÔNG gắn mã công việc gốc.
+--
+-- Cột phản hồi của quản lý:
+--   manager_note — Nhận xét chung cho cả tuần (1 ô dưới bảng).
+--   ack_*       — Cờ "quản lý đã xem" (KHÔNG phải duyệt/approval: không có
+--                 trạng thái từ chối, NV vẫn sửa báo cáo tuần này bình thường).
+--   mgr_comment — nằm trong từng phần tử của rows_json (chỉ đạo của QL theo
+--                 từng dòng). Backend bảo toàn field này khi NV lưu.
+CREATE TABLE IF NOT EXISTS weekly_reports (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  week_start TEXT NOT NULL,                    -- YYYY-MM-DD (thứ 2 của tuần)
+  week_end TEXT NOT NULL,                      -- YYYY-MM-DD (chủ nhật)
+  rows_json TEXT NOT NULL DEFAULT '[]',
+  manager_note TEXT,                           -- nhận xét chung của QL
+  ack_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  ack_at TEXT,                                 -- lúc QL bấm "Xác nhận đã xem"
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, week_start)
+);
+CREATE INDEX IF NOT EXISTS idx_wr_user ON weekly_reports(user_id, week_start DESC);
+CREATE INDEX IF NOT EXISTS idx_wr_ack ON weekly_reports(ack_at) WHERE ack_at IS NOT NULL;
+
+-- ============================================================================
+-- 8. Triggers (auto-update updated_at)
 -- ============================================================================
 --
 -- Phase G6: SỬA COMMENT. Trigger CHỈ update updated_at. Progress rollup được

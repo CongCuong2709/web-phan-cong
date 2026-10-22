@@ -1,11 +1,20 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { User } from '../types';
-import { api } from '../lib/apiClient';
+import { api, WeeklyReportHistoryDto } from '../lib/apiClient';
 
 // =============================================================================
-// WeeklyReportView — bảng nhập liệu báo cáo tuần (lưu thủ công, inline-edit).
-// Ponytail: state tối thiểu, 1 ref cho debounce, không có lib ngoài.
+// WeeklyReportView — báo cáo tuần (2 chế độ dùng chung 1 component).
+//
+//   mode='edit'   → Nhân viên tự soạn (bảng nhập liệu + cột "Phản hồi của QL").
+//   mode='review' → Trưởng phòng phản hồi (nội dung NV hiển thị dạng text,
+//                    ô trống → "—", KHÔNG placeholder; thêm cột "Chỉ đạo của QL"
+//                    + khung nhận xét chung + nút xác nhận đã xem).
+//
+// Ponytail: 1 file, không component con. 2 mode dùng chung 1 bảng nên không
+// phải viết lại markup; khác biệt chỉ ở chỗ render ô.
 // =============================================================================
+
+type Mode = 'edit' | 'review';
 
 type Row = {
   id: string;
@@ -13,89 +22,148 @@ type Row = {
   result: string;
   status: 'Hoàn thành' | 'Đang làm' | 'Chưa bắt đầu' | 'Vướng mắc';
   blocker: string;
+  /** Chỉ đạo của QL cho dòng này (chỉ có khi QL đã phản hồi). */
+  mgr_comment: string;
 };
 
-const STATUS_DOT: Record<Row['status'], string> = {
-  'Hoàn thành': 'dot-green',
-  'Đang làm': 'dot-amber',
-  'Chưa bắt đầu': 'dot-gray',
-  'Vướng mắc': 'dot-red',
+const STATUS_META: Record<Row['status'], { dot: string; color: string }> = {
+  'Hoàn thành': { dot: 'dot-green', color: '#0f7a3a' },
+  'Đang làm': { dot: 'dot-amber', color: '#a16207' },
+  'Chưa bắt đầu': { dot: 'dot-gray', color: '#5b6371' },
+  'Vướng mắc': { dot: 'dot-red', color: '#b91c1c' },
 };
-const STATUS_TEXT_COLOR: Record<Row['status'], string> = {
-  'Hoàn thành': '#0f7a3a',
-  'Đang làm': '#a16207',
-  'Chưa bắt đầu': '#5b6371',
-  'Vướng mắc': '#b91c1c',
-};
-const NEW_ROW: () => Row = () => ({
-  id: `r-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+
+const NEW_ROW = (): Row => ({
+  id: `r-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
   name: '', result: '', status: 'Chưa bắt đầu', blocker: '',
+  mgr_comment: '',
 });
 
-/** Trả về thứ 2 của tuần chứa `d` (YYYY-MM-DD local). */
+// ── Helpers ngày tuần ────────────────────────────────────────────────────────
 function weekStartOf(d = new Date()): string {
   const dt = new Date(d);
-  const dow = (dt.getDay() + 6) % 7; // ISO Mon=0..Sun=6
-  dt.setDate(dt.getDate() - dow);
+  dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7)); // về thứ 2
   const y = dt.getFullYear();
   const m = String(dt.getMonth() + 1).padStart(2, '0');
   const dd = String(dt.getDate()).padStart(2, '0');
   return `${y}-${m}-${dd}`;
 }
-
-/** ISO week number (1..53). */
+function addDays(iso: string, days: number): string {
+  const d = new Date(iso);
+  d.setDate(d.getDate() + days);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+}
 function isoWeek(d = new Date()): number {
   const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const day = (t.getUTCDay() + 6) % 7; // Mon=0..Sun=6
-  t.setUTCDate(t.getUTCDate() - day + 3); // Thursday of current week
+  const day = (t.getUTCDay() + 6) % 7;
+  t.setUTCDate(t.getUTCDate() - day + 3);
   const firstThu = new Date(Date.UTC(t.getUTCFullYear(), 0, 4));
   const diff = (t.getTime() - firstThu.getTime()) / 86400000;
   return 1 + Math.round((diff - 3 + ((firstThu.getUTCDay() + 6) % 7)) / 7);
 }
-
-function fmtDateVI(iso: string): string {
-  const [y, m, d] = iso.split('-');
-  return `${d}/${m}/${y}`;
-}
-function fmtTime(d = new Date()): string {
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+const fmtDateVI = (iso: string) => { const [y, m, d] = iso.split('-'); return `${d}/${m}/${y}`; };
+const fmtTime = (d = new Date()) =>
+  `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+/**
+ * "2026-10-22 07:30:00" (SQLite datetime('now') = UTC) → "22/10/2026 14:30"
+ * theo giờ địa phương của trình duyệt. Đây là nguồn duy nhất cho cả 2 view
+ * (WeeklyReportView + WeeklyReportTeamView) để mốc thời gian không lệch nhau.
+ */
+export function fmtStamp(sqlStamp: string | null | undefined): string {
+  if (!sqlStamp) return '';
+  const m = sqlStamp.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  if (!m) return '';
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5])));
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()} ${fmtTime(d)}`;
 }
 
 interface Props {
   currentUser: User;
+  /** 'edit' = NV soạn, 'review' = QL phản hồi. Mặc định 'edit'. */
+  mode?: Mode;
+  /** NV mà QL đang xem (chỉ dùng ở mode='review'). */
+  targetUser?: { fullname: string; username: string; userId: number; departments?: string[] };
+  targetUserId?: number;
+  /** Quay lại danh sách (nút back ở mode review). */
+  onBack?: () => void;
+  /** Tuần khởi tạo (team view truyền vào khi drill-down). */
+  week?: string;
+  onToast?: (msg: string, type?: 'success' | 'error' | 'warning') => void;
 }
 
-export const WeeklyReportView: React.FC<Props> = ({ currentUser }) => {
-  const [weekStart, setWeekStart] = useState<string>(() => weekStartOf());
+export const WeeklyReportView: React.FC<Props> = ({
+  currentUser, mode = 'edit', targetUser, targetUserId, onBack, week, onToast,
+}) => {
+  const isReview = mode === 'review';
+  const canEdit = mode === 'edit';
+
+  const [weekStart, setWeekStart] = useState<string>(() => week ?? weekStartOf());
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
-  const [savedAt, setSavedAt] = useState<string | null>(null);
-  // dirty = có thay đổi chưa lưu. Mọi mutation flip true, save-success flip false.
-  const [dirty, setDirty] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(null);   // lúc NV bấm Lưu
+  const [dirty, setDirty] = useState(false);                      // bản nháp NV chưa lưu
   const [saving, setSaving] = useState(false);
+  const [history, setHistory] = useState<WeeklyReportHistoryDto[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  // ── Phản hồi của QL ──
+  const [managerNote, setManagerNote] = useState('');
+  const [noteDraft, setNoteDraft] = useState('');
+  const [reviewDirty, setReviewDirty] = useState(false);          // phản hồi QL chưa lưu
+  const [reviewSaving, setReviewSaving] = useState(false);
+  const [acked, setAcked] = useState(false);
+  const [ackAt, setAckAt] = useState<string | null>(null);
 
-  // ── Load report theo tuần ──
+  const viewerId = isReview ? targetUserId : undefined;
+
+  // ── Load report ──
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    api.getWeeklyReport(weekStart).then((r) => {
+    api.getWeeklyReport(weekStart, viewerId).then((r) => {
       if (cancelled) return;
-      if (r.ok) {
-        const remote = r.data?.item?.rows as Row[] | undefined;
-        setRows(remote && remote.length ? remote : [NEW_ROW()]);
-        setSavedAt(r.data?.item?.updated_at ?? null);
-      } else {
-        setRows([NEW_ROW()]);
-        setSavedAt(null);
-      }
-      setDirty(false); // load xong = sạch
+      const item = r.ok ? r.data?.item : null;
+      const remote = item?.rows as Row[] | undefined;
+      setRows(
+        remote && remote.length
+          ? remote.map((x) => ({ ...x, mgr_comment: x.mgr_comment ?? '' }))
+          : [NEW_ROW()]
+      );
+      setSavedAt(item?.updated_at ?? null);
+      setManagerNote(item?.manager_note ?? '');
+      setNoteDraft(item?.manager_note ?? '');
+      setAcked(item?.ack_user_id != null);
+      setAckAt(item?.ack_at ?? null);
+      setDirty(false);
+      setReviewDirty(false);
       setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [weekStart]);
+  }, [weekStart, viewerId]);
 
-  // ── Save thủ công ──
-  const save = useCallback(async () => {
+  // ── Lịch sử tuần (chỉ NV xem báo cáo của chính mình) ──
+  useEffect(() => {
+    if (isReview) return;
+    let cancelled = false;
+    api.getWeeklyReportHistory(26).then((r) => {
+      if (cancelled || !r.ok) return;
+      setHistory(r.data.items);
+    });
+    return () => { cancelled = true; };
+  }, [isReview, weekStart, savedAt]);
+
+  // ── Cảnh báo rời trang khi còn thay đổi chưa lưu ──
+  useEffect(() => {
+    if (!dirty && !reviewDirty) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [dirty, reviewDirty]);
+
+  // ── Lưu báo cáo (NV) ──
+  const saveReport = useCallback(async () => {
     if (saving || !dirty) return;
     setSaving(true);
     const r = await api.putWeeklyReport({ week_start: weekStart, rows });
@@ -103,10 +171,40 @@ export const WeeklyReportView: React.FC<Props> = ({ currentUser }) => {
     if (r.ok) {
       setSavedAt(fmtTime());
       setDirty(false);
+      onToast?.('Đã lưu báo cáo tuần.');
+    } else {
+      onToast?.(r.error.message || 'Lưu thất bại.', 'error');
     }
-  }, [weekStart, rows, dirty, saving]);
+  }, [saving, dirty, weekStart, rows, onToast]);
 
-  // ── Mutations — chỉ setRows + đánh dấu dirty, KHÔNG gọi API ──
+  // ── Lưu phản hồi (QL) ──
+  const saveReview = useCallback(async (alsoAck = false) => {
+    if (!targetUserId || reviewSaving) return;
+    setReviewSaving(true);
+    const r = await api.reviewWeeklyReport(targetUserId, {
+      week_start: weekStart,
+      manager_note: noteDraft,
+      ack: alsoAck || undefined,
+      rows: rows.map((x) => ({ id: x.id, mgr_comment: x.mgr_comment })),
+    });
+    setReviewSaving(false);
+    if (r.ok) {
+      setManagerNote(r.data.manager_note);
+      setReviewDirty(false);
+      if (alsoAck) {
+        setAcked(true);
+        // Giữ stamp thô từ backend để fmtStamp() parse đúng (chuyển UTC → giờ máy).
+        setAckAt(r.data.ack_at ?? new Date().toISOString().replace('T', ' ').slice(0, 19));
+        onToast?.('Đã xác nhận báo cáo của nhân viên.');
+      } else {
+        onToast?.('Đã lưu phản hồi.');
+      }
+    } else {
+      onToast?.(r.error.message || 'Lưu phản hồi thất bại.', 'error');
+    }
+  }, [targetUserId, reviewSaving, weekStart, noteDraft, rows, onToast]);
+
+  // ── Mutations phía NV ──
   const updateRow = (idx: number, patch: Partial<Row>) => {
     setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
     setDirty(true);
@@ -118,90 +216,329 @@ export const WeeklyReportView: React.FC<Props> = ({ currentUser }) => {
   const removeRow = (idx: number) => {
     setRows((prev) => {
       const next = prev.filter((_, i) => i !== idx);
-      return next.length ? next : [NEW_ROW()]; // luôn giữ ≥1 dòng
+      return next.length ? next : [NEW_ROW()];
     });
     setDirty(true);
   };
 
-  // ── Derived ──
-  const weekEnd = useMemo(() => {
-    const d = new Date(weekStart);
-    d.setDate(d.getDate() + 6);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  }, [weekStart]);
+  // ── Mutations phía QL (chỉ đạo từng dòng) ──
+  const updateMgr = (idx: number, patch: Partial<Row>) => {
+    setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+    setReviewDirty(true);
+  };
 
+  // ── Chuyển tuần: chặn khi còn thay đổi chưa lưu ──
+  const trySwitchWeek = useCallback((target: string): boolean => {
+    if (dirty) {
+      onToast?.(`Báo cáo tuần ${isoWeek(new Date(weekStart))} chưa lưu — hãy lưu trước khi chuyển tuần.`, 'warning');
+      return false;
+    }
+    if (reviewDirty) {
+      onToast?.('Phản hồi chưa lưu — hãy lưu trước khi chuyển tuần.', 'warning');
+      return false;
+    }
+    setWeekStart(target);
+    return true;
+  }, [dirty, reviewDirty, weekStart, onToast]);
+
+  const weekEnd = useMemo(() => addDays(weekStart, 6), [weekStart]);
   const isCurrentWeek = weekStart === weekStartOf();
   const canGoNext = weekEnd < weekStartOf();
-  const canGoPrev = true;
+
+  // ── Render helpers ──
+  /** Ô nội dung của NV. review → text thuần, trống hiện "—" (KHÔNG placeholder). */
+  const empCell = (idx: number, field: 'name' | 'result' | 'blocker', ph: string) => {
+    const value = rows[idx][field];
+    if (isReview) {
+      return <td>{value ? value : <span className="text-[#b0b6c3]">—</span>}</td>;
+    }
+    return (
+      <td
+        contentEditable
+        suppressContentEditableWarning
+        onBlur={(e) => updateRow(idx, { [field]: (e.currentTarget.textContent ?? '').trim() } as Partial<Row>)}
+        data-ph={ph}
+        className="border-r border-[#eef0f6] align-middle empty:before:content-[attr(data-ph)] empty:before:text-[#b0b6c3] empty:before:italic focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#1a73e8] focus:ring-inset hover:bg-[#f6f8fc] hover:outline hover:outline-1 hover:outline-[#c7d2e3]"
+      >{value}</td>
+    );
+  };
+
+  /** Ô trạng thái: NV đổi được; review → text tĩnh. */
+  const statusCell = (idx: number) => {
+    const meta = STATUS_META[rows[idx].status];
+    if (isReview) {
+      return (
+        <td>
+          <span className="inline-flex items-center gap-1.5 font-medium" style={{ color: meta.color }}>
+            <span className={`dot ${meta.dot}`} />{rows[idx].status}
+          </span>
+        </td>
+      );
+    }
+    return (
+      <td className="border-r border-[#eef0f6] relative align-middle">
+        <span className={`dot ${meta.dot}`} />
+        <select
+          value={rows[idx].status}
+          onChange={(e) => updateRow(idx, { status: e.target.value as Row['status'] })}
+          className="appearance-none bg-transparent border border-transparent hover:border-[#dfe3ec] focus:border-[#1a73e8] focus:bg-white rounded px-2 py-1 pl-5 font-medium text-[13px] cursor-pointer w-full focus:outline-none"
+          style={{ color: meta.color }}
+        >
+          <option>Hoàn thành</option>
+          <option>Đang làm</option>
+          <option>Chưa bắt đầu</option>
+          <option>Vướng mắc</option>
+        </select>
+      </td>
+    );
+  };
+
+  /** Cột phản hồi/chỉ đạo của QL (cột 6). */
+  const mgrCell = (idx: number) => {
+    const r = rows[idx];
+    if (isReview) {
+      return (
+        <td className="bg-[#fcfdff]">
+          <div
+            contentEditable
+            suppressContentEditableWarning
+            onBlur={(e) => updateMgr(idx, { mgr_comment: (e.currentTarget.textContent ?? '').trim() })}
+            data-ph="Ghi chỉ đạo cho dòng này…"
+            className="empty:before:content-[attr(data-ph)] empty:before:text-[#b0b6c3] empty:before:italic focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#1a73e8] focus:ring-inset hover:bg-white hover:outline hover:outline-1 hover:outline-[#c7d2e3] rounded px-1 py-0.5 mb-1"
+          >{r.mgr_comment}</div>
+        </td>
+      );
+    }
+    // NV: chỉ đọc chỉ đạo của QL
+    if (!r.mgr_comment) {
+      return <td className="bg-[#fcfdff]"><span className="text-[#b0b6c3]">—</span></td>;
+    }
+    return (
+      <td className="bg-[#fcfdff]">{r.mgr_comment}</td>
+    );
+  };
+
+  const hasAnyContent = rows.some((r) => r.name || r.result || r.blocker);
 
   return (
-    <div className="max-w-[1100px] mx-auto px-6 py-6">
-      {/* ===== Toolbar ===== */}
-      <div className="flex items-center justify-between gap-3 mb-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <h1 className="text-[18px] font-semibold tracking-tight whitespace-nowrap">
-            Báo cáo tuần {isoWeek(new Date(weekStart))}
-            <span className="text-[#5b6371] font-normal"> ({fmtDateVI(weekStart)} – {fmtDateVI(weekEnd)})</span>
-          </h1>
-          <div className="flex items-center">
-            <button
-              className="w-7 h-7 rounded-md hover:bg-[#eef2f8] disabled:opacity-30 flex items-center justify-center"
-              onClick={() => setWeekStart(addDays(weekStart, -7))}
-              disabled={!canGoPrev}
-              title="Tuần trước"
-            >
-              <span className="material-symbols-outlined text-[18px] text-[#5b6371]">chevron_left</span>
-            </button>
-            <button
-              className="w-7 h-7 rounded-md hover:bg-[#eef2f8] disabled:opacity-30 flex items-center justify-center"
-              onClick={() => setWeekStart(addDays(weekStart, 7))}
-              disabled={!canGoNext}
-              title="Tuần sau"
-            >
-              <span className="material-symbols-outlined text-[18px] text-[#5b6371]">chevron_right</span>
-            </button>
+    <div className="max-w-[1240px] mx-auto px-6 py-6">
+      {/* ===== Header bản in ===== */}
+      <div className="hidden print:block mb-4 pb-3 border-b-2 border-[#1f2330]">
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="text-[13px] font-bold uppercase">Báo cáo công việc tuần</div>
+            <div className="text-[11px] text-[#5b6371] mt-0.5">
+              {targetUser ? targetUser.fullname : currentUser.fullname}
+              {targetUser?.departments?.length ? ` · ${targetUser.departments.join(', ')}` : ''}
+            </div>
           </div>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {dirty ? (
-            <span className="text-[12px] text-[#a16207] font-medium">● Có thay đổi chưa lưu</span>
-          ) : savedAt ? (
-            <span className="text-[12px] text-[#5b6371]">Đã lưu · {savedAt}</span>
-          ) : null}
-          <button
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-medium text-[#4b5462] hover:bg-[#eef2f8]"
-            onClick={() => setWeekStart(weekStartOf())}
-          >
-            <span className="material-symbols-outlined text-[16px]">today</span>
-            Tuần này
-          </button>
-          <button
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-semibold bg-[#1a73e8] text-white shadow-sm hover:bg-[#1657b3] disabled:bg-[#c3d6ff] disabled:cursor-not-allowed"
-            disabled={!dirty || saving}
-            onClick={save}
-          >
-            <span className="material-symbols-outlined text-[16px]">{saving ? 'progress_activity' : 'save'}</span>
-            {saving ? 'Đang lưu…' : 'Lưu báo cáo'}
-          </button>
+          <div className="text-right text-[11px] text-[#5b6371] leading-relaxed">
+            <div>Tuần {isoWeek(new Date(weekStart))} · {fmtDateVI(weekStart)} – {fmtDateVI(weekEnd)}</div>
+            <div>{isReview ? 'Trưởng phòng' : 'Nhân viên'} nộp {fmtStamp(savedAt)}</div>
+          </div>
         </div>
       </div>
 
-      {/* ===== Banner nếu nhân viên đang đăng nhập xem tab Báo cáo (legacy tab) ===== */}
-      {currentUser.role === 'employee' && (
-        <div className="hidden" />
+      {/* ===== Toolbar ===== */}
+      <div className="flex items-start justify-between gap-3 mb-3 print:hidden">
+        <div className="min-w-0">
+          {isReview && onBack && (
+            <button
+              onClick={onBack}
+              className="text-[13px] text-[#4b5462] hover:text-[#1a73e8] mb-1"
+            >← Báo cáo tuần phòng ban</button>
+          )}
+          <div className="flex items-center gap-2">
+            {isReview && targetUser && (
+              <div className="w-8 h-8 rounded-full bg-[#dce9ff] text-[#004ac6] flex items-center justify-center text-[13px] font-bold shrink-0">
+                {targetUser.fullname.trim().charAt(0).toUpperCase()}
+              </div>
+            )}
+            <h1 className="text-[18px] font-semibold tracking-tight">
+              {isReview && targetUser ? (
+                <>
+                  {targetUser.fullname}
+                  <span className="text-[#5b6371] font-normal">
+                    {targetUser.departments?.length ? ` · NV.${targetUser.departments.join('.')}` : ''}
+                  </span>
+                </>
+              ) : (
+                <>Báo cáo tuần {isoWeek(new Date(weekStart))}</>
+              )}
+            </h1>
+            <div className="flex items-center">
+              <button
+                className="px-2 py-1 rounded-md hover:bg-[#eef2f8] text-[12px] text-[#5b6371]"
+                onClick={() => trySwitchWeek(addDays(weekStart, -7))}
+              >Tuần trước</button>
+              <button
+                className="px-2 py-1 rounded-md hover:bg-[#eef2f8] disabled:opacity-40 text-[12px] text-[#5b6371]"
+                onClick={() => trySwitchWeek(addDays(weekStart, 7))}
+                disabled={!canGoNext}
+              >Tuần sau</button>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 mt-1 text-[12px] text-[#5b6371]">
+            <span>Tuần {isoWeek(new Date(weekStart))} ({fmtDateVI(weekStart)} – {fmtDateVI(weekEnd)})</span>
+            {savedAt && (
+              <>
+                <span className="text-[#c3c6d7]">|</span>
+                <span>Nộp lúc {fmtStamp(savedAt)}</span>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          {!isReview && (
+            <span className="text-[12px] font-medium">
+              {dirty ? (
+                <span className="text-[#a16207]">● Có thay đổi chưa lưu</span>
+              ) : savedAt ? (
+                <span className="text-[#5b6371]">Đã lưu · {fmtStamp(savedAt)}</span>
+              ) : null}
+            </span>
+          )}
+          {isReview && reviewDirty && (
+            <span className="text-[12px] text-[#a16207] font-medium">● Phản hồi chưa lưu</span>
+          )}
+
+          {/* Lịch sử tuần — chỉ NV (bỏ qua ở mode review) */}
+          {!isReview && (
+            <div className="relative">
+              <button
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-[#dfe3ec] text-[13px] font-medium text-[#4b5462] hover:bg-[#f6f8fc]"
+                onClick={() => setShowHistory((v) => !v)}
+              >Lịch sử tuần</button>
+              {showHistory && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setShowHistory(false)} />
+                  <div className="absolute right-0 top-full mt-1.5 w-[300px] bg-white border border-[#e4e8f0] rounded-[10px] shadow-[0_8px_24px_rgba(15,23,42,0.10)] z-40 overflow-hidden">
+                    <div className="px-3 py-2 border-b border-[#eef0f6] text-[11px] font-semibold uppercase tracking-wider text-[#97a0b0]">
+                      Tuần đã lập
+                    </div>
+                    <div className="max-h-[280px] overflow-y-auto py-1">
+                      {history.length === 0 ? (
+                        <div className="px-3 py-3 text-[12px] text-[#b0b6c3] text-center">
+                          Chưa có tuần nào đã lưu
+                        </div>
+                      ) : history.map((h) => (
+                        <div
+                          key={h.week_start}
+                          className={`flex items-center justify-between gap-2 px-3 py-2 text-[13px] cursor-pointer ${
+                            h.week_start === weekStart ? 'bg-[#eff6ff] font-medium' : 'hover:bg-[#f6f8fc]'
+                          }`}
+                          onClick={() => { if (trySwitchWeek(h.week_start)) setShowHistory(false); }}
+                        >
+                          <span className="flex items-center gap-2">
+                            Tuần {isoWeek(new Date(h.week_start))}
+                            <span className="text-[#97a0b0] text-[12px]">
+                              {fmtDateVI(h.week_start)} – {fmtDateVI(h.week_end)}
+                            </span>
+                          </span>
+                          <span className="flex items-center gap-1.5 text-[11px] text-[#5b6371] shrink-0">
+                            {h.blocked_count > 0 && (
+                              <span className="inline-flex items-center gap-1 text-[#b91c1c]">
+                                <span className="w-1.5 h-1.5 rounded-full bg-[#dc2626]" />{h.blocked_count}
+                              </span>
+                            )}
+                            {h.row_count} dòng
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          <button
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-[#dfe3ec] text-[13px] font-medium text-[#4b5462] hover:bg-[#f6f8fc]"
+            onClick={() => window.print()}
+            title="In hoặc lưu PDF"
+          >In / PDF</button>
+
+          {/* NV: Lưu báo cáo (chỉ tuần hiện tại) */}
+          {canEdit && isCurrentWeek && (
+            <button
+              className="px-3 py-1.5 rounded-md text-[13px] font-semibold bg-[#1a73e8] text-white shadow-sm hover:bg-[#1657b3] disabled:bg-[#c3d6ff] disabled:cursor-not-allowed"
+              disabled={!dirty || saving}
+              onClick={saveReport}
+            >{saving ? 'Đang lưu…' : 'Lưu báo cáo'}</button>
+          )}
+
+          {/* QL: Xác nhận đã xem — KHÔNG phải duyệt (không có trạng thái từ chối) */}
+          {isReview && (
+            <button
+              className={`px-3 py-1.5 rounded-md text-[13px] font-semibold ${
+                acked
+                  ? 'bg-[#e8f5ec] text-[#0f7a3a] border border-[#b7e0c4]'
+                  : 'bg-[#0f7a3a] text-white hover:bg-[#0c5f2e]'
+              }`}
+              disabled={reviewSaving}
+              onClick={() => saveReview(true)}
+            >{acked ? 'Đã xác nhận' : 'Xác nhận đã xem'}</button>
+          )}
+        </div>
+      </div>
+
+      {/* ===== Nhận xét chung của QL ===== */}
+      {!loading && (
+        isReview ? (
+          <div className="border border-[#e4e8f0] rounded-lg p-3 mb-3">
+            <div className="flex items-center justify-between gap-3 mb-1.5">
+              <div className="text-[12px] font-semibold">
+                Nhận xét chung cho tuần này
+              </div>
+              <span className="text-[11px] text-[#97a0b0]">
+                Nhân viên sẽ thấy nhận xét này trong báo cáo tuần của họ
+              </span>
+            </div>
+            <div
+              contentEditable
+              suppressContentEditableWarning
+              onInput={(e) => {
+                setNoteDraft(e.currentTarget.textContent ?? '');
+                setReviewDirty(true);
+              }}
+              data-ph="Nhận xét tổng quan về tuần làm việc…"
+              className="text-[13px] leading-relaxed outline-none rounded-md px-2 py-1.5 empty:before:content-[attr(data-ph)] empty:before:text-[#b0b6c3] empty:before:italic hover:bg-[#f6f8fc] focus:bg-white focus:ring-2 focus:ring-[#1a73e8]"
+            >{managerNote}</div>
+            <div className="flex items-center justify-between gap-2 mt-2">
+              <span className="text-[11px] text-[#0f7a3a]">
+                {acked ? `Đã xác nhận lúc ${fmtStamp(ackAt)}` : <span className="text-[#97a0b0]">Chưa xác nhận</span>}
+              </span>
+              <button
+                className="px-3 py-1.5 rounded-md text-[13px] font-semibold bg-[#1a73e8] text-white hover:bg-[#1657b3] disabled:bg-[#c3d6ff] disabled:cursor-not-allowed"
+                disabled={!reviewDirty || reviewSaving}
+                onClick={() => saveReview(false)}
+              >{reviewSaving ? 'Đang lưu…' : 'Lưu nhận xét'}</button>
+            </div>
+          </div>
+        ) : managerNote ? (
+          <div className="border border-[#dce9ff] bg-[#fbfdff] rounded-lg p-3 mb-3">
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="text-[12px] font-semibold">Nhận xét của Trưởng phòng</span>
+              {ackAt && <span className="text-[11px] text-[#97a0b0] ml-auto">{fmtStamp(ackAt)}</span>}
+            </div>
+            <div className="text-[13px] leading-relaxed">{managerNote}</div>
+          </div>
+        ) : null
       )}
 
-      {/* ===== Sheet ===== */}
+      {/* ===== Bảng ===== */}
       <div className="border border-[#e4e8f0] rounded-lg overflow-hidden bg-white">
         <div className="overflow-x-auto">
           <table className="w-full border-collapse table-fixed text-[13px]">
             <colgroup>
-              <col style={{ width: 44 }} />
+              <col style={{ width: 36 }} />
               <col />
               <col />
-              <col style={{ width: 170 }} />
-              <col />
-              <col style={{ width: 32 }} />
+              <col style={{ width: isReview ? 150 : 170 }} />
+              <col style={{ width: 190 }} />
+              <col style={{ width: 220 }} />
+              {canEdit && <col style={{ width: 32 }} />}
             </colgroup>
             <thead>
               <tr className="bg-[#f8f9fc] text-left">
@@ -210,69 +547,52 @@ export const WeeklyReportView: React.FC<Props> = ({ currentUser }) => {
                 <th className="font-semibold text-[12px] text-[#5b6371] py-2 px-3 border-b border-[#e4e8f0]">Kết quả trong tuần</th>
                 <th className="font-semibold text-[12px] text-[#5b6371] py-2 px-3 border-b border-[#e4e8f0]">Trạng thái</th>
                 <th className="font-semibold text-[12px] text-[#5b6371] py-2 px-3 border-b border-[#e4e8f0]">Vướng mắc / Đề xuất</th>
-                <th className="border-b border-[#e4e8f0]" />
+                <th className="font-semibold text-[12px] py-2 px-3 border-b border-[#e4e8f0] bg-[#f0f6ff] text-[#004ac6]">
+                  {isReview ? 'Chỉ đạo của QL' : 'Phản hồi của QL'}
+                </th>
+                {canEdit && <th className="border-b border-[#e4e8f0]" />}
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={6} className="text-center text-[12px] text-[#9aa0b4] py-8">Đang tải…</td></tr>
+                <tr><td colSpan={7} className="text-center text-[12px] text-[#9aa0b4] py-8">Đang tải…</td></tr>
+              ) : isReview && !hasAnyContent ? (
+                <tr><td colSpan={7} className="text-center text-[12px] text-[#9aa0b4] py-8">
+                  Nhân viên chưa lập báo cáo cho tuần này
+                </td></tr>
               ) : (
                 rows.map((r, idx) => (
                   <tr key={r.id} className="group hover:bg-[#fafbfd] border-b border-[#eef0f6]">
-                    <td className="text-center text-[12px] text-[#97a0b0] py-2 px-3 bg-[#fafbfd] select-none tabular-nums">{idx + 1}</td>
-                    <td
-                      contentEditable
-                      suppressContentEditableWarning
-                      onBlur={(e) => updateRow(idx, { name: (e.currentTarget.textContent ?? '').trim() })}
-                      data-ph="Nhập tên công việc…"
-                      className="px-3 py-2 border-r border-[#eef0f6] align-middle empty:before:content-[attr(data-ph)] empty:before:text-[#b0b6c3] empty:before:italic focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#1a73e8] focus:ring-inset hover:bg-[#f6f8fc] hover:outline hover:outline-1 hover:outline-[#c7d2e3]"
-                    >{r.name}</td>
-                    <td
-                      contentEditable
-                      suppressContentEditableWarning
-                      onBlur={(e) => updateRow(idx, { result: (e.currentTarget.textContent ?? '').trim() })}
-                      data-ph="Sản phẩm/kết quả…"
-                      className="px-3 py-2 border-r border-[#eef0f6] align-middle empty:before:content-[attr(data-ph)] empty:before:text-[#b0b6c3] empty:before:italic focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#1a73e8] focus:ring-inset hover:bg-[#f6f8fc] hover:outline hover:outline-1 hover:outline-[#c7d2e3]"
-                    >{r.result}</td>
-                    <td className="px-3 py-2 border-r border-[#eef0f6] relative align-middle">
-                      <span className={`dot ${STATUS_DOT[r.status]}`} />
-                      <select
-                        value={r.status}
-                        onChange={(e) => updateRow(idx, { status: e.target.value as Row['status'] })}
-                        className="appearance-none bg-transparent border border-transparent hover:border-[#dfe3ec] focus:border-[#1a73e8] focus:bg-white rounded px-2 py-1 pl-5 font-medium text-[13px] cursor-pointer w-full focus:outline-none"
-                        style={{ color: STATUS_TEXT_COLOR[r.status] }}
-                      >
-                        <option>Hoàn thành</option>
-                        <option>Đang làm</option>
-                        <option>Chưa bắt đầu</option>
-                        <option>Vướng mắc</option>
-                      </select>
+                    <td className="text-center text-[12px] text-[#97a0b0] py-2 px-3 bg-[#fafbfd] select-none tabular-nums align-top pt-2.5">
+                      {idx + 1}
                     </td>
-                    <td
-                      contentEditable
-                      suppressContentEditableWarning
-                      onBlur={(e) => updateRow(idx, { blocker: (e.currentTarget.textContent ?? '').trim() })}
-                      data-ph="Cần hỗ trợ từ…"
-                      className="px-3 py-2 border-r border-[#eef0f6] align-middle empty:before:content-[attr(data-ph)] empty:before:text-[#b0b6c3] empty:before:italic focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#1a73e8] focus:ring-inset hover:bg-[#f6f8fc] hover:outline hover:outline-1 hover:outline-[#c7d2e3]"
-                    >{r.blocker}</td>
-                    <td className="text-center align-middle px-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={() => removeRow(idx)}
-                        title="Xoá dòng"
-                        className="w-6 h-6 inline-flex items-center justify-center rounded text-[#97a0b0] hover:bg-[#fde8e8] hover:text-[#c43a3a]"
-                      >
-                        <span className="material-symbols-outlined text-[16px]">delete</span>
-                      </button>
-                    </td>
+                    {empCell(idx, 'name', 'Nhập tên công việc…')}
+                    {empCell(idx, 'result', 'Sản phẩm/kết quả…')}
+                    {statusCell(idx)}
+                    {empCell(idx, 'blocker', 'Cần hỗ trợ từ…')}
+                    {mgrCell(idx)}
+                    {canEdit && (
+                      <td className="text-center align-top px-1 pt-1.5">
+                        <button
+                          onClick={() => removeRow(idx)}
+                          title="Xoá dòng"
+                          className="w-5 h-5 inline-flex items-center justify-center rounded text-[12px] leading-none text-[#97a0b0] opacity-0 group-hover:opacity-100 transition-opacity hover:bg-[#fde8e8] hover:text-[#c43a3a]"
+                        >×</button>
+                      </td>
+                    )}
                   </tr>
                 ))
               )}
-              {!loading && (
-                <tr className="text-[#b0b6c3] hover:bg-[#f6f8fc] hover:text-[#1a73e8] cursor-pointer" onClick={addRow}>
+
+              {/* Dòng "+ Thêm dòng mới" — chỉ NV, chỉ tuần hiện tại */}
+              {!loading && canEdit && isCurrentWeek && (
+                <tr
+                  className="text-[#b0b6c3] hover:bg-[#f6f8fc] hover:text-[#1a73e8] cursor-pointer"
+                  onClick={addRow}
+                >
                   <td className="text-center text-[13px] py-2.5 bg-[#fafbfd]">+</td>
-                  <td colSpan={5} className="py-2.5 px-3 text-[13px] flex items-center gap-1.5">
-                    <span className="material-symbols-outlined text-[16px]">add</span>
-                    Thêm dòng mới
+                  <td colSpan={6} className="py-2.5 px-3 text-[13px] text-[#b0b6c3]">
+                    + Thêm dòng mới
                   </td>
                 </tr>
               )}
@@ -281,18 +601,16 @@ export const WeeklyReportView: React.FC<Props> = ({ currentUser }) => {
         </div>
       </div>
 
-      <div className="mt-3 text-[11px] text-[#9aa0b4] text-right">
-        {isCurrentWeek ? 'Tuần hiện tại — đang mở chỉnh sửa.' : 'Tuần đã đóng (chỉ đọc).'}
+      {/* ===== Footer trạng thái ===== */}
+      <div className="mt-3 text-[11px] text-[#9aa0b4] print:hidden">
+        {isReview
+          ? (acked
+              ? `Trưởng phòng đã xác nhận báo cáo lúc ${fmtStamp(ackAt)}.`
+              : 'Chưa xác nhận báo cáo.')
+          : isCurrentWeek
+            ? 'Tuần hiện tại — đang mở chỉnh sửa.'
+            : 'Tuần đã đóng (chỉ đọc).'}
       </div>
     </div>
   );
 };
-
-function addDays(iso: string, days: number): string {
-  const d = new Date(iso);
-  d.setDate(d.getDate() + days);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${dd}`;
-}

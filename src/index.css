@@ -119,3 +119,65 @@ body {
 .dot-amber { background: #f59e0b; }
 .dot-red   { background: #dc2626; }
 .dot-gray  { background: #9ca3af; }
+
+/* ===== Báo cáo tuần — bản in / lưu PDF =====
+   Ponytail: dùng print của trình duyệt (window.print()) thay vì thêm
+   dependency pdfkit/jspdf. Chữ ký tay: KHÔNG (đã chốt 2026-10-22).
+
+   Vỡ khung bảng khi in (Broken Table Layout) có 3 nguyên nhân và mình xử lý
+   cả 3, nếu thiếu 1 cái là cột vẫn chồng nhau:
+     1. `table-fixed` + <col style="width:Npx"> giữ layout màn hình rộng 1240px,
+        trong khi trang A4 chỉ ~180mm → bảng tràn ngang, cột đè lên cột.
+        → Bỏ table-fixed, bỏ width cố định của <col>, cho bảng tự co theo nội dung.
+     2. Wrapper `overflow-x-auto` giữ chiều rộng cũ và cắt chữ.
+        → Buộc overflow: visible + width 100%.
+     3. Container `max-w-[1240px] px-6` giữ padding + max-width của màn hình.
+        → Nới max-width: none, padding: 0. */
+@media print {
+  body { background: #fff !important; font-size: 11pt; }
+
+  /* Ẩn mọi chrome: header hệ thống, toolbar, footer, nút bấm, backdrop */
+  header.fixed, [role="dialog"], footer, button, .print\:hidden {
+    display: none !important;
+  }
+
+  /* Container: bung hết chiều rộng khả dụng của trang in */
+  main, main > div {
+    max-width: none !important;
+    width: 100% !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    margin: 0 !important;
+  }
+  /* Wrapper cuộn ngang của bảng không được cắt nội dung khi in */
+  .overflow-x-auto { overflow: visible !important; }
+
+  /* Bảng: bỏ layout cố định + bỏ độ rộng px của <col> để không tràn khổ A4 */
+  table {
+    table-layout: auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    border-collapse: collapse !important;
+  }
+  col, colgroup { width: auto !important; }
+  table th, table td {
+    border: 1px solid #9aa0b4 !important;
+    padding: 4pt 5pt !important;
+    font-size: 9pt !important;
+    /* chữ dài phải xuống dòng thay vì tràn ra ngoài ô */
+    overflow-wrap: anywhere;
+    word-break: normal;
+    hyphens: auto;
+  }
+  /* Nền đầu bảng in đen-trắng vẫn phải thấy */
+  table thead th { background: #f1f3f8 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+  /* Lặp tiêu đề bảng ở mỗi trang, không cắt dòng giữa trang */
+  thead { display: table-header-group; }
+  tr { page-break-inside: avoid; }
+
+  /* Header báo cáo chỉ hiện khi in */
+  .hidden.print\:block { display: block !important; }
+
+  @page { size: A4 portrait; margin: 12mm; }
+}

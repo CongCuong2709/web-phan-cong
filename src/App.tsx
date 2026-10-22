@@ -59,6 +59,7 @@ import { GiaoViecNhomView } from './components/GiaoViecNhomView';
 import { ViecCuaToiView } from './components/ViecCuaToiView';
 import { BaoCaoTongQuanView } from './components/BaoCaoTongQuanView';
 import { WeeklyReportView } from './components/WeeklyReportView';
+import { WeeklyReportTeamView } from './components/WeeklyReportTeamView';
 import { DetailsDrawer } from './components/DetailsDrawer';
 import { NewItemModal } from './components/NewItemModal';
 
@@ -361,6 +362,9 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isNewItemModalOpen, setIsNewItemModalOpen] = useState(false);
   const [isNewPersonalTaskOpen, setIsNewPersonalTaskOpen] = useState(false);
+
+  /** Sub-view của tab Báo cáo (manager+): 'tong-quan' = báo cáo cũ, 'tuan-phong-ban' = weekly report NV. */
+  const [baoCaoSubTab, setBaoCaoSubTab] = useState<'tong-quan' | 'tuan-phong-ban'>('tuan-phong-ban');
 
   // Toast state
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -831,15 +835,39 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
 
         {activeTab === 'bao-cao' &&
           (user.role === 'employee' ? (
-            <WeeklyReportView currentUser={user} />
+            <WeeklyReportView currentUser={user} mode="edit" onToast={showToast} />
           ) : (
-            <BaoCaoTongQuanView
-              tierItems={visibleTierItems}
-              teamMembers={visibleTeamMembers}
-              teamTasks={visibleTeamTasks}
-              dailyLogs={dailyLogs}
-              currentUser={user}
-            />
+            <>
+              {/* Sub-view: Quản lý chuyển giữa "Tổng quan" (cũ) và "Báo cáo tuần phòng ban" (mới). */}
+              <div className="pt-14 px-6 print:hidden">
+                <div className="max-w-[1100px] mx-auto flex items-center gap-1 border-b border-[#e5eeff]">
+                  {(['tong-quan', 'tuan-phong-ban'] as const).map((k) => (
+                    <button
+                      key={k}
+                      onClick={() => setBaoCaoSubTab(k)}
+                      className={`px-3 py-2 text-[13px] font-medium -mb-px border-b-2 transition-colors ${
+                        baoCaoSubTab === k
+                          ? 'border-[#004ac6] text-[#004ac6]'
+                          : 'border-transparent text-[#434655] hover:text-[#0b1c30]'
+                      }`}
+                    >
+                      {k === 'tong-quan' ? 'Tổng quan' : 'Báo cáo tuần phòng ban'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {baoCaoSubTab === 'tuan-phong-ban' ? (
+                <WeeklyReportTeamView currentUser={user} onToast={showToast} />
+              ) : (
+                <BaoCaoTongQuanView
+                  tierItems={visibleTierItems}
+                  teamMembers={visibleTeamMembers}
+                  teamTasks={visibleTeamTasks}
+                  dailyLogs={dailyLogs}
+                  currentUser={user}
+                />
+              )}
+            </>
           ))}
       </main>
 

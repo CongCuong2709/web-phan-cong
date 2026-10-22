@@ -58,4 +58,4 @@ backend/scripts/verify-*.ts
 # Utility scripts (not needed in production)
 *.mjs
 
-mockup-bao-cao-tuan.html
+mockup-*.html

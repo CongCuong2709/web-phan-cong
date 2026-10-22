@@ -348,8 +348,18 @@ export const stmt = {
       updated_at = datetime('now')
   `),
   getWeeklyReport: db.prepare(`
-    SELECT user_id, week_start, week_end, rows_json, updated_at
+    SELECT user_id, week_start, week_end, rows_json, manager_note,
+           ack_user_id, ack_at, updated_at
     FROM weekly_reports WHERE user_id = ? AND week_start = ?
+  `),
+  // Manager review: ghi riêng phản hồi (rows_json đã merge ở routes) + nhận xét
+  // chung + cờ "đã xem". KHÔNG dùng upsertWeeklyReport ở đây — upsert đó của
+  // nhân viên, sẽ đè mất manager_note/ack_* nếu chạy lại.
+  saveWeeklyReportReview: db.prepare(`
+    UPDATE weekly_reports
+       SET rows_json = ?, manager_note = ?, ack_user_id = ?, ack_at = ?,
+           updated_at = datetime('now')
+     WHERE user_id = ? AND week_start = ?
   `),
 };
 
