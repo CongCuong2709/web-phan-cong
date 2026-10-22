@@ -12,7 +12,7 @@
 
 // Fix C3: port backend mặc định là 3000 (xem backend/.env PORT=3000),
 // không phải 3001. Sai port này làm frontend không gọi được API mặc định.
-const API_BASE = (import.meta.env.VITE_API_URL as string) || 'http://localhost:3000';
+const API_BASE = (import.meta.env.VITE_API_URL as string) || 'http://localhost:3001';
 const TOKEN_KEY = 'mvp_token';
 
 /** User object trả về từ /api/auth/me (subset đủ dùng để restore session). */

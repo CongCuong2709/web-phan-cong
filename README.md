@@ -159,7 +159,6 @@ web-phan-cong/
 - **Xuất PDF/Excel** — nút đã gỡ (Phase H). `ExportModal.tsx` chỉ còn `export {}`.
   Nếu cần export thật, viết mới với `jspdf`/`xlsx` (FE) hoặc `pdfkit`/`exceljs` (BE).
 - **Test tự động** — chưa có test file nào (`test/`, `e2e/` đều gitignore).
-  `@playwright/test` đã cài nhưng chưa dùng.
 - **Refresh token** — token hết hạn sau 7 ngày thì phải đăng nhập lại.
 
 ## 📝 Lưu ý cho production

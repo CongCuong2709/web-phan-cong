@@ -43,16 +43,16 @@ npm run dev
 
 ```bash
 # Health
-curl http://localhost:3000/api/health
+curl http://localhost:3001/api/health
 
 # Login (sau khi seed)
-TOKEN=$(curl -s -X POST http://localhost:3000/api/auth/login \
+TOKEN=$(curl -s -X POST http://localhost:3001/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin123"}' | jq -r .token)
 
 # Gọi API có auth
-curl http://localhost:3000/api/me -H "Authorization: Bearer $TOKEN"
-curl http://localhost:3000/api/tasks -H "Authorization: Bearer $TOKEN"
+curl http://localhost:3001/api/me -H "Authorization: Bearer $TOKEN"
+curl http://localhost:3001/api/tasks -H "Authorization: Bearer $TOKEN"
 ```
 
 ## 📡 API Endpoints

@@ -3,7 +3,7 @@ REM ============================================================================
 REM start-server.bat — Master launcher 1-click
 REM
 REM Chay 1 lan: tu dong khoi dong:
-REM   1. Backend (Express + SQLite) tren http://localhost:3000
+REM   1. Backend (Express + SQLite) tren http://localhost:3001
 REM   2. Frontend (Vite + React) tren http://localhost:5173
 REM   3. Mo browser den frontend
 REM
@@ -50,16 +50,16 @@ REM 1. Setup .env.local cho frontend (neu chua co)
 REM ============================================================================
 echo [1/4] Cau hinh frontend...
 if not exist .env.local (
-    echo VITE_API_URL=http://localhost:3000 > .env.local
-    echo VITE_PROXY_TARGET=http://localhost:3000 >> .env.local
+    echo VITE_API_URL=http://localhost:3001 > .env.local
+    echo VITE_PROXY_TARGET=http://localhost:3001 >> .env.local
     echo      Tao .env.local moi
 ) else (
     findstr /c:"VITE_API_URL" .env.local >nul 2>&1 || (
-        echo VITE_API_URL=http://localhost:3000 >> .env.local
+        echo VITE_API_URL=http://localhost:3001 >> .env.local
         echo      Them VITE_API_URL vao .env.local
     )
     findstr /c:"VITE_PROXY_TARGET" .env.local >nul 2>&1 || (
-        echo VITE_PROXY_TARGET=http://localhost:3000 >> .env.local
+        echo VITE_PROXY_TARGET=http://localhost:3001 >> .env.local
         echo      Them VITE_PROXY_TARGET vao .env.local
     )
     echo      .env.local OK
@@ -69,7 +69,7 @@ echo.
 REM ============================================================================
 REM 2. Start backend (background window)
 REM ============================================================================
-echo [2/4] Khoi dong backend (port 3000)...
+echo [2/4] Khoi dong backend (port 3001)...
 cd /d "%~dp0backend"
 start "Backend - 4-Tier API" /MIN cmd /c "start-dev.bat /no-clean"
 cd /d "%~dp0"
@@ -80,7 +80,7 @@ set /a WAIT_COUNT=0
 :WAIT_BACKEND
 set /a WAIT_COUNT+=1
 timeout /t 1 /nobreak >nul
-curl -sf http://localhost:3000/api/health >nul 2>&1 && goto BACKEND_OK
+curl -sf http://localhost:3001/api/health >nul 2>&1 && goto BACKEND_OK
 if !WAIT_COUNT! GEQ 30 (
     echo      [!] Backend khong phan hoi sau 30s. Kiem tra cua so "Backend - 4-Tier API".
     echo          Van tiep tuc khoi dong frontend...
@@ -88,7 +88,7 @@ if !WAIT_COUNT! GEQ 30 (
 )
 goto WAIT_BACKEND
 :BACKEND_OK
-echo      OK: Backend ready (http://localhost:3000)
+echo      OK: Backend ready (http://localhost:3001)
 :SKIP_BACKEND
 echo.
 
@@ -127,7 +127,7 @@ echo ===========================================================================
 echo   Tat ca servers da san sang!
 echo.
 echo   Frontend (web app):    http://localhost:5173
-echo   Backend (API):         http://localhost:3000/api/health
+echo   Backend (API):         http://localhost:3001/api/health
 echo.
 echo   Tat ca server dang chay trong 2 cua so nen:
 echo     - "Backend - 4-Tier API"   (Express)
