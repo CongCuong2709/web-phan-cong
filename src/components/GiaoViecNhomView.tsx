@@ -10,7 +10,21 @@ interface GiaoViecNhomViewProps {
   onApproveTask: (taskId: string) => Promise<boolean>;
   onOpenNewTaskModal: () => void;
   onOpenNewBundleModal: () => void;
+  /** Bộ lọc + thành viên đang chọn lưu trên URL (?loc=need_help&nv=hong). */
+  filter?: string;
+  onFilterChange: (filter: Filter) => void;
+  memberFilter: string | null;
+  onMemberFilterChange: (username: string | null) => void;
 }
+
+const FILTERS = ['pending', 'all', 'need_help', 'done'] as const;
+
+/** "2026-10-25" hoặc "2026-10-25 08:32:56" → "25/10/2026". */
+function formatDate(s: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : s;
+}
+type Filter = (typeof FILTERS)[number];
 
 export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
   teamMembers,
@@ -18,10 +32,13 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
   onApproveTask,
   onOpenNewTaskModal,
   onOpenNewBundleModal,
+  filter: filterParam,
+  onFilterChange: setFilter,
+  memberFilter,
+  onMemberFilterChange: setMemberFilter,
 }) => {
+  const filter: Filter = FILTERS.find((f) => f === filterParam) ?? 'pending';
   // Escalation qua tasks.blocker_note (manager xem khi mở task — DetailsDrawer).
-  const [filter, setFilter] = useState<'all' | 'pending' | 'need_help' | 'done'>('pending');
-  const [memberFilter, setMemberFilter] = useState<string | null>(null);
   const [approvingId, setApprovingId] = useState<string | null>(null);
 
   const approve = async (taskId: string) => {
@@ -57,16 +74,18 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
   const doneCount = tasks.filter((t) => t.status === 'done').length;
 
   const today = todayIso();
-  const isOverdue = (t: TeamLeadTask) =>
-    (t.status === 'in_progress' || t.status === 'need_help') && !!t.deadline && t.deadline < today;
-  const inProgressCount = tasks.filter((t) => t.status === 'in_progress').length;
+  const isOpen = (t: TeamLeadTask) =>
+    t.status === 'not_started' || t.status === 'in_progress' || t.status === 'need_help';
+  const isOverdue = (t: TeamLeadTask) => isOpen(t) && !!t.deadline && t.deadline < today;
+  const openCount = tasks.filter(isOpen).length;
+  const notStartedCount = tasks.filter((t) => t.status === 'not_started').length;
   const overdueCount = tasks.filter(isOverdue).length;
 
   /** Số liệu từng thành viên tính từ chính danh sách việc — không dùng câu chữ dựng sẵn ở backend. */
   const statsFor = (username?: string) => {
     const mine = tasks.filter((t) => t.ownerUsername === username);
     return {
-      open: mine.filter((t) => t.status === 'in_progress' || t.status === 'need_help').length,
+      open: mine.filter(isOpen).length,
       blocked: mine.filter((t) => t.status === 'need_help').length,
       overdue: mine.filter(isOverdue).length,
       awaiting: mine.filter((t) => t.status === 'pending_approval').length,
@@ -74,11 +93,9 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
   };
   // First member who needs help
   const helpMember = teamMembers.find((m) => m.needHelp);
-  const helpMemberNote = helpMember?.urgentNote
-    ? `${helpMember.name}: ${helpMember.urgentNote}`
-    : helpMember
-    ? `${helpMember.name} đang cần hỗ trợ`
-    : 'Không có ai cần hỗ trợ';
+  const helpMemberNote = helpMember ? `${helpMember.name} đang cần hỗ trợ` : 'Không có ai cần hỗ trợ';
+  // Thanh khối lượng: so với người đang có nhiều việc mở nhất trong nhóm.
+  const maxActive = Math.max(1, ...teamMembers.map((m) => m.activeTasks));
 
   return (
     <div className="flex flex-col w-full">
@@ -143,7 +160,7 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
           <div className="bg-white p-4 sm:p-5 rounded-xl border border-surface-container shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
               <span className={`text-xs font-semibold ${overdueCount > 0 ? 'text-error' : 'text-tertiary'}`}>
-                Đang thực hiện
+                Chưa báo xong
               </span>
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${overdueCount > 0 ? 'bg-error-container text-error' : 'bg-tertiary-fixed/40 text-tertiary'}`}>
                 <span aria-hidden="true" className="material-symbols-outlined [--icon-size:19px]">
@@ -153,10 +170,10 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
             </div>
             <div className="mt-3">
               <div className="text-display font-bold text-on-surface leading-none tabular-nums">
-                {inProgressCount}
+                {openCount}
               </div>
               <p className={`text-xs mt-1.5 ${overdueCount > 0 ? 'text-error font-semibold' : 'text-secondary'}`}>
-                {overdueCount > 0 ? `${overdueCount} việc đã quá hạn chót` : 'Không có việc nào quá hạn'}
+                {notStartedCount} chưa bắt đầu · {overdueCount > 0 ? `${overdueCount} quá hạn chót` : 'không có việc quá hạn'}
               </p>
             </div>
           </div>
@@ -330,18 +347,16 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                       )}
                     </div>
 
-                    {isWarning && member.urgentNote ? (
-                      <div className="text-xs leading-tight text-on-error-container bg-error-container/80 p-1.5 rounded font-medium">
-                        {member.urgentNote}
-                      </div>
-                    ) : (
-                      <div className="w-full bg-surface-container-highest rounded-full h-1.5 overflow-hidden">
-                        <div
-                          className="bg-tertiary h-1.5 rounded-full"
-                          style={{ width: `${member.workloadPercent}%` }}
-                        ></div>
-                      </div>
-                    )}
+                    <div
+                      className="w-full bg-surface-container-highest rounded-full h-1.5 overflow-hidden"
+                      role="img"
+                      aria-label={`Khối lượng: ${member.activeTasks} việc đang mở, nhiều nhất nhóm là ${maxActive}`}
+                    >
+                      <div
+                        className={`h-1.5 rounded-full ${isWarning ? 'bg-error' : 'bg-tertiary'}`}
+                        style={{ width: `${(member.activeTasks / maxActive) * 100}%` }}
+                      ></div>
+                    </div>
                   </div>
 
                   {isWarning ? (
@@ -489,9 +504,9 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                           Đã nghiệm thu
                         </span>
                       )}
-                      {!isPending && !isNeedHelp && !isDone && (
+                      {(task.status === 'in_progress' || task.status === 'not_started') && (
                         <span className="px-2 py-0.5 bg-surface-container text-on-surface-variant text-xs font-bold rounded uppercase whitespace-nowrap mt-0.5">
-                          Đang làm
+                          {task.status === 'in_progress' ? 'Đang làm' : 'Chưa bắt đầu'}
                         </span>
                       )}
 
@@ -525,17 +540,14 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                             </span>
                           </div>
                           <span>•</span>
-                          <span
-                            className={
-                              isNeedHelp ? 'text-error font-semibold' : ''
-                            }
-                          >
-                            {task.submittedAt}
-                          </span>
+                          <span>Giao ngày {formatDate(task.submittedAt)}</span>
                           {task.deadline && (
                             <>
                               <span>•</span>
-                              <span>Hạn chót: <strong>{task.deadline}</strong></span>
+                              <span className={isOverdue(task) ? 'text-error font-semibold' : ''}>
+                                Hạn chót: <strong>{formatDate(task.deadline)}</strong>
+                                {isOverdue(task) && ' — quá hạn'}
+                              </span>
                             </>
                           )}
                         </div>

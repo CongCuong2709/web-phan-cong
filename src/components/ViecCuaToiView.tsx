@@ -22,6 +22,9 @@ interface ViecCuaToiViewProps {
   /** Lưu nhật ký; resolve danh sách taskId đã lưu thành công. */
   onSaveLogs: (entries: SaveLogEntry[]) => Promise<string[]>;
   onOpenNewPersonalTaskModal: () => void;
+  /** Bộ lọc lưu trên URL (?loc=today); giá trị lạ coi như 'all'. */
+  filter?: string;
+  onFilterChange: (filter: Filter) => void;
 }
 
 interface LogDraft {
@@ -31,7 +34,8 @@ interface LogDraft {
   progress: number;
 }
 
-type Filter = 'all' | 'today' | 'doing' | 'done';
+const FILTERS = ['all', 'today', 'doing', 'done'] as const;
+type Filter = (typeof FILTERS)[number];
 
 /** Thứ tự hiển thị: việc cần xử lý lên trước, việc đã xong xuống cuối. */
 const STATUS_RANK: Record<EmployeeTask['status'], number> = {
@@ -65,9 +69,11 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
   onAdvanceTask,
   onSaveLogs,
   onOpenNewPersonalTaskModal,
+  filter: filterParam,
+  onFilterChange: setFilter,
 }) => {
   const today = todayIso();
-  const [filter, setFilter] = useState<Filter>('all');
+  const filter: Filter = FILTERS.find((f) => f === filterParam) ?? 'all';
   /**
    * Nháp nhật ký theo taskId, giữ trong sessionStorage theo user + ngày:
    * đổi tab hay F5 không mất, sang ngày mới không bị lưu nhầm thành nhật ký hôm nay.

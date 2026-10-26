@@ -10,7 +10,7 @@ import {
   DailyLog,
 } from './types';
 import { AuthProvider, useAuth } from './auth/AuthContext';
-import { canAddDailyLog } from './auth/permissions';
+import { canAddDailyLog, visibleTabsFor } from './auth/permissions';
 import { api, describeApiError, type ApiResponse } from './lib/apiClient';
 import {
   apiToTierItem,
@@ -24,6 +24,7 @@ import {
   viStatusToEnum,
 } from './lib/transforms';
 import { useWorkspaceData } from './lib/useWorkspaceData';
+import { useHashRoute } from './lib/useHashRoute';
 import { SEED_USERS } from './data/users';
 import { Header } from './components/Header';
 import { Gantt4TangView } from './components/Gantt4TangView';
@@ -63,9 +64,14 @@ function parseTaskId(id: string): { tier: 1 | 2 | 3 | 4; num: number } | null {
 const STALE_ITEM_MESSAGE = 'Không xác định được công việc này. Hãy tải lại trang.';
 
 function AuthenticatedApp({ user }: AuthenticatedAppProps) {
-  const [activeTab, setActiveTab] = useState<ActiveAppTab>(() =>
-    user.role === 'employee' ? 'viec-cua-toi' : 'cay-gantt-4-tang',
-  );
+  const { route, navigate, setSub, setParam } = useHashRoute();
+  const allowedTabs = useMemo(() => visibleTabsFor(user), [user]);
+  // URL trống / sai / trang không được phép → về trang đầu của vai trò (thay URL, không thêm lịch sử).
+  const activeTab: ActiveAppTab =
+    route.tab && allowedTabs.includes(route.tab) ? route.tab : allowedTabs[0];
+  useEffect(() => {
+    if (route.tab !== activeTab) navigate(activeTab, null, 'replace');
+  }, [route.tab, activeTab, navigate]);
 
   const { data, status: loadStatus, error: loadError, reload, retry } = useWorkspaceData(user.id);
   const toast = useToasts();
@@ -160,14 +166,35 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   }, [employeeTasks, user]);
 
   // ---------------- Modals & Drawer ----------------
-  const [drawerItemId, setDrawerItemId] = useState<string | null>(null);
+  // Mục đang mở trong Drawer nằm trên URL (?muc=4-12) → chia sẻ được link tới đúng 1 mục.
+  const drawerItemId = route.params.muc ?? null;
   const drawerItem = useMemo(
     () => (drawerItemId ? tierItems.find((t) => t.id === drawerItemId) ?? null : null),
     [drawerItemId, tierItems],
   );
+  const [drawerPushed, setDrawerPushed] = useState(false);
+  const openDrawer = (id: string) => {
+    setParam('muc', id, 'push');
+    setDrawerPushed(true);
+  };
+  // Mở bằng click → Back đóng Drawer; mở từ link dán vào → đóng thì chỉ bỏ tham số.
+  const closeDrawer = () => {
+    if (drawerPushed) window.history.back();
+    else setParam('muc', null);
+    setDrawerPushed(false);
+  };
+  useEffect(() => {
+    if (!drawerItemId) setDrawerPushed(false);
+  }, [drawerItemId]);
+  useEffect(() => {
+    if (loadStatus === 'ready' && drawerItemId && !drawerItem) {
+      showToast('Không tìm thấy mục này, hoặc bạn không có quyền xem.', 'warning');
+      setParam('muc', null);
+    }
+  }, [loadStatus, drawerItemId, drawerItem, showToast, setParam]);
   const [isNewItemModalOpen, setIsNewItemModalOpen] = useState(false);
   const [isNewPersonalTaskOpen, setIsNewPersonalTaskOpen] = useState(false);
-  const [baoCaoSubTab, setBaoCaoSubTab] = useState<'tong-quan' | 'tuan-phong-ban'>('tuan-phong-ban');
+  const baoCaoSubTab: 'tong-quan' | 'tuan-phong-ban' = route.sub === 'tong-quan' ? 'tong-quan' : 'tuan-phong-ban';
 
   // ---------------- Ghi dữ liệu ----------------
   /**
@@ -357,8 +384,10 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
           <Gantt4TangView
             tierItems={visibleTierItems}
             currentUser={user}
-            onSelectItem={(item) => setDrawerItemId(item.id)}
+            onSelectItem={(item) => openDrawer(item.id)}
             onOpenNewModal={() => setIsNewItemModalOpen(true)}
+            timeRange={route.params.xem === '13-tuan' ? '13-tuan' : 'thang'}
+            onTimeRangeChange={(r) => setParam('xem', r === 'thang' ? null : r)}
           />
         );
       case 'giao-viec-nhom':
@@ -369,6 +398,10 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
             teamMembers={visibleTeamMembers}
             tasks={visibleTeamTasks}
             onApproveTask={handleApproveTeamTask}
+            filter={route.params.loc}
+            onFilterChange={(f) => setParam('loc', f)}
+            memberFilter={route.params.nv ?? null}
+            onMemberFilterChange={(u) => setParam('nv', u)}
             onOpenNewTaskModal={() => setIsNewItemModalOpen(true)}
             onOpenNewBundleModal={() => setIsNewItemModalOpen(true)}
           />
@@ -382,6 +415,8 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
             tasks={visibleEmployeeTasks}
             dailyLogs={dailyLogs}
             onAdvanceTask={handleAdvanceEmployeeTask}
+            filter={route.params.loc}
+            onFilterChange={(f) => setParam('loc', f === 'all' ? null : f)}
             onSaveLogs={handleSaveLogs}
             onOpenNewPersonalTaskModal={() => setIsNewPersonalTaskOpen(true)}
           />
@@ -404,7 +439,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
                     type="button"
                     role="tab"
                     aria-selected={baoCaoSubTab === k}
-                    onClick={() => setBaoCaoSubTab(k)}
+                    onClick={() => setSub(k === 'tong-quan' ? 'tong-quan' : 'tuan')}
                     className={`px-3 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
                       baoCaoSubTab === k
                         ? 'border-primary text-primary'
@@ -436,7 +471,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     <div className="min-h-screen bg-surface text-on-surface flex flex-col font-sans selection:bg-primary-fixed selection:text-on-primary-fixed">
       <Header
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={(tab) => navigate(tab)}
         unreadCount={visibleTeamTasks.filter((t) => t.status === 'need_help').length}
       />
 
@@ -451,7 +486,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       <DetailsDrawer
         item={drawerItem}
         isOpen={drawerItem !== null}
-        onClose={() => setDrawerItemId(null)}
+        onClose={closeDrawer}
         onUpdateItem={handleUpdateTierItem}
         dailyLogs={dailyLogs}
         currentUser={user}

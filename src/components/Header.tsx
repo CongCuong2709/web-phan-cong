@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { ActiveAppTab, DEPARTMENT_LABEL, ROLE_LABEL, User } from '../types';
 import { useAuth } from '../auth/AuthContext';
+import { visibleTabsFor } from '../auth/permissions';
 import { Avatar, BrandMark } from './ui/Brand';
 
 interface HeaderProps {
@@ -9,26 +10,6 @@ interface HeaderProps {
   unreadCount?: number;
 }
 
-/** Visibility matrix for the 4 main tabs. */
-function visibleTabsFor(user: User | null): ActiveAppTab[] {
-  if (!user) return [];
-  switch (user.role) {
-    case 'admin':
-      return ['cay-gantt-4-tang', 'giao-viec-nhom', 'viec-cua-toi', 'bao-cao'];
-    case 'director':
-      // BGĐ: chỉ cần executive overview (cây Gantt toàn hệ thống + báo cáo tổng hợp).
-      // Không vào giao việc nhóm hay việc cá nhân.
-      return ['cay-gantt-4-tang', 'bao-cao'];
-    case 'manager':
-      return ['cay-gantt-4-tang', 'giao-viec-nhom', 'viec-cua-toi', 'bao-cao'];
-    case 'employee':
-    default:
-      // Employee xem 'cay-gantt-4-tang' dạng read-only context chain (parent T4 của mình),
-      // giống pattern Jira/Linear/Asana — chỉ thấy T1/T2/T3 cha của task mình.
-      // 'bao-cao' = Báo cáo tuần (WeeklyReportView) — Ponytail: employee tự viết báo cáo.
-      return ['viec-cua-toi', 'cay-gantt-4-tang', 'bao-cao'];
-  }
-}
 
 const ROLE_BADGE_COLOR: Record<User['role'], string> = {
   admin: 'bg-error-container text-on-error-container',
@@ -54,12 +35,6 @@ export const Header: React.FC<HeaderProps> = ({
 
   const tabs = useMemo(() => visibleTabsFor(user), [user]);
 
-  // Pick a sensible default tab if the current tab is no longer allowed.
-  React.useEffect(() => {
-    if (user && !tabs.includes(activeTab)) {
-      setActiveTab(tabs[0] ?? 'viec-cua-toi');
-    }
-  }, [user, tabs, activeTab, setActiveTab]);
 
   const departmentLabel = user
     ? user.departments.map((d) => `${d} · ${DEPARTMENT_LABEL[d]}`).join(' • ')

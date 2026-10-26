@@ -260,14 +260,12 @@ export interface TeamMemberDto {
   name: string;
   role: string;
   department?: string;
-  statusText: string;
-  /** Backend trả 'good' | 'warning' | 'idle' (xem routes/teamMembers.js:62). */
-  statusType: 'good' | 'warning' | 'idle';
+  /** Việc chưa báo xong (không tính chờ duyệt / đã xong). */
   activeTasks: number;
-  totalTasks?: number;
+  overdueTasks: number;
+  blockedTasks: number;
+  totalTasks: number;
   needHelp: boolean;
-  workloadPercent: number;
-  onTimeRate?: string;
   avatar?: string;
 }
 

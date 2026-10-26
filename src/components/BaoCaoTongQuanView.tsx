@@ -31,6 +31,8 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
   const completedTierItems = tierItems.filter((i) => i.progress === 100).length;
   const inProgressTierItems = tierItems.filter((i) => i.progress > 0 && i.progress < 100).length;
   const blockedItems = tierItems.filter((i) => i.status === 'Điểm nghẽn');
+  // Thanh phân bổ: so với người đang có nhiều việc mở nhất.
+  const maxActive = Math.max(1, ...teamMembers.map((m) => m.activeTasks));
 
   // --- Dynamic KPI calculations (replacing all hardcoded values) ---
   const tier1Items = tierItems.filter((i) => i.tier === 1);
@@ -39,8 +41,6 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
 
   // Header phụ thuộc ngày thực + số thành viên thực (không hardcode).
   const now = new Date();
-  const currentQuarter = Math.floor(now.getMonth() / 3) + 1;
-  const currentYear = now.getFullYear();
 
   const avgProgress = (items: typeof tierItems) =>
     items.length === 0 ? 0 : Math.round(items.reduce((s, i) => s + i.progress, 0) / items.length);
@@ -183,8 +183,11 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 sm:p-6 rounded-xl border border-surface-container shadow-sm">
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold text-on-surface tracking-tight">
-              Báo cáo Q{currentQuarter}/{currentYear}
+              Báo cáo tổng quan
             </h1>
+            <p className="text-sm text-secondary mt-1">
+              Số liệu tại thời điểm {now.toLocaleDateString('vi-VN')} {now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} — toàn bộ dự án bạn được xem.
+            </p>
           </div>
 
           <div className="flex items-center gap-2.5">
@@ -386,10 +389,12 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
                     </span>
                     <span
                       className={`font-semibold ${
-                        member.needHelp ? 'text-error' : 'text-tertiary'
+                        member.overdueTasks > 0 || member.needHelp ? 'text-error' : 'text-tertiary'
                       }`}
                     >
-                      {member.onTimeRate}
+                      {member.activeTasks} việc đang mở
+                      {member.overdueTasks > 0 && ` · ${member.overdueTasks} quá hạn`}
+                      {member.blockedTasks > 0 && ` · ${member.blockedTasks} đang vướng`}
                     </span>
                   </div>
                   <div className="w-full bg-surface-container-low rounded-full h-2 overflow-hidden">
@@ -397,7 +402,7 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
                       className={`h-full rounded-full ${
                         member.needHelp ? 'bg-error' : 'bg-primary'
                       }`}
-                      style={{ width: `${member.workloadPercent}%` }}
+                      style={{ width: `${(member.activeTasks / maxActive) * 100}%` }}
                     ></div>
                   </div>
                 </div>

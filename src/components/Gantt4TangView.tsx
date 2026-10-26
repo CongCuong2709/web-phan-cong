@@ -3,11 +3,16 @@ import { Avatar } from './ui/Brand';
 import { isTierItemOverdue } from '../lib/transforms';
 import { TierItem, User } from '../types';
 
+export type GanttRange = 'thang' | '13-tuan';
+
 interface Gantt4TangViewProps {
   tierItems: TierItem[];
   currentUser?: User;
   onSelectItem: (item: TierItem) => void;
   onOpenNewModal: () => void;
+  /** Khoảng thời gian hiển thị — lưu trên URL (?xem=13-tuan). */
+  timeRange: GanttRange;
+  onTimeRangeChange: (range: GanttRange) => void;
 }
 
 /** Format dd/MM. */
@@ -35,12 +40,11 @@ interface Timeline {
 }
 
 /** Tính timeline theo đơn vị NGÀY (không phải tuần).
- *  - 'month'  → 30-31 cột, 1 cột/ngày trong tháng hiện tại
- *  - 'quarter'→ 91 cột, 1 cột/ngày trong 13 tuần (~3 tháng) từ hôm nay
- *  - 'year'   → 365 cột, 1 cột/ngày trong năm hiện tại
+ *  - 'thang'   → 28-31 cột, 1 cột/ngày trong tháng hiện tại
+ *  - '13-tuan' → 91 cột, 13 tuần bắt đầu từ thứ Hai tuần này
  */
-function buildTimeline(timeFilter: 'month' | 'quarter' | 'year', today: Date): Timeline {
-  if (timeFilter === 'month') {
+function buildTimeline(range: GanttRange, today: Date): Timeline {
+  if (range === 'thang') {
     // Range: từ ngày 1 tháng hiện tại → ngày cuối tháng hiện tại (inclusive).
     const rangeStart = new Date(today.getFullYear(), today.getMonth(), 1);
     rangeStart.setHours(0, 0, 0, 0);
@@ -72,56 +76,21 @@ function buildTimeline(timeFilter: 'month' | 'quarter' | 'year', today: Date): T
     };
   }
 
-  if (timeFilter === 'quarter') {
-    // Range: 91 ngày (13 tuần) bắt đầu từ thứ 2 của tuần hiện tại.
-    const dayOfWeek = today.getDay() === 0 ? 7 : today.getDay();
-    const rangeStart = new Date(today);
-    rangeStart.setDate(rangeStart.getDate() - (dayOfWeek - 1));
-    rangeStart.setHours(0, 0, 0, 0);
-    const totalDays = 91;
-    const rangeEnd = new Date(rangeStart);
-    rangeEnd.setDate(rangeEnd.getDate() + totalDays - 1);
-    const columns: string[] = [];
-    const weekdayMask: number[] = [];
-    const monthBoundaryMask: boolean[] = [];
-    for (let i = 0; i < totalDays; i++) {
-      const d = new Date(rangeStart);
-      d.setDate(d.getDate() + i);
-      columns.push(fmtDdMm(d));
-      weekdayMask.push(d.getDay());
-      monthBoundaryMask.push(d.getDate() === 1);
-    }
-    const todayLeftPct =
-      ((today.getTime() - rangeStart.getTime()) / 86400000) / totalDays * 100;
-    return {
-      columns,
-      columnsCount: totalDays,
-      todayLeftPct: Math.max(0, Math.min(100, todayLeftPct)),
-      rangeStart,
-      rangeEnd,
-      label: `91 ngày từ ${fmtDdMm(rangeStart)} - ${fmtDdMm(rangeEnd)}`,
-      unitDays: totalDays,
-      weekdayMask,
-      monthBoundaryMask,
-    };
-  }
-
-  // 'year' — 365 (hoặc 366) ngày trong năm hiện tại.
-  const year = today.getFullYear();
-  const isLeap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-  const rangeStart = new Date(year, 0, 1);
+  // 91 ngày (13 tuần) bắt đầu từ thứ 2 của tuần hiện tại.
+  const dayOfWeek = today.getDay() === 0 ? 7 : today.getDay();
+  const rangeStart = new Date(today);
+  rangeStart.setDate(rangeStart.getDate() - (dayOfWeek - 1));
   rangeStart.setHours(0, 0, 0, 0);
-  const rangeEnd = new Date(year, 11, 31);
-  rangeEnd.setHours(0, 0, 0, 0);
-  const totalDays = isLeap ? 366 : 365;
+  const totalDays = 91;
+  const rangeEnd = new Date(rangeStart);
+  rangeEnd.setDate(rangeEnd.getDate() + totalDays - 1);
   const columns: string[] = [];
   const weekdayMask: number[] = [];
   const monthBoundaryMask: boolean[] = [];
   for (let i = 0; i < totalDays; i++) {
     const d = new Date(rangeStart);
     d.setDate(d.getDate() + i);
-    // Compact: chỉ show "dd/MM" khi là ngày đầu tháng, các ngày khác rỗng (rất nhiều cột).
-    columns.push(d.getDate() === 1 ? fmtDdMm(d) : '');
+    columns.push(fmtDdMm(d));
     weekdayMask.push(d.getDay());
     monthBoundaryMask.push(d.getDate() === 1);
   }
@@ -133,7 +102,7 @@ function buildTimeline(timeFilter: 'month' | 'quarter' | 'year', today: Date): T
     todayLeftPct: Math.max(0, Math.min(100, todayLeftPct)),
     rangeStart,
     rangeEnd,
-    label: `${totalDays} ngày năm ${year}`,
+    label: `13 tuần ${fmtDdMm(rangeStart)} – ${fmtDdMm(rangeEnd)}`,
     unitDays: totalDays,
     weekdayMask,
     monthBoundaryMask,
@@ -166,6 +135,8 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
   currentUser,
   onSelectItem,
   onOpenNewModal,
+  timeRange,
+  onTimeRangeChange,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   // searchTermRaw lưu giá trị input ngay, debounce 300ms xuống searchTerm
@@ -174,14 +145,12 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
     const handle = setTimeout(() => setSearchTerm(searchTermRaw), 300);
     return () => clearTimeout(handle);
   }, [searchTermRaw]);
-  const [timeFilter, setTimeFilter] = useState<'month' | 'quarter' | 'year'>('month');
   const [allCollapsed, setAllCollapsed] = useState(false);
   const [collapsedMap, setCollapsedMap] = useState<Record<string, boolean>>({});
   const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
 
-  // timeline tính động từ timeFilter + Date.now()
-  const timeline = useMemo(() => buildTimeline(timeFilter, new Date()), [timeFilter]);
-  // Tính today column index cho cả 3 view (month/quarter/year), clamp về [0, columnsCount-1]
+  const timeline = useMemo(() => buildTimeline(timeRange, new Date()), [timeRange]);
+  // Cột "hôm nay", clamp về [0, columnsCount-1]
   const todayCol = Math.max(
     0,
     Math.min(timeline.columnsCount - 1, Math.floor((timeline.todayLeftPct / 100) * timeline.columnsCount))
@@ -283,7 +252,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
         <div className="max-w-[1720px] mx-auto flex flex-col lg:flex-row lg:items-end justify-between gap-4">
           <div className="space-y-1.5">
             <h1 className="text-2xl sm:text-3xl font-bold text-on-surface tracking-tight">
-              Hệ thống công việc và báo cáo TAG
+              Cây công việc
             </h1>
             <p className="text-sm text-on-surface-variant flex items-center gap-2 flex-wrap">
               <span>Dự án</span>
@@ -298,23 +267,19 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
 
           {/* Action & View Controls */}
           <div className="flex items-center gap-2.5 flex-wrap shrink-0">
-            {/* Time Filter Segmented: labels động theo current month/quarter/year */}
-            <div className="flex items-center bg-surface-container-low p-1 rounded-md">
-              {(['month', 'quarter', 'year'] as const).map((tf) => (
+            {/* Khoảng thời gian — nhãn nói đúng khoảng ngày đang vẽ */}
+            <div role="group" aria-label="Khoảng thời gian" className="flex items-center bg-surface-container-low p-1 rounded-md">
+              {(['thang', '13-tuan'] as const).map((r) => (
                 <button
-                  key={tf}
-                  onClick={() => setTimeFilter(tf)}
+                  key={r}
+                  onClick={() => onTimeRangeChange(r)}
+                  aria-pressed={timeRange === r}
                   className={`px-3 py-1 text-xs font-semibold rounded transition-colors ${
-                    timeFilter === tf
-                      ? 'bg-white shadow-sm text-primary'
-                      : 'text-secondary hover:text-on-surface'
+                    timeRange === r ? 'bg-white shadow-sm text-primary' : 'text-secondary hover:text-on-surface'
                   }`}
                   type="button"
                 >
-                  {tf === 'month' && fmtMonthYear(new Date())}
-                  {tf === 'quarter' &&
-                    `Quý ${Math.floor(new Date().getMonth() / 3) + 1}/${new Date().getFullYear()}`}
-                  {tf === 'year' && `Cả năm ${new Date().getFullYear()}`}
+                  {buildTimeline(r, new Date()).label}
                 </button>
               ))}
             </div>
@@ -515,7 +480,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
 
                 {/* Right 50% Timeline Axis — day-based columns.
                     minmax(20px, 1fr) đảm bảo ngày luôn đủ rộng để đọc số,
-                    horizontal scroll nếu nhiều ngày (quarter 91 / year 365). */}
+                    cuộn ngang khi xem 13 tuần (91 cột). */}
                 <div
                   className="w-[50%] bg-surface-container text-center font-mono text-xs relative font-semibold text-on-surface-variant"
                   style={{ display: 'grid', gridTemplateColumns: `repeat(${timeline.columnsCount}, minmax(20px, 1fr))` }}
@@ -533,7 +498,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                         }`}
                         title={isMonthStart ? `Ngày đầu tháng` : undefined}
                       >
-                        {timeFilter === 'month' && (
+                        {timeRange === 'thang' && (
                           <span className={`text-xs font-medium ${isTodayCol ? 'text-white/80' : 'text-outline'}`}>
                             T{weekday === 0 ? 7 : weekday}
                           </span>
@@ -818,9 +783,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                           })}
                         </div>
 
-                        {/* Dynamic Gantt Bar:
-                            month view: dùng gantt.startWeek/endWeek (1..N tuần)
-                            year view: dùng deadline để suy ra vị trí */}
+                        {/* Thanh Gantt: vị trí/độ dài tính từ startDate/endDate theo ngày */}
                         {(() => {
                           // Tính bar position/width từ startDate/endDate trực tiếp (đơn vị ngày).
                           // Không dùng week index nữa.
@@ -850,8 +813,8 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                           // isBlocked ưu tiên tier color — T1/T2/T3 nghẽn cũng đỏ.
                           const barColor = GANTT_COLOR[readonlyCtx ? 'readonly' : isBlocked ? 'blocked' : (`t${item.tier}` as const)];
                           const height = item.tier === 1 ? 'h-5' : item.tier === 2 ? 'h-4' : item.tier === 3 ? 'h-3.5' : 'h-3';
-                          // width < 2% (≈ < 1 ngày trong month view, < 2 ngày trong quarter,
-                          // < 1 tuần trong year) → milestone (◆ diamond) thay vì clamp bar
+                          // width < 2% (≈ < 1 ngày khi xem tháng, < 2 ngày khi xem 13 tuần)
+                          // → milestone (◆ diamond) thay vì clamp bar
                           // quá rộng khiến task ngắn bị "phóng to" trực quan.
                           const isMilestone = widthPct < 2 && item.tier >= 2;
                           return (

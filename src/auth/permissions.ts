@@ -22,6 +22,7 @@
  */
 
 import type {
+  ActiveAppTab,
   Department,
   TeamLeadTask,
   TierItem,
@@ -170,3 +171,25 @@ export function findManagerOf(
       u.departments.some((d) => user.departments.includes(d))
   );
 }
+
+/** Các trang chính mỗi vai trò được xem — App dùng để chặn URL không hợp lệ, Header để hiện tab. */
+export function visibleTabsFor(user: User | null): ActiveAppTab[] {
+  if (!user) return [];
+  switch (user.role) {
+    case 'admin':
+      return ['cay-gantt-4-tang', 'giao-viec-nhom', 'viec-cua-toi', 'bao-cao'];
+    case 'director':
+      // BGĐ: chỉ cần executive overview (cây Gantt toàn hệ thống + báo cáo tổng hợp).
+      // Không vào giao việc nhóm hay việc cá nhân.
+      return ['cay-gantt-4-tang', 'bao-cao'];
+    case 'manager':
+      return ['cay-gantt-4-tang', 'giao-viec-nhom', 'viec-cua-toi', 'bao-cao'];
+    case 'employee':
+    default:
+      // Employee xem 'cay-gantt-4-tang' dạng read-only context chain (parent T4 của mình),
+      // giống pattern Jira/Linear/Asana — chỉ thấy T1/T2/T3 cha của task mình.
+      // 'bao-cao' = Báo cáo tuần (WeeklyReportView) — Ponytail: employee tự viết báo cáo.
+      return ['viec-cua-toi', 'cay-gantt-4-tang', 'bao-cao'];
+  }
+}
+

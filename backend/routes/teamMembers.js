@@ -9,7 +9,7 @@
  */
 
 import { Router } from 'express';
-import { db, stmt } from '../db.js';
+import { db } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { inDepartment } from '../lib/policies.js';
 
@@ -28,9 +28,12 @@ router.get('/', (req, res) => {
   // Lấy tất cả T4 tasks (assignable to employees) + count theo owner
   // Status là enum `blocked`/`doing`/...; tier 4 có bundle_id optional.
   const allT4 = db.prepare(`
-    SELECT id, owner_user_id, department_code, status, progress, code, title
+    SELECT id, owner_user_id, department_code, status, progress, end_date
     FROM tasks
   `).all();
+  // Ngày theo giờ máy chủ (không dùng toISOString: lệch ngày trước 7h sáng giờ VN).
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
   const members = [];
 
@@ -43,25 +46,23 @@ router.get('/', (req, res) => {
     if (req.user.role === 'employee') continue; // employee chỉ xem chính mình ở view khác
 
     const userItems = allT4.filter((t) => t.owner_user_id === u.id);
-    const active = userItems.filter((t) => t.progress !== 100).length;
-    // Fix C2: status giờ là enum (`blocked`); so sánh với enum thay vì tiếng Việt.
-    const needHelp = userItems.some((t) => t.status === 'blocked');
+    // "Đang mở" = chưa báo xong (không tính chờ duyệt / đã xong).
+    const open = userItems.filter((t) => t.status !== 'done' && t.status !== 'pending_approval');
+    const overdue = open.filter((t) => t.end_date && t.end_date < today).length;
+    const blocked = userItems.filter((t) => t.status === 'blocked').length;
 
+    // Chỉ trả số liệu; câu chữ hiển thị do frontend dựng từ các con số này.
     members.push({
       id: `mem-${u.id}`,
       username: u.username,
       name: u.fullname,
       role: u.role === 'manager' ? `TP.${(u.departments || '').split(',')[0]}` : `NV.${(u.departments || '').split(',')[0]}`,
-      avatar: '', // sẽ được fill qua doFetch trong frontend
-      activeTasks: active,
+      avatar: '',
+      activeTasks: open.length,
+      overdueTasks: overdue,
+      blockedTasks: blocked,
       totalTasks: userItems.length,
-      onTimeRate: userItems.length > 0 && active === 0
-        ? '100% đúng hạn'
-        : `${active}/${userItems.length} đang chạy`,
-      statusText: active > 0 ? `${active} việc đang làm` : 'Hoàn tất gói việc',
-      statusType: active > 2 ? 'warning' : active > 0 ? 'good' : 'idle',
-      workloadPercent: Math.min(100, active * 25),
-      needHelp,
+      needHelp: blocked > 0,
       department: (u.departments || '').split(',')[0] || undefined,
     });
   }

@@ -164,7 +164,7 @@ export interface TeamLeadTask {
   department?: Department;
   submittedAt: string;
   deadline?: string;
-  status: 'pending_approval' | 'need_help' | 'in_progress' | 'done';
+  status: 'not_started' | 'in_progress' | 'pending_approval' | 'need_help' | 'done';
   priority?: 'Cao' | 'Thường';
   /** NV viết "đang vướng ở đâu / cần hỗ trợ gì" — Manager xem khi mở task. */
   blockerNote?: string;
@@ -214,12 +214,11 @@ export interface TeamMember {
   name: string;
   role: string;
   avatar: string;
+  /** Việc chưa báo xong (không tính chờ duyệt / đã xong). */
   activeTasks: number;
-  onTimeRate: string;
-  statusText: string;
-  statusType: 'good' | 'warning' | 'idle';
-  workloadPercent: number;
-  urgentNote?: string;
+  overdueTasks: number;
+  blockedTasks: number;
+  totalTasks: number;
   needHelp?: boolean;
   /** Department the member belongs to. */
   department?: Department;

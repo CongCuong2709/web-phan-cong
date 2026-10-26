@@ -206,7 +206,7 @@ function computeDaysRemaining(endDateIso: string): number {
 export function apiToTeamLeadTask(api: TaskApiRowDto): TeamLeadTask {
   // Backend trả unified Task — chỉ có blocker_note (1 cột text) cho escalation.
   const statusMap: Record<string, TeamLeadTask['status']> = {
-    'pending': 'in_progress',
+    'pending': 'not_started',
     'doing': 'in_progress',
     'done': 'done',
     'pending_approval': 'pending_approval',
@@ -318,10 +318,9 @@ export function apiToTeamMember(api: TeamMemberDto): TeamMember {
     role: api.role,
     avatar: api.avatar ?? '',
     activeTasks: api.activeTasks,
-    onTimeRate: api.onTimeRate ?? '',
-    statusText: api.statusText,
-    statusType: api.statusType,
-    workloadPercent: api.workloadPercent,
+    overdueTasks: api.overdueTasks,
+    blockedTasks: api.blockedTasks,
+    totalTasks: api.totalTasks,
     needHelp: api.needHelp,
     // Backend trả department dạng string; UI giữ union Department hẹp.
     department: api.department as TeamMember['department'],
