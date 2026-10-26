@@ -22,7 +22,7 @@ interface ViecCuaToiViewProps {
   /** Lưu nhật ký; resolve danh sách taskId đã lưu thành công. */
   onSaveLogs: (entries: SaveLogEntry[]) => Promise<string[]>;
   onOpenNewPersonalTaskModal: () => void;
-  /** Bộ lọc lưu trên URL (?loc=today); giá trị lạ coi như 'all'. */
+  /** Bộ lọc lưu trên URL (?loc=due); giá trị lạ coi như 'open'. */
   filter?: string;
   onFilterChange: (filter: Filter) => void;
 }
@@ -34,17 +34,13 @@ interface LogDraft {
   progress: number;
 }
 
-const FILTERS = ['all', 'today', 'doing', 'done'] as const;
+/**
+ * 3 nhóm chính chia hết danh sách: open (chưa báo xong) / awaiting (chờ duyệt) / done.
+ * 'due' và 'blocked' là lối tắt — tập con của 'open'.
+ * "Hôm nay" chỉ tính theo hạn chót; không có cờ tự đánh dấu.
+ */
+const FILTERS = ['open', 'awaiting', 'done', 'due', 'blocked'] as const;
 type Filter = (typeof FILTERS)[number];
-
-/** Thứ tự hiển thị: việc cần xử lý lên trước, việc đã xong xuống cuối. */
-const STATUS_RANK: Record<EmployeeTask['status'], number> = {
-  blocked: 0,
-  doing: 1,
-  pending: 2,
-  pending_approval: 3,
-  done: 4,
-};
 
 const HISTORY_LIMIT = 7;
 
@@ -52,8 +48,20 @@ function isOpen(t: EmployeeTask) {
   return t.status !== 'done' && t.status !== 'pending_approval';
 }
 
+const hasDeadline = (t: EmployeeTask) => /^\d{4}-\d{2}-\d{2}$/.test(t.deadline);
+
 function isOverdue(t: EmployeeTask, today: string) {
-  return isOpen(t) && /^\d{4}-\d{2}-\d{2}$/.test(t.deadline) && t.deadline < today;
+  return isOpen(t) && hasDeadline(t) && t.deadline < today;
+}
+
+/** Quá hạn hoặc tới hạn đúng hôm nay, chưa báo xong. */
+function isDue(t: EmployeeTask, today: string) {
+  return isOpen(t) && hasDeadline(t) && t.deadline <= today;
+}
+
+/** Đang vướng: bị chặn, hoặc NV đã ghi vướng mắc (ghi vướng mắc không đổi trạng thái). */
+function isBlocked(t: EmployeeTask) {
+  return t.status === 'blocked' || !!t.blockerNote?.trim();
 }
 
 /** "2026-10-26" → "26/10"; giá trị không phải ngày ISO giữ nguyên. */
@@ -73,7 +81,7 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
   onFilterChange: setFilter,
 }) => {
   const today = todayIso();
-  const filter: Filter = FILTERS.find((f) => f === filterParam) ?? 'all';
+  const filter: Filter = FILTERS.find((f) => f === filterParam) ?? 'open';
   /**
    * Nháp nhật ký theo taskId, giữ trong sessionStorage theo user + ngày:
    * đổi tab hay F5 không mất, sang ngày mới không bị lưu nhầm thành nhật ký hôm nay.
@@ -86,41 +94,35 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
   const [savingAll, setSavingAll] = useState(false);
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
 
-  const filteredTasks = tasks.filter((t) => {
-    if (filter === 'today') return t.isToday && isOpen(t);
-    if (filter === 'doing') return t.status === 'doing' || t.status === 'blocked';
-    if (filter === 'done') return !isOpen(t);
-    return true;
-  });
+  const matches: Record<Filter, (t: EmployeeTask) => boolean> = {
+    open: isOpen,
+    awaiting: (t) => t.status === 'pending_approval',
+    done: (t) => t.status === 'done',
+    due: (t) => isDue(t, today),
+    blocked: (t) => isOpen(t) && isBlocked(t),
+  };
+  const filteredTasks = tasks.filter(matches[filter]);
 
+  // Mọi nhóm: hạn chót gần nhất lên trước (việc quá hạn tự nằm trên cùng); việc không có hạn xuống cuối.
   const sortedTasks = useMemo(
     () =>
-      [...filteredTasks].sort((a, b) => {
-        const rank = STATUS_RANK[a.status] - STATUS_RANK[b.status];
-        if (rank !== 0) return rank;
-        if (Boolean(a.isToday) !== Boolean(b.isToday)) return a.isToday ? -1 : 1;
-        if (a.deadline && b.deadline && a.deadline !== b.deadline) return a.deadline < b.deadline ? -1 : 1;
-        return 0;
-      }),
+      [...filteredTasks].sort(
+        (a, b) =>
+          (hasDeadline(a) ? a.deadline : '9999').localeCompare(hasDeadline(b) ? b.deadline : '9999') ||
+          a.code.localeCompare(b.code),
+      ),
     [filteredTasks],
   );
 
-  const doingCount = tasks.filter((t) => t.status === 'doing').length;
-  const pendingCount = tasks.filter((t) => t.status === 'pending').length;
-  const blockedCount = tasks.filter((t) => t.status === 'blocked').length;
-  const todoCount = doingCount + pendingCount + blockedCount;
-  const todayCount = tasks.filter((t) => t.isToday && isOpen(t)).length;
-  const awaitingCount = tasks.filter((t) => t.status === 'pending_approval').length;
-  const doneCount = tasks.filter((t) => t.status === 'done').length;
+  const count = (f: Filter) => tasks.filter(matches[f]).length;
+  const openTasks = tasks.filter(isOpen);
+  const doingCount = openTasks.filter((t) => t.status === 'doing').length;
+  const pendingCount = openTasks.filter((t) => t.status === 'pending').length;
+  const blockedCount = count('blocked');
   const overdueCount = tasks.filter((t) => isOverdue(t, today)).length;
-
-  const firstTodayPending = useMemo(
-    () =>
-      tasks
-        .filter((t) => t.isToday && isOpen(t))
-        .sort((a, b) => (a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0))[0],
-    [tasks],
-  );
+  const dueTodayCount = count('due') - overdueCount;
+  const awaitingCount = count('awaiting');
+  const doneCount = count('done');
 
   const isManager = currentUser.role === 'manager' || currentUser.role === 'director';
 
@@ -270,45 +272,43 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
           </div>
         </div>
 
-        {/* 4 thẻ số liệu — mỗi câu chữ đều tính từ dữ liệu, không có nhãn cố định */}
+        {/* 4 thẻ số liệu — cùng định nghĩa với bộ lọc bên dưới */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <MetricCard
-            label="Việc cần làm"
+            label="Cần làm"
             icon="assignment"
             tone="primary"
-            value={todoCount}
+            value={openTasks.length}
             unit="việc"
-            caption={`${doingCount} đang làm · ${pendingCount} chưa bắt đầu${blockedCount ? ` · ${blockedCount} đang vướng` : ''}`}
+            caption={`${doingCount} đang làm · ${pendingCount} chưa bắt đầu`}
           />
           <MetricCard
-            label="Hôm nay cần xong"
-            icon="schedule"
-            tone={todayCount > 0 ? 'error' : 'neutral'}
-            value={todayCount}
+            label="Quá hạn & hôm nay"
+            icon={overdueCount > 0 ? 'warning' : 'schedule'}
+            tone={overdueCount > 0 ? 'error' : dueTodayCount > 0 ? 'warning' : 'success'}
+            value={overdueCount + dueTodayCount}
             unit="việc"
-            caption={firstTodayPending ? `Gần nhất: ${firstTodayPending.title}` : 'Không có việc nào đánh dấu hôm nay'}
+            caption={
+              overdueCount + dueTodayCount === 0
+                ? 'Không có việc nào tới hạn hôm nay'
+                : `${overdueCount} đã quá hạn · ${dueTodayCount} tới hạn hôm nay`
+            }
           />
           <MetricCard
-            label="Đã hoàn thành"
+            label="Đang vướng"
+            icon="block"
+            tone={blockedCount > 0 ? 'error' : 'success'}
+            value={blockedCount}
+            unit="việc"
+            caption={blockedCount > 0 ? 'Đang chờ Trưởng phòng gỡ vướng' : 'Không có vướng mắc nào'}
+          />
+          <MetricCard
+            label="Đã báo xong"
             icon="task_alt"
             tone="success"
-            value={doneCount}
-            unit="việc đã nghiệm thu"
-            caption={awaitingCount > 0 ? `${awaitingCount} việc đang chờ Trưởng phòng duyệt` : 'Không có việc nào đang chờ duyệt'}
-          />
-          <MetricCard
-            label="Hạn chót"
-            icon={overdueCount > 0 ? 'warning' : 'event_available'}
-            tone={overdueCount > 0 ? 'error' : blockedCount > 0 ? 'warning' : 'success'}
-            value={overdueCount}
-            unit="việc quá hạn"
-            caption={
-              overdueCount > 0
-                ? 'Đã qua hạn chót mà chưa báo xong'
-                : blockedCount > 0
-                  ? `Không có việc quá hạn · ${blockedCount} việc đang chờ gỡ vướng`
-                  : 'Không có việc nào quá hạn'
-            }
+            value={awaitingCount + doneCount}
+            unit="việc"
+            caption={`${awaitingCount} chờ duyệt · ${doneCount} đã nghiệm thu`}
           />
         </div>
 
@@ -321,25 +321,31 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
           >
             {(
               [
-                ['all', `Tất cả việc của tôi (${tasks.length})`],
-                ['today', `Cần làm hôm nay (${todayCount})`],
-                ['doing', `Đang làm (${doingCount + blockedCount})`],
-                ['done', `Đã báo xong (${awaitingCount + doneCount})`],
+                ['open', `Cần làm (${openTasks.length})`],
+                ['awaiting', `Chờ duyệt (${awaitingCount})`],
+                ['done', `Đã nghiệm thu (${doneCount})`],
+                null,
+                ['due', `Quá hạn & hôm nay (${overdueCount + dueTodayCount})`],
+                ['blocked', `Đang vướng (${blockedCount})`],
               ] as const
-            ).map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                role="tab"
-                aria-selected={filter === key}
-                onClick={() => setFilter(key)}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                  filter === key ? 'bg-primary text-on-primary shadow-sm' : 'text-secondary hover:bg-surface-container-low'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+            ).map((entry) =>
+              entry === null ? (
+                <span key="sep" aria-hidden="true" className="mx-1.5 h-5 w-px bg-surface-container-high" />
+              ) : (
+                <button
+                  key={entry[0]}
+                  type="button"
+                  role="tab"
+                  aria-selected={filter === entry[0]}
+                  onClick={() => setFilter(entry[0])}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                    filter === entry[0] ? 'bg-primary text-on-primary shadow-sm' : 'text-secondary hover:bg-surface-container-low'
+                  }`}
+                >
+                  {entry[1]}
+                </button>
+              ),
+            )}
           </div>
 
 {/* Inline-edit Task Table (sheet-style, 1 row = 1 task) */}
@@ -374,6 +380,7 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
                 const taskNumId = Number(task.id.replace(/^[^-]+-/, ''));
                 const history = (Number.isFinite(taskNumId) && historyByTask[taskNumId]) || [];
                 const overdue = isOverdue(task, today);
+                const dueToday = isOpen(task) && task.deadline === today;
                 const busy = busyTaskId === task.id;
 
                 return (
@@ -408,11 +415,11 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
                         <div className="text-xs text-secondary truncate mt-0.5">{task.bundleName}</div>
                       </div>
 
-                      <div className={`text-xs font-semibold ${overdue ? 'text-error' : task.isToday ? 'text-warning' : 'text-on-surface'}`}>
+                      <div className={`text-xs font-semibold ${overdue ? 'text-error' : dueToday ? 'text-warning' : 'text-on-surface'}`}>
                         {formatDeadline(task.deadline)}
                         {overdue ? (
                           <div className="font-bold">Quá hạn</div>
-                        ) : task.isToday && isOpen(task) ? (
+                        ) : dueToday ? (
                           <div className="font-bold">Hôm nay</div>
                         ) : null}
                       </div>
@@ -543,7 +550,11 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
                   <span aria-hidden="true" className="material-symbols-outlined [--icon-size:40px] text-outline-variant block mb-2">
                     inbox
                   </span>
-                  {tasks.length === 0 ? 'Bạn chưa được giao việc nào.' : 'Không có việc nào trong bộ lọc này.'}
+                  {tasks.length === 0
+                    ? 'Bạn chưa được giao việc nào.'
+                    : filter === 'open'
+                      ? 'Bạn đã báo xong mọi việc.'
+                      : 'Không có việc nào trong mục này.'}
                 </div>
               )}
             </div>

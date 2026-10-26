@@ -347,8 +347,6 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
         priority: 'normal',
         status: 'pending',
         department_code: user.departments[0] ?? null,
-        is_today: endDate === today ? 1 : 0,
-        is_today_date: endDate === today ? today : null,
       }),
       `Đã thêm việc cá nhân: "${title.trim()}"`,
     );
@@ -472,7 +470,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
             dailyLogs={dailyLogs}
             onAdvanceTask={handleAdvanceEmployeeTask}
             filter={route.params.loc}
-            onFilterChange={(f) => setParam('loc', f === 'all' ? null : f)}
+            onFilterChange={(f) => setParam('loc', f === 'open' ? null : f)}
             onSaveLogs={handleSaveLogs}
             onOpenNewPersonalTaskModal={() => setIsNewPersonalTaskOpen(true)}
           />

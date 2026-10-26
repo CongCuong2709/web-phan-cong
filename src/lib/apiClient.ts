@@ -410,10 +410,6 @@ export const api = {
   async toggleTask(tier: number, id: number) {
     return request<{ item: TaskApiRowDto }>('POST', `/api/tasks/${tier}/${id}/toggle`);
   },
-  /** POST /api/tasks/4/:id/toggle-today — bật/tắt cờ "việc hôm nay". */
-  async toggleToday(tier: number, id: number) {
-    return request<{ item: TaskApiRowDto }>('POST', `/api/tasks/${tier}/${id}/toggle-today`);
-  },
   /** GET /api/tasks/4/:id/help-messages — lịch sử escalation. */
   async listHelpMessages(tier: number, id: number) {
     return request<{ items: HelpMessageDto[] }>('GET', `/api/tasks/${tier}/${id}/help-messages`);

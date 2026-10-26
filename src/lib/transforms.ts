@@ -253,14 +253,13 @@ export function apiToEmployeeTask(api: TaskApiRowDto): EmployeeTask {
   return {
     id: toCompositeId(tier, api.id),
     code: api.code,
-    bundleName: api.bundle_name ?? '—',
+    bundleName: api.bundle_name ?? 'Việc cá nhân',
     title: api.title,
     description: api.description,
     // currentDeliverable fill từ daily_log.result hôm nay qua useEffect (xem ViecCuaToiView).
     currentDeliverable: '',
     lastUpdated: api.updated_at,
     deadline: api.end_date ?? '',
-    isToday: Boolean(api.is_today),
     status,
     // Manager = assigned_by (người giao task).
     manager: {

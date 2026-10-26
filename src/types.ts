@@ -103,7 +103,6 @@ export interface Task {
   priority: TaskPriority;
 
   // Personal task flags (from employee_tasks)
-  isToday?: boolean;
   bundleName?: string;
   lastUpdated?: string;
 
@@ -192,7 +191,6 @@ export interface EmployeeTask {
   currentDeliverable: string;
   lastUpdated: string;
   deadline: string;
-  isToday?: boolean;
   /** Enum DB nguyên bản — không gộp trạng thái. */
   status: 'pending' | 'doing' | 'pending_approval' | 'blocked' | 'done';
   /**
