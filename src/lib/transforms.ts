@@ -223,13 +223,14 @@ export function apiToTeamLeadTask(api: TaskApiRowDto): TeamLeadTask {
     ownerName: api.owner_fullname ?? api.owner_username_str ?? '',
     ownerUsername: api.owner_username_str ?? undefined,
     department: (api.department_code ?? undefined) as TeamLeadTask['department'],
-    submittedAt: api.created_at,       // created_at là proxy submitted_at
+    submittedAt: api.created_at,
+    updatedAt: api.updated_at,
     deadline: api.end_date ?? undefined,
     status: statusMap[api.status] ?? 'in_progress',
     priority: priorityEnumToVi(api.priority) as TeamLeadTask['priority'],
-    progressText: api.progress != null ? `${api.progress}%` : undefined,
-    // 1 dòng blocker_note thay cho helpMessage 1:N cũ.
     blockerNote: api.blocker_note ?? '',
+    needsHelp: api.status === 'blocked' || !!api.blocker_note?.trim(),
+    progress: api.progress ?? 0,
   };
 }
 
@@ -375,6 +376,8 @@ function describeAudit(api: HistoryEntryDto, oldV: Record<string, unknown>, newV
   if (api.entity_type === 'task_help_message') {
     return api.action === 'resolve' ? 'Đã xử lý vướng mắc' : `Báo vướng mắc: ${newV.body ?? ''}`;
   }
+  if (newV.unblocked) return `Gỡ vướng mắc${newV.note ? `: ${newV.note}` : ''}`;
+  if (newV.returned) return `Trả về để làm lại${newV.reason ? `: ${newV.reason}` : ''}`;
   if (api.action === 'status_change' || (newV.status && oldV.status && newV.status !== oldV.status)) {
     return `Đổi trạng thái: ${statusEnumToVi(String(oldV.status))} → ${statusEnumToVi(String(newV.status))}`;
   }

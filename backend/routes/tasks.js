@@ -20,6 +20,8 @@
  *   POST   /api/tasks/:tier/:id/approve  — Manager duyệt
  *   POST   /api/tasks/:tier/:id/blocker  — NV ghi blocker_note
  *   POST   /api/tasks/:tier/:id/toggle   — Đổi status
+ *   POST   /api/tasks/4/:id/return   — TP trả việc chờ duyệt về làm lại ({ reason? })
+ *   POST   /api/tasks/4/:id/unblock  — TP gỡ vướng mắc ({ note? })
  *
  * Lưu ý:
  *   - recomputeRollup dùng subquery UPDATE single-statement (atomic).
@@ -619,6 +621,84 @@ router.post('/:tier(\\d+)/:id(\\d+)/approve', (req, res) => {
 
   const updated = loadItem(tier, id);
   return res.json({ item: enrichWithTier(updated, tier) });
+});
+
+/** Ghi lại 1 task T4 với các trường thay đổi (các trường khác giữ nguyên). */
+function rewriteTask(task, changes) {
+  const t = { ...task, ...changes };
+  stmt.updateTask.run(
+    t.title, t.description, t.owner_user_id, t.assigned_by_user_id,
+    t.department_code, t.start_date, t.end_date,
+    t.progress, t.status, t.priority,
+    t.is_today ?? 0, t.is_today_date ?? null, t.collapsed,
+    t.blocker_note || '', t.id,
+  );
+}
+
+/**
+ * POST /api/tasks/4/:id/return — Trưởng phòng trả việc "chờ duyệt" về cho NV làm lại.
+ * Body: { reason?: string } — lý do không bắt buộc, được ghi vào lịch sử việc.
+ * Quyền: như duyệt (`task:approve`).
+ */
+router.post('/:tier(\\d+)/:id(\\d+)/return', (req, res) => {
+  if (Number(req.params.tier) !== 4) return res.status(400).json({ error: 'return_only_for_task' });
+  const task = stmt.getTask.get(Number(req.params.id));
+  if (!task) return res.status(404).json({ error: 'not_found' });
+  const enriched = enrichWithTier(task, 4);
+  const authz = authorize('task:approve', req.user, { task: enriched });
+  if (!authz.ok) return res.status(authz.status).json(authz);
+  if (task.status !== 'pending_approval') {
+    return res.status(409).json({ error: 'not_awaiting_approval', message: 'Việc này không ở trạng thái chờ duyệt.' });
+  }
+  const tr = canTransition(task.status, 'doing', req.user, enriched);
+  if (!tr.ok) return res.status(403).json({ error: 'invalid_transition', message: tr.reason });
+
+  const reason = String(req.body?.reason ?? '').trim();
+  tx(() => {
+    rewriteTask(task, { status: 'doing' });
+    logAudit('task', task.id, 'status_change', { status: task.status }, { status: 'doing', returned: true, reason }, req);
+    recomputeRollup(task.id);
+  });
+  return res.json({ item: enrichWithTier(stmt.getTask.get(task.id), 4) });
+});
+
+/**
+ * POST /api/tasks/4/:id/unblock — Trưởng phòng gỡ vướng mắc: xoá `blocker_note`,
+ * đánh dấu đã xử lý mọi help message đang mở, và nếu task đang `blocked` thì chuyển về `doing`.
+ * Body: { note?: string } — hướng xử lý, ghi vào lịch sử việc.
+ */
+router.post('/:tier(\\d+)/:id(\\d+)/unblock', (req, res) => {
+  if (Number(req.params.tier) !== 4) return res.status(400).json({ error: 'unblock_only_for_task' });
+  const task = stmt.getTask.get(Number(req.params.id));
+  if (!task) return res.status(404).json({ error: 'not_found' });
+  const enriched = enrichWithTier(task, 4);
+  const authz = authorize('task:approve', req.user, { task: enriched });
+  if (!authz.ok) return res.status(authz.status).json(authz);
+  if (!task.blocker_note && task.status !== 'blocked') {
+    return res.status(409).json({ error: 'not_blocked', message: 'Việc này không có vướng mắc nào.' });
+  }
+  const nextStatus = task.status === 'blocked' ? 'doing' : task.status;
+  if (nextStatus !== task.status) {
+    const tr = canTransition(task.status, nextStatus, req.user, enriched);
+    if (!tr.ok) return res.status(403).json({ error: 'invalid_transition', message: tr.reason });
+  }
+
+  const note = String(req.body?.note ?? '').trim();
+  tx(() => {
+    rewriteTask(task, { status: nextStatus, blocker_note: '' });
+    db.prepare(`
+      UPDATE task_help_messages
+      SET is_resolved = 1, resolved_by_user_id = ?, resolved_at = datetime('now')
+      WHERE task_id = ? AND is_resolved = 0
+    `).run(req.user.id, task.id);
+    logAudit(
+      'task', task.id, 'update',
+      { status: task.status, blocker_note: task.blocker_note || '' },
+      { status: nextStatus, blocker_note: '', unblocked: true, note },
+      req,
+    );
+  });
+  return res.json({ item: enrichWithTier(stmt.getTask.get(task.id), 4) });
 });
 
 /** POST /api/tasks/:tier/:id/blocker — NV ghi 1 dòng `blocker_note` cho task.

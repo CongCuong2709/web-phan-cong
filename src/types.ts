@@ -162,14 +162,18 @@ export interface TeamLeadTask {
   ownerAvatar?: string;
   ownerUsername?: string;
   department?: Department;
+  /** Ngày giao việc (created_at). */
   submittedAt: string;
+  /** Lần cập nhật gần nhất — với việc chờ duyệt là lúc NV báo xong. */
+  updatedAt: string;
   deadline?: string;
   status: 'not_started' | 'in_progress' | 'pending_approval' | 'need_help' | 'done';
-  priority?: 'Cao' | 'Thường';
+  priority: TierItem['priority'];
   /** NV viết "đang vướng ở đâu / cần hỗ trợ gì" — Manager xem khi mở task. */
   blockerNote?: string;
-  /** Hiển thị rollup progress mới nhất (lấy từ daily_logs.progress). */
-  progressText?: string;
+  /** Cần Trưởng phòng hỗ trợ: đang `blocked` HOẶC NV đã ghi vướng mắc (blocker_note không đổi status). */
+  needsHelp: boolean;
+  progress: number;
 }
 
 /**

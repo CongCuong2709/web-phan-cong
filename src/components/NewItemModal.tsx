@@ -12,6 +12,11 @@ interface NewItemModalProps {
   currentUser: User;
   /** Danh sách users cùng phòng ban (dùng cho dropdown owner) */
   deptUsers?: { username: string; fullname: string }[];
+  /**
+   * 'plan'   — tạo mục trong cây (chọn tầng, mặc định người phụ trách là mình).
+   * 'assign' — giao việc cho người khác: luôn là đầu việc T4, bắt buộc chọn người làm.
+   */
+  mode?: 'plan' | 'assign';
 }
 
 const TIER_OPTIONS: { lvl: TierLevel; label: string; code: string }[] = [
@@ -47,8 +52,10 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
   parents,
   currentUser,
   deptUsers = [],
+  mode = 'plan',
 }) => {
-  const allowedTiers = allowedTiersFor(currentUser.role);
+  const assign = mode === 'assign';
+  const allowedTiers: TierLevel[] = assign ? [4] : allowedTiersFor(currentUser.role);
   const defaultTier = allowedTiers[allowedTiers.length - 1];
 
   const [tier, setTier] = useState<TierLevel>(defaultTier);
@@ -67,7 +74,7 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
     setTier(defaultTier);
     setTitle('');
     setParentId('');
-    setOwnerUsername(currentUser.username);
+    setOwnerUsername(assign ? '' : currentUser.username);
     setStartDate(todayIso());
     setEndDate(plusDays(todayIso(), 30));
     setDescription('');
@@ -84,6 +91,7 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
     e.preventDefault();
     if (!title.trim() || dateRangeError || submitting) return;
     if (parentRequired && !parentId) return;
+    if (!ownerUsername) return;
     setSubmitting(true);
     try {
       const ok = await onAddItem({
@@ -105,8 +113,15 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
   };
 
   return (
-    <Dialog isOpen={isOpen} onClose={onClose} title="Thêm công việc mới" icon="add_task" dismissible={!submitting}>
+    <Dialog
+      isOpen={isOpen}
+      onClose={onClose}
+      title={assign ? 'Giao việc' : 'Thêm công việc mới'}
+      icon="add_task"
+      dismissible={!submitting}
+    >
       <form onSubmit={handleSubmit} className="p-5 flex flex-col gap-4">
+        {!assign && (
         <fieldset className="flex flex-col gap-1.5">
           <legend className={`${labelCls} mb-1.5`}>Chọn cấp tầng quản lý *</legend>
           <div className={`grid gap-1.5 p-1 bg-surface-container-low rounded-lg ${GRID_COLS[allowedTiers.length]}`}>
@@ -129,6 +144,7 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
             ))}
           </div>
         </fieldset>
+        )}
 
         <div className="flex flex-col gap-1.5">
           <label htmlFor="new-item-title" className={labelCls}>
@@ -176,15 +192,17 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1.5">
             <label htmlFor="new-item-owner" className={labelCls}>
-              Người phụ trách
+              {assign ? 'Người làm *' : 'Người phụ trách'}
             </label>
-            {deptUsers.length > 1 ? (
+            {assign || deptUsers.length > 1 ? (
               <select
                 id="new-item-owner"
                 value={ownerUsername}
+                required
                 onChange={(e) => setOwnerUsername(e.target.value)}
                 className={inputCls}
               >
+                {assign && <option value="">-- Chọn người làm --</option>}
                 {deptUsers.map((u) => (
                   <option key={u.username} value={u.username}>
                     {u.fullname}
@@ -269,10 +287,10 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
           </button>
           <button
             type="submit"
-            disabled={submitting || dateRangeError || !title.trim() || (parentRequired && !parentId)}
+            disabled={submitting || dateRangeError || !title.trim() || (parentRequired && !parentId) || !ownerUsername}
             className={primaryButtonCls}
           >
-            {submitting ? 'Đang lưu…' : 'Lưu công việc'}
+            {submitting ? 'Đang lưu…' : assign ? 'Giao việc' : 'Lưu công việc'}
           </button>
         </div>
       </form>

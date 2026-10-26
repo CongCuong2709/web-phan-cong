@@ -35,6 +35,8 @@ npm run seed           # tsx scripts/seed.ts — demo users/departments/4-tier t
 
 ### API
 - One task endpoint for all tiers: `/api/tasks` and `/api/tasks/:tier/:id[/approve|/toggle|/toggle-today|/blocker|/help-messages…]`. Tier is 1–4 and the handler dispatches on it. The parent is passed as `parent_id`. `/api/tier-items`, `/api/team-tasks` and `/api/employee-tasks` are legacy aliases mounted on the same router.
+- Manager actions on a T4 task: `/approve` (→ done), `/return` (pending_approval → doing, optional `reason` stored in the audit row) and `/unblock` (clears `blocker_note`, resolves open help messages, blocked → doing). All three use the `task:approve` policy. Reassigning and rescheduling go through `PATCH` (`owner_user_id`, `end_date`).
+- An employee reporting an obstacle (`/blocker`) only sets `blocker_note` and does **not** change status. "Needs help" therefore means `status === 'blocked' || blocker_note` (`TeamLeadTask.needsHelp`), so never filter on status alone.
 - Other routers: `auth`, `users`, `dailyLogs` (mounted at `/api`), `teamMembers`, `history` (audit log), `weeklyReports` (`GET`/`PUT /api/weekly-reports?week=YYYY-MM-DD`, using ISO Monday week start, plus `/history`, `/team` and `/:userId/review`).
 - Auth: JWT bearer token (7-day expiry, no refresh token) plus a row in `sessions` (`middleware/auth.js` → `requireAuth`).
 

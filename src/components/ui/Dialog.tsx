@@ -125,16 +125,26 @@ export const Dialog: React.FC<DialogProps> = ({
   );
 };
 
-/** Class dùng chung cho ô nhập trong form — một nguồn thay cho các chuỗi class chép tay. */
-export const inputCls =
-  'w-full h-10 px-3 rounded-lg bg-surface-container-low text-on-surface text-sm border border-surface-container-high placeholder:text-outline focus:outline-none focus:bg-white focus:ring-2 focus:ring-primary disabled:bg-surface-container disabled:text-secondary';
+/** Class dùng chung cho ô nhập / nút — một nguồn thay cho các chuỗi class chép tay.
+ *  Kích thước tách khỏi kiểu dáng để không phải ghi đè class (không dùng `!important`). */
+const FIELD_BASE =
+  'rounded-lg bg-surface-container-low text-on-surface text-sm border border-surface-container-high placeholder:text-outline focus:outline-none focus:bg-white focus:ring-2 focus:ring-primary disabled:bg-surface-container disabled:text-secondary';
 
-export const textareaCls = inputCls.replace('h-10 px-3', 'p-2.5');
+export const inputCls = `w-full h-10 px-3 ${FIELD_BASE}`;
+/** Ô nhập thấp cho thanh công cụ (lọc, tìm kiếm); độ rộng do nơi dùng quyết định. */
+export const compactInputCls = `h-9 px-3 ${FIELD_BASE}`;
+export const textareaCls = `w-full p-2.5 ${FIELD_BASE}`;
 
 export const labelCls = 'text-xs font-bold text-on-surface';
 
-export const primaryButtonCls =
-  'inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-primary hover:bg-primary-container text-on-primary text-sm font-bold rounded-lg shadow-sm disabled:opacity-60 disabled:cursor-not-allowed';
+const BUTTON_BASE =
+  'inline-flex items-center justify-center gap-1.5 rounded-lg disabled:opacity-60 disabled:cursor-not-allowed';
+const PRIMARY = 'bg-primary hover:bg-primary-container text-on-primary font-bold shadow-sm';
+const GHOST = 'text-secondary hover:bg-surface-container-low font-semibold';
+const OUTLINE = 'bg-white text-on-surface border border-surface-container-high hover:bg-surface-container-low font-semibold';
 
-export const ghostButtonCls =
-  'px-4 py-2 text-secondary hover:bg-surface-container-low rounded-lg text-sm font-semibold disabled:opacity-50';
+export const primaryButtonCls = `${BUTTON_BASE} ${PRIMARY} px-4 py-2 text-sm`;
+export const ghostButtonCls = `${BUTTON_BASE} ${GHOST} px-4 py-2 text-sm`;
+/** Nút nhỏ cho thao tác trong dòng danh sách / bảng. */
+export const smallPrimaryButtonCls = `${BUTTON_BASE} ${PRIMARY} px-3 py-1.5 text-xs`;
+export const smallOutlineButtonCls = `${BUTTON_BASE} ${OUTLINE} px-3 py-1.5 text-xs`;

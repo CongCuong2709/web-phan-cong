@@ -20,7 +20,7 @@ const ROLE_BADGE_COLOR: Record<User['role'], string> = {
 
 const TAB_LABEL: Record<ActiveAppTab, string> = {
   'cay-gantt-4-tang': 'Cây công việc',
-  'giao-viec-nhom': 'Giao việc Nhóm',
+  'giao-viec-nhom': 'Giao việc nhóm',
   'viec-cua-toi': 'Việc của tôi',
   'bao-cao': 'Báo cáo',
 };

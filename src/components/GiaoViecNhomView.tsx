@@ -1,582 +1,565 @@
-﻿import React, { useState } from 'react';
+﻿import React, { useMemo, useState } from 'react';
 import { Avatar } from './ui/Brand';
+import {
+  Dialog,
+  compactInputCls,
+  ghostButtonCls,
+  inputCls,
+  labelCls,
+  primaryButtonCls,
+  smallOutlineButtonCls,
+  smallPrimaryButtonCls,
+  textareaCls,
+} from './ui/Dialog';
 import { TeamMember, TeamLeadTask } from '../types';
 import { todayIso } from '../lib/transforms';
+
+export interface Assignee {
+  id: string;
+  username: string;
+  fullname: string;
+}
 
 interface GiaoViecNhomViewProps {
   teamMembers: TeamMember[];
   tasks: TeamLeadTask[];
-  /** Resolve sau khi server trả lời — nút bị khoá trong lúc chờ để không gửi trùng. */
+  /** Người có thể nhận việc (dùng khi đổi người làm). */
+  assignees: Assignee[];
+  /** Các thao tác resolve true khi server đã lưu. */
   onApproveTask: (taskId: string) => Promise<boolean>;
-  onOpenNewTaskModal: () => void;
-  onOpenNewBundleModal: () => void;
-  /** Bộ lọc + thành viên đang chọn lưu trên URL (?loc=need_help&nv=hong). */
+  onReturnTask: (taskId: string, reason: string) => Promise<boolean>;
+  onUnblockTask: (taskId: string, note: string) => Promise<boolean>;
+  onAdjustTask: (taskId: string, changes: { ownerUserId?: string; endDate?: string }) => Promise<boolean>;
+  onOpenTask: (taskId: string) => void;
+  onAssignTask: () => void;
+  /** Bộ lọc trạng thái + người làm lưu trên URL (?loc=open&nv=hong). */
   filter?: string;
-  onFilterChange: (filter: Filter) => void;
+  onFilterChange: (filter: StatusFilter) => void;
   memberFilter: string | null;
   onMemberFilterChange: (username: string | null) => void;
 }
 
-const FILTERS = ['pending', 'all', 'need_help', 'done'] as const;
+const STATUS_FILTERS = [
+  ['open', 'Đang mở'],
+  ['all', 'Tất cả'],
+  ['not_started', 'Chưa bắt đầu'],
+  ['in_progress', 'Đang làm'],
+  ['need_help', 'Có vướng mắc'],
+  ['pending_approval', 'Chờ duyệt'],
+  ['done', 'Đã nghiệm thu'],
+] as const;
+type StatusFilter = (typeof STATUS_FILTERS)[number][0];
 
-/** "2026-10-25" hoặc "2026-10-25 08:32:56" → "25/10/2026". */
-function formatDate(s: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : s;
+const STATUS_META: Record<TeamLeadTask['status'], { label: string; dot: string }> = {
+  not_started: { label: 'Chưa bắt đầu', dot: 'bg-outline' },
+  in_progress: { label: 'Đang làm', dot: 'bg-primary' },
+  need_help: { label: 'Đang vướng', dot: 'bg-error' },
+  pending_approval: { label: 'Chờ duyệt', dot: 'bg-warning-fixed' },
+  done: { label: 'Đã nghiệm thu', dot: 'bg-tertiary' },
+};
+
+/** Thứ tự khi sắp xếp theo trạng thái: việc cần chú ý lên trước. */
+const STATUS_ORDER: Record<TeamLeadTask['status'], number> = {
+  need_help: 0, pending_approval: 1, in_progress: 2, not_started: 3, done: 4,
+};
+
+type SortKey = 'deadline' | 'owner' | 'status' | 'progress';
+
+/** "2026-10-25" hoặc "2026-10-25 08:32:56" → "25/10". */
+function ddmm(s?: string): string {
+  const m = s ? /^(\d{4})-(\d{2})-(\d{2})/.exec(s) : null;
+  return m ? `${m[3]}/${m[2]}` : '—';
 }
-type Filter = (typeof FILTERS)[number];
+
+function daysBetween(fromIso: string, toIso: string): number {
+  const [a, b] = [fromIso, toIso].map((s) => {
+    const [y, m, d] = s.slice(0, 10).split('-').map(Number);
+    return Date.UTC(y, m - 1, d);
+  });
+  return Math.round((b - a) / 86400000);
+}
+
+const isOpen = (t: TeamLeadTask) => t.status !== 'done' && t.status !== 'pending_approval';
+
+type Action = { kind: 'return' | 'unblock' | 'adjust'; task: TeamLeadTask };
 
 export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
   teamMembers,
   tasks,
+  assignees,
   onApproveTask,
-  onOpenNewTaskModal,
-  onOpenNewBundleModal,
+  onReturnTask,
+  onUnblockTask,
+  onAdjustTask,
+  onOpenTask,
+  onAssignTask,
   filter: filterParam,
-  onFilterChange: setFilter,
+  onFilterChange,
   memberFilter,
-  onMemberFilterChange: setMemberFilter,
+  onMemberFilterChange,
 }) => {
-  const filter: Filter = FILTERS.find((f) => f === filterParam) ?? 'pending';
-  // Escalation qua tasks.blocker_note (manager xem khi mở task — DetailsDrawer).
-  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const today = todayIso();
+  const statusFilter: StatusFilter = STATUS_FILTERS.find(([k]) => k === filterParam)?.[0] ?? 'open';
+  const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'deadline', dir: 1 });
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [action, setAction] = useState<Action | null>(null);
 
-  const approve = async (taskId: string) => {
-    if (approvingId) return;
-    setApprovingId(taskId);
+  const isOverdue = (t: TeamLeadTask) => isOpen(t) && !!t.deadline && t.deadline < today;
+
+  /** Việc cần trưởng phòng ra quyết định — mỗi việc chỉ xuất hiện 1 lần, theo lý do quan trọng nhất. */
+  const inbox = useMemo(() => {
+    const rows: { task: TeamLeadTask; reason: 'help' | 'approve' | 'overdue' }[] = [];
+    for (const t of tasks) {
+      if (t.status === 'done') continue;
+      if (t.needsHelp) rows.push({ task: t, reason: 'help' });
+      else if (t.status === 'pending_approval') rows.push({ task: t, reason: 'approve' });
+      else if (isOverdue(t)) rows.push({ task: t, reason: 'overdue' });
+    }
+    const rank = { help: 0, approve: 1, overdue: 2 };
+    return rows.sort((a, b) => rank[a.reason] - rank[b.reason] || (a.task.deadline ?? '').localeCompare(b.task.deadline ?? ''));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, today]);
+
+  const counts = {
+    open: tasks.filter(isOpen).length,
+    overdue: tasks.filter(isOverdue).length,
+    approve: tasks.filter((t) => t.status === 'pending_approval').length,
+    help: tasks.filter((t) => t.needsHelp).length,
+  };
+
+  const memberOptions = useMemo(
+    () =>
+      teamMembers
+        .filter((m) => m.username)
+        .map((m) => ({
+          username: m.username!,
+          name: m.name,
+          open: tasks.filter((t) => t.ownerUsername === m.username && isOpen(t)).length,
+          overdue: tasks.filter((t) => t.ownerUsername === m.username && isOverdue(t)).length,
+        })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [teamMembers, tasks, today],
+  );
+
+  const tableRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const rows = tasks.filter((t) => {
+      if (memberFilter && t.ownerUsername !== memberFilter) return false;
+      if (q && !`${t.code} ${t.title} ${t.category} ${t.ownerName}`.toLowerCase().includes(q)) return false;
+      switch (statusFilter) {
+        case 'open': return isOpen(t);
+        case 'all': return true;
+        case 'need_help': return t.needsHelp;
+        default: return t.status === statusFilter;
+      }
+    });
+    const val = (t: TeamLeadTask): string | number =>
+      sort.key === 'deadline' ? t.deadline ?? '9999'
+        : sort.key === 'owner' ? t.ownerName
+          : sort.key === 'status' ? STATUS_ORDER[t.status]
+            : t.progress;
+    return rows.sort((a, b) => {
+      const [x, y] = [val(a), val(b)];
+      return (x < y ? -1 : x > y ? 1 : 0) * sort.dir || a.code.localeCompare(b.code);
+    });
+  }, [tasks, memberFilter, search, statusFilter, sort]);
+
+  const run = async (taskId: string, fn: () => Promise<boolean>) => {
+    if (busyId) return false;
+    setBusyId(taskId);
     try {
-      await onApproveTask(taskId);
+      return await fn();
     } finally {
-      setApprovingId(null);
+      setBusyId(null);
     }
   };
 
-  // Filtered task list
-  const filteredTasks = tasks.filter((t) => {
-    // Filter theo ownerUsername (key ổn định) thay vì ownerName (string display)
-    // — tránh nhầm khi 2 người trùng tên hiển thị. Fallback so sánh tên nếu
-    // seed data chưa có username.
-    if (
-      memberFilter &&
-      t.ownerUsername !== memberFilter &&
-      t.ownerName !== memberFilter
-    ) return false;
-
-    if (filter === 'all') return true;
-    if (filter === 'pending') return t.status === 'pending_approval';
-    if (filter === 'need_help') return t.status === 'need_help';
-    if (filter === 'done') return t.status === 'done';
-    return true;
-  });
-
-  const pendingCount = tasks.filter((t) => t.status === 'pending_approval').length;
-  const helpCount = tasks.filter((t) => t.status === 'need_help').length;
-  const doneCount = tasks.filter((t) => t.status === 'done').length;
-
-  const today = todayIso();
-  const isOpen = (t: TeamLeadTask) =>
-    t.status === 'not_started' || t.status === 'in_progress' || t.status === 'need_help';
-  const isOverdue = (t: TeamLeadTask) => isOpen(t) && !!t.deadline && t.deadline < today;
-  const openCount = tasks.filter(isOpen).length;
-  const notStartedCount = tasks.filter((t) => t.status === 'not_started').length;
-  const overdueCount = tasks.filter(isOverdue).length;
-
-  /** Số liệu từng thành viên tính từ chính danh sách việc — không dùng câu chữ dựng sẵn ở backend. */
-  const statsFor = (username?: string) => {
-    const mine = tasks.filter((t) => t.ownerUsername === username);
-    return {
-      open: mine.filter(isOpen).length,
-      blocked: mine.filter((t) => t.status === 'need_help').length,
-      overdue: mine.filter(isOverdue).length,
-      awaiting: mine.filter((t) => t.status === 'pending_approval').length,
-    };
-  };
-  // First member who needs help
-  const helpMember = teamMembers.find((m) => m.needHelp);
-  const helpMemberNote = helpMember ? `${helpMember.name} đang cần hỗ trợ` : 'Không có ai cần hỗ trợ';
-  // Thanh khối lượng: so với người đang có nhiều việc mở nhất trong nhóm.
-  const maxActive = Math.max(1, ...teamMembers.map((m) => m.activeTasks));
+  const sortHeader = (key: SortKey, label: string, className = '') => (
+    <th
+      scope="col"
+      aria-sort={sort.key === key ? (sort.dir === 1 ? 'ascending' : 'descending') : 'none'}
+      className={`px-3 py-2 font-semibold ${className}`}
+    >
+      <button
+        type="button"
+        onClick={() => setSort((s) => ({ key, dir: s.key === key ? (s.dir === 1 ? -1 : 1) : 1 }))}
+        className="inline-flex items-center gap-0.5 hover:text-on-surface"
+      >
+        {label}
+        <span aria-hidden="true" className="material-symbols-outlined [--icon-size:14px]">
+          {sort.key !== key ? 'unfold_more' : sort.dir === 1 ? 'arrow_upward' : 'arrow_downward'}
+        </span>
+      </button>
+    </th>
+  );
 
   return (
-    <div className="flex flex-col w-full">
-      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 flex flex-col gap-6">
-        {/* Header Section */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 sm:p-6 rounded-xl border border-surface-container shadow-sm">
-          <div className="flex flex-col gap-1">
-            <h1 className="text-2xl sm:text-3xl font-bold text-on-surface tracking-tight">
-              Giao việc & Theo dõi nhóm
-            </h1>
-          </div>
-
-          <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap shrink-0">
-            <button
-              onClick={onOpenNewBundleModal}
-              className="px-3.5 py-2 bg-surface-container-low hover:bg-surface-container-high text-on-surface text-sm font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-sm"
-              type="button"
-            >
-              <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px] text-primary">
-                folder_copy
-              </span>
-              <span>Tạo nhóm việc / Đợt việc</span>
-            </button>
-            <button
-              onClick={onOpenNewTaskModal}
-              className="px-4 py-2 bg-primary hover:bg-primary-container text-white text-sm font-semibold rounded-lg flex items-center gap-1.5 shadow-sm transition-all active:scale-[0.98]"
-              type="button"
-            >
-              <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px]">
-                add_task
-              </span>
-              <span>Giao việc mới cho nhân viên</span>
-            </button>
-          </div>
+    <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 flex flex-col gap-6">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-on-surface">Giao việc nhóm</h1>
+          <p className="text-sm text-secondary mt-1">
+            {counts.open} việc đang mở
+            <span className={counts.overdue ? 'text-error font-semibold' : ''}> · {counts.overdue} quá hạn</span>
+            {' · '}{counts.approve} chờ duyệt
+            <span className={counts.help ? 'text-error font-semibold' : ''}> · {counts.help} có vướng mắc</span>
+          </p>
         </div>
+        <button type="button" onClick={onAssignTask} className={primaryButtonCls}>
+          <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px]">add</span>
+          Giao việc
+        </button>
+      </div>
 
-        {/* 4 Summary Metric Cards — tính động từ props */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Card 1 */}
-          <div className="bg-white p-4 sm:p-5 rounded-xl border border-surface-container shadow-sm flex flex-col justify-between">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-secondary">
-                Tổng việc nhóm quản lý
-              </span>
-              <div className="w-8 h-8 rounded-lg bg-surface-container-low flex items-center justify-center text-primary">
-                <span aria-hidden="true" className="material-symbols-outlined [--icon-size:19px]">
-                  fact_check
-                </span>
-              </div>
-            </div>
-            <div className="mt-3">
-              <div className="text-display font-bold text-on-surface leading-none tabular-nums">
-                {tasks.length}
-              </div>
-              <p className="text-xs text-secondary mt-1.5">
-                Chia cho {teamMembers.length} thành viên
-              </p>
-            </div>
-          </div>
-
-          {/* Card 2 */}
-          <div className="bg-white p-4 sm:p-5 rounded-xl border border-surface-container shadow-sm flex flex-col justify-between">
-            <div className="flex items-center justify-between">
-              <span className={`text-xs font-semibold ${overdueCount > 0 ? 'text-error' : 'text-tertiary'}`}>
-                Chưa báo xong
-              </span>
-              <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${overdueCount > 0 ? 'bg-error-container text-error' : 'bg-tertiary-fixed/40 text-tertiary'}`}>
-                <span aria-hidden="true" className="material-symbols-outlined [--icon-size:19px]">
-                  {overdueCount > 0 ? 'schedule' : 'play_circle'}
-                </span>
-              </div>
-            </div>
-            <div className="mt-3">
-              <div className="text-display font-bold text-on-surface leading-none tabular-nums">
-                {openCount}
-              </div>
-              <p className={`text-xs mt-1.5 ${overdueCount > 0 ? 'text-error font-semibold' : 'text-secondary'}`}>
-                {notStartedCount} chưa bắt đầu · {overdueCount > 0 ? `${overdueCount} quá hạn chót` : 'không có việc quá hạn'}
-              </p>
-            </div>
-          </div>
-
-          {/* Card 3 */}
-          <div className="bg-white p-4 sm:p-5 rounded-xl border border-surface-container shadow-sm flex flex-col justify-between">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-secondary">
-                Đã nghiệm thu
-              </span>
-              <div className="w-8 h-8 rounded-lg bg-surface-container-low text-primary flex items-center justify-center">
-                <span aria-hidden="true" className="material-symbols-outlined [--icon-size:19px]">
-                  task_alt
-                </span>
-              </div>
-            </div>
-            <div className="mt-3">
-              <div className="text-display font-bold text-on-surface leading-none tabular-nums">
-                {doneCount}
-              </div>
-              <p className="text-xs text-secondary mt-1.5">
-                Đã duyệt nghiệm thu hoàn tất
-              </p>
-            </div>
-          </div>
-
-          {/* Card 4 - Urgent Blocker Card */}
-          <div
-            className={`p-4 sm:p-5 rounded-xl border shadow-sm flex flex-col justify-between ${
-              helpCount > 0
-                ? 'bg-error-container/40 border-error-container'
-                : 'bg-tertiary-fixed/20 border-tertiary-fixed-dim'
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <span
-                className={`text-xs font-bold flex items-center gap-1.5 ${
-                  helpCount > 0 ? 'text-error' : 'text-tertiary'
-                }`}
-              >
-                {helpCount > 0 && (
-                  <span className="w-2 h-2 rounded-full bg-error animate-pulse"></span>
-                )}
-                {helpCount > 0 ? 'Cần Trưởng phòng hỗ trợ' : 'Nhóm ổn định'}
-              </span>
-              <div
-                className={`w-8 h-8 rounded-lg text-white flex items-center justify-center ${
-                  helpCount > 0 ? 'bg-error' : 'bg-tertiary'
-                }`}
-              >
-                <span aria-hidden="true" className="material-symbols-outlined [--icon-size:19px]">
-                  {helpCount > 0 ? 'support' : 'check_circle'}
-                </span>
-              </div>
-            </div>
-            <div className="mt-3">
-              <div
-                className={`text-display font-bold leading-none tabular-nums ${
-                  helpCount > 0 ? 'text-error' : 'text-tertiary'
-                }`}
-              >
-                {helpCount}
-              </div>
-              <p
-                className={`text-xs mt-1.5 font-semibold ${
-                  helpCount > 0 ? 'text-on-error-container' : 'text-tertiary'
-                }`}
-              >
-                {helpMemberNote}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Section 1: Team Member Workload Allocation */}
-        <div className="bg-white p-5 sm:p-6 rounded-xl border border-surface-container shadow-sm flex flex-col gap-4">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div className="flex items-center gap-2.5">
-              <div className="w-7 h-7 rounded-lg bg-surface-container-low text-primary flex items-center justify-center">
-                <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px]">
-                  badge
-                </span>
-              </div>
-              <div>
-                <h2 className="text-lg font-bold text-on-surface">
-                  Tình hình công việc của từng thành viên
-                </h2>
-                <p className="text-xs text-secondary">
-                  Xem ngay ai đang thong thả, ai đang quá tải để điều phối việc chuẩn xác
-                </p>
-              </div>
-            </div>
-            {memberFilter ? (
-              <button type="button"
-                onClick={() => setMemberFilter(null)}
-                className="px-2.5 py-1 bg-surface-container-low text-primary text-xs font-semibold rounded hover:bg-surface-container-high"
-              >
-                {/* Hiển thị TÊN thay vì raw value. memberFilter có thể là username ("nv_an"). */}
-                Đang lọc:{' '}
-                {teamMembers.find((m) => m.username === memberFilter)?.name ??
-                  teamMembers.find((m) => m.name === memberFilter)?.name ??
-                  memberFilter}
-              </button>
-            ) : (
-              <span className="px-2.5 py-1 bg-surface-container-low text-on-surface-variant text-xs font-medium rounded-lg">
-                {teamMembers.length} thành viên sẵn sàng
-              </span>
-            )}
-          </div>
-
-          {/* Members Grid Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3.5">
-            {teamMembers.map((member) => {
-              const isSelected = memberFilter === (member.username ?? member.name);
-              const stats = statsFor(member.username);
-              const isWarning = stats.blocked > 0;
-
+      {/* Hộp việc cần xử lý */}
+      <section aria-labelledby="inbox-title" className="bg-white rounded-xl border border-surface-container">
+        <h2 id="inbox-title" className="px-4 py-3 text-base font-semibold text-on-surface border-b border-surface-container">
+          Cần bạn xử lý <span className="text-secondary font-normal">({inbox.length})</span>
+        </h2>
+        {inbox.length === 0 ? (
+          <p className="px-4 py-6 text-sm text-secondary">Không có việc nào cần bạn duyệt, gỡ vướng hay xử lý quá hạn.</p>
+        ) : (
+          <ul className="divide-y divide-surface-container">
+            {inbox.map(({ task, reason }) => {
+              const busy = busyId === task.id;
               return (
-                <div
-                  key={member.id}
-                  className={`p-4 rounded-xl flex flex-col justify-between gap-3 transition-all border ${
-                    isSelected
-                      ? 'ring-2 ring-primary border-transparent'
-                      : isWarning
-                      ? 'bg-error-container/25 border-error-fixed'
-                      : 'bg-surface-container-low/60 border-surface-container hover:bg-surface-container-low'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="relative">
-                      <Avatar name={member.name} src={member.avatar} className="w-10 h-10 text-sm shadow-sm" />
-                      {isWarning && (
-                        <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-error rounded-full ring-2 ring-white flex items-center justify-center">
-                          <span className="w-1.5 h-1.5 bg-white rounded-full"></span>
-                        </span>
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="font-semibold text-sm text-on-surface truncate">
-                        {member.name}
-                      </div>
-                      <div className="text-xs text-secondary truncate">
-                        {member.role}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-1.5">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-on-surface font-medium">
-                        {stats.open} việc chưa xong
+                <li key={task.id} className="px-4 py-3 flex flex-col md:flex-row md:items-center gap-3">
+                  <span
+                    className={`shrink-0 w-24 text-xs font-semibold ${reason === 'approve' ? 'text-warning' : 'text-error'}`}
+                  >
+                    {reason === 'help' ? 'Vướng mắc' : reason === 'approve' ? 'Chờ duyệt' : 'Quá hạn'}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <button
+                      type="button"
+                      onClick={() => onOpenTask(task.id)}
+                      className="text-sm font-semibold text-on-surface hover:text-primary hover:underline text-left"
+                    >
+                      <span className="font-mono text-xs text-secondary mr-2">{task.code}</span>
+                      {task.title}
+                    </button>
+                    <div className="mt-0.5 flex items-center gap-2 text-xs text-secondary flex-wrap">
+                      <span className="inline-flex items-center gap-1.5">
+                        <Avatar name={task.ownerName} src={task.ownerAvatar} className="w-5 h-5 text-xs" />
+                        {task.ownerName}
                       </span>
-                      {isWarning ? (
-                        <span className="text-error font-bold flex items-center gap-1">
-                          <span aria-hidden="true" className="material-symbols-outlined [--icon-size:13px]">
-                            help
-                          </span>
-                          {stats.blocked} việc cần hỗ trợ
-                        </span>
+                      <span aria-hidden="true">·</span>
+                      {reason === 'help' ? (
+                        <span className="text-on-surface">“{task.blockerNote || 'Đang bị chặn, chưa ghi lý do'}”</span>
+                      ) : reason === 'approve' ? (
+                        <span>Báo xong {ddmm(task.updatedAt)} · hạn {ddmm(task.deadline)}</span>
                       ) : (
-                        <span className={`font-semibold flex items-center gap-1 ${stats.overdue > 0 ? 'text-error' : 'text-tertiary'}`}>
-                          <span aria-hidden="true" className="material-symbols-outlined [--icon-size:13px]">
-                            {stats.overdue > 0 ? 'schedule' : 'check_circle'}
-                          </span>
-                          {stats.overdue > 0
-                            ? `${stats.overdue} quá hạn`
-                            : stats.awaiting > 0
-                              ? `${stats.awaiting} chờ duyệt`
-                              : 'Không quá hạn'}
+                        <span className="text-error">
+                          Hạn {ddmm(task.deadline)} · trễ {daysBetween(task.deadline!, today)} ngày · tiến độ {task.progress}%
                         </span>
                       )}
                     </div>
-
-                    <div
-                      className="w-full bg-surface-container-highest rounded-full h-1.5 overflow-hidden"
-                      role="img"
-                      aria-label={`Khối lượng: ${member.activeTasks} việc đang mở, nhiều nhất nhóm là ${maxActive}`}
-                    >
-                      <div
-                        className={`h-1.5 rounded-full ${isWarning ? 'bg-error' : 'bg-tertiary'}`}
-                        style={{ width: `${(member.activeTasks / maxActive) * 100}%` }}
-                      ></div>
-                    </div>
                   </div>
-
-                  {isWarning ? (
-                    <button
-                      onClick={() => {
-                        setFilter('need_help');
-                        setMemberFilter(member.username ?? member.name);
-                      }}
-                      className="w-full py-1.5 px-3 bg-error hover:bg-on-error-container text-white rounded-lg text-xs font-bold text-center transition-all shadow-sm flex items-center justify-center gap-1"
-                      type="button"
-                    >
-                      <span aria-hidden="true" className="material-symbols-outlined [--icon-size:16px]">
-                        support
-                      </span>
-                      <span>Giúp ngay</span>
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() =>
-                        setMemberFilter(isSelected ? null : (member.username ?? member.name))
-                      }
-                      className="w-full py-1.5 px-3 bg-white text-on-surface hover:bg-surface-container-high rounded-lg text-xs font-semibold text-center transition-all shadow-sm border border-surface-container"
-                      type="button"
-                    >
-                      {isSelected ? 'Đang xem việc' : `Xem việc ${member.name.split(' ').pop()} (${member.activeTasks})`}
-                    </button>
-                  )}
-                </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {reason === 'approve' && (
+                      <>
+                        <button
+                          type="button"
+                          disabled={busyId !== null}
+                          onClick={() => setAction({ kind: 'return', task })}
+                          className={smallOutlineButtonCls}
+                        >
+                          Trả về
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busyId !== null}
+                          onClick={() => run(task.id, () => onApproveTask(task.id))}
+                          className={smallPrimaryButtonCls}
+                        >
+                          {busy ? 'Đang duyệt…' : 'Duyệt'}
+                        </button>
+                      </>
+                    )}
+                    {reason === 'help' && (
+                      <button
+                        type="button"
+                        disabled={busyId !== null}
+                        onClick={() => setAction({ kind: 'unblock', task })}
+                        className={smallPrimaryButtonCls}
+                      >
+                        Gỡ vướng
+                      </button>
+                    )}
+                    {reason === 'overdue' && (
+                      <button
+                        type="button"
+                        disabled={busyId !== null}
+                        onClick={() => setAction({ kind: 'adjust', task })}
+                        className={smallPrimaryButtonCls}
+                      >
+                        Dời hạn / Đổi người
+                      </button>
+                    )}
+                  </div>
+                </li>
               );
             })}
+          </ul>
+        )}
+      </section>
+
+      {/* Bảng toàn bộ việc nhóm */}
+      <section aria-labelledby="all-title" className="bg-white rounded-xl border border-surface-container">
+        <div className="px-4 py-3 border-b border-surface-container flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <h2 id="all-title" className="text-base font-semibold text-on-surface">
+            Việc của nhóm <span className="text-secondary font-normal">({tableRows.length})</span>
+          </h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Tìm mã, tên việc, người làm…"
+              aria-label="Tìm việc"
+              className={`${compactInputCls} w-56`}
+            />
+            <select
+              value={memberFilter ?? ''}
+              onChange={(e) => onMemberFilterChange(e.target.value || null)}
+              aria-label="Lọc theo người làm"
+              className={compactInputCls}
+            >
+              <option value="">Mọi người</option>
+              {memberOptions.map((m) => (
+                <option key={m.username} value={m.username}>
+                  {m.name} — {m.open} mở{m.overdue ? `, ${m.overdue} quá hạn` : ''}
+                </option>
+              ))}
+            </select>
+            <select
+              value={statusFilter}
+              onChange={(e) => onFilterChange(e.target.value as StatusFilter)}
+              aria-label="Lọc theo trạng thái"
+              className={compactInputCls}
+            >
+              {STATUS_FILTERS.map(([k, label]) => (
+                <option key={k} value={k}>{label}</option>
+              ))}
+            </select>
           </div>
         </div>
 
-        {/* Section 2: Actionable Task Coordination Table for Team Leader */}
-        <div className="bg-white p-5 sm:p-6 rounded-xl border border-surface-container shadow-sm flex flex-col gap-5">
-          {/* Table Header & Filter Tabs */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-bold text-on-surface">
-                Việc cần Trưởng phòng duyệt & Điều phối
-              </h2>
-              <p className="text-xs text-secondary">
-                Các đầu việc cần bạn bấm nút kiểm tra, tháo gỡ vướng mắc hoặc nghiệm thu
-              </p>
-            </div>
-
-            {/* Filter Segmented Tabs */}
-            <div className="inline-flex p-1 bg-surface-container-low rounded-xl gap-1 self-start md:self-auto overflow-x-auto no-scrollbar max-w-full">
-              <button
-                onClick={() => setFilter('all')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
-                  filter === 'all'
-                    ? 'bg-white text-primary shadow-sm'
-                    : 'text-secondary hover:text-on-surface'
-                }`}
-                type="button"
-              >
-                Tất cả việc nhóm ({tasks.length})
-              </button>
-              <button
-                onClick={() => setFilter('pending')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors flex items-center gap-1.5 ${
-                  filter === 'pending'
-                    ? 'bg-white text-primary shadow-sm'
-                    : 'text-secondary hover:text-on-surface'
-                }`}
-                type="button"
-              >
-                <span>Chờ tôi duyệt kết quả</span>
-                <span className="w-4 h-4 rounded-full bg-primary text-white text-xs flex items-center justify-center font-bold">
-                  {pendingCount}
-                </span>
-              </button>
-              <button
-                onClick={() => setFilter('need_help')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors flex items-center gap-1.5 ${
-                  filter === 'need_help'
-                    ? 'bg-white text-error shadow-sm'
-                    : 'text-error hover:bg-error-container/40'
-                }`}
-                type="button"
-              >
-                <span>Cần tôi hỗ trợ</span>
-                <span className="w-4 h-4 rounded-full bg-error text-white text-xs flex items-center justify-center font-bold">
-                  {helpCount}
-                </span>
-              </button>
-              <button
-                onClick={() => setFilter('done')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
-                  filter === 'done'
-                    ? 'bg-white text-tertiary shadow-sm'
-                    : 'text-secondary hover:text-on-surface'
-                }`}
-                type="button"
-              >
-                Đã xong ({doneCount})
-              </button>
-            </div>
-          </div>
-
-          {/* High Clarity Task Cards List */}
-          <div className="flex flex-col gap-3">
-            {filteredTasks.length === 0 ? (
-              <div className="p-8 text-center text-secondary bg-surface-container-low/40 rounded-xl">
-                Không có việc nào trong mục này.
-              </div>
-            ) : (
-              filteredTasks.map((task) => {
-                const isPending = task.status === 'pending_approval';
-                const isNeedHelp = task.status === 'need_help';
-                const isDone = task.status === 'done';
-
-                return (
-                  <div
-                    key={task.id}
-                    className={`p-4 sm:p-5 rounded-xl border flex flex-col lg:flex-row lg:items-center justify-between gap-4 transition-all ${
-                      isNeedHelp
-                        ? 'bg-error-container/25 border-error-fixed hover:bg-error-container/40'
-                        : isDone
-                        ? 'bg-tertiary-fixed/20 border-tertiary-fixed-dim'
-                        : 'bg-surface-container-low/50 border-surface-container hover:bg-surface-container-low'
-                    }`}
-                  >
-                    <div className="flex items-start gap-3.5 min-w-0 flex-1">
-                      {/* Status Tag */}
-                      {isPending && (
-                        <span className="px-2 py-0.5 bg-primary text-white text-xs font-bold rounded uppercase whitespace-nowrap mt-0.5">
-                          Chờ duyệt kết quả
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[860px] text-sm">
+            <thead className="text-xs text-secondary text-left bg-surface">
+              <tr>
+                <th scope="col" className="px-3 py-2 font-semibold w-24">Mã</th>
+                <th scope="col" className="px-3 py-2 font-semibold">Công việc</th>
+                {sortHeader('owner', 'Người làm', 'w-48')}
+                {sortHeader('deadline', 'Hạn', 'w-32')}
+                {sortHeader('status', 'Trạng thái', 'w-40')}
+                {sortHeader('progress', 'Tiến độ', 'w-32')}
+                <th scope="col" className="px-3 py-2 w-12"><span className="sr-only">Thao tác</span></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-surface-container">
+              {tableRows.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-3 py-8 text-center text-secondary">
+                    {tasks.length === 0 ? 'Nhóm chưa có việc nào.' : 'Không có việc nào khớp bộ lọc.'}
+                  </td>
+                </tr>
+              ) : (
+                tableRows.map((t) => {
+                  const overdue = isOverdue(t);
+                  const meta = STATUS_META[t.status];
+                  return (
+                    <tr
+                      key={t.id}
+                      tabIndex={0}
+                      onClick={() => onOpenTask(t.id)}
+                      onKeyDown={(e) => {
+                        if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+                          e.preventDefault();
+                          onOpenTask(t.id);
+                        }
+                      }}
+                      aria-label={`${t.code} ${t.title}, ${t.ownerName}. Nhấn Enter để xem chi tiết`}
+                      className="hover:bg-surface cursor-pointer focus-visible:outline-2 focus-visible:outline-primary focus-visible:-outline-offset-2"
+                    >
+                      <td className="px-3 py-2.5 font-mono text-xs text-secondary">{t.code}</td>
+                      <td className="px-3 py-2.5">
+                        <div className="font-medium text-on-surface">{t.title}</div>
+                        {t.category && <div className="text-xs text-secondary">{t.category}</div>}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <span className="inline-flex items-center gap-2">
+                          <Avatar name={t.ownerName} src={t.ownerAvatar} className="w-6 h-6 text-xs" />
+                          <span className="truncate">{t.ownerName}</span>
                         </span>
-                      )}
-                      {isNeedHelp && (
-                        <span className="px-2 py-0.5 bg-error text-white text-xs font-bold rounded uppercase whitespace-nowrap mt-0.5 flex items-center gap-1">
-                          <span aria-hidden="true" className="material-symbols-outlined [--icon-size:12px]">
-                            warning
-                          </span>
-                          Cần hỗ trợ gấp
+                      </td>
+                      <td className={`px-3 py-2.5 tabular-nums ${overdue ? 'text-error font-semibold' : 'text-on-surface'}`}>
+                        {ddmm(t.deadline)}
+                        {overdue && <span className="block text-xs font-normal">trễ {daysBetween(t.deadline!, today)} ngày</span>}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <span className="inline-flex items-center gap-1.5">
+                          <span aria-hidden="true" className={`w-2 h-2 rounded-full ${meta.dot}`} />
+                          {meta.label}
                         </span>
-                      )}
-                      {isDone && (
-                        <span className="px-2 py-0.5 bg-tertiary text-white text-xs font-bold rounded uppercase whitespace-nowrap mt-0.5 flex items-center gap-1">
-                          <span aria-hidden="true" className="material-symbols-outlined [--icon-size:12px]">
-                            check
+                        {t.needsHelp && t.status !== 'need_help' && (
+                          <span className="block text-xs text-error">Có vướng mắc</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <span className="flex items-center gap-2">
+                          <span className="flex-1 h-1.5 rounded-full bg-surface-container overflow-hidden">
+                            <span className="block h-full bg-primary" style={{ width: `${t.progress}%` }} />
                           </span>
-                          Đã nghiệm thu
+                          <span className="text-xs tabular-nums w-9 text-right">{t.progress}%</span>
                         </span>
-                      )}
-                      {(task.status === 'in_progress' || task.status === 'not_started') && (
-                        <span className="px-2 py-0.5 bg-surface-container text-on-surface-variant text-xs font-bold rounded uppercase whitespace-nowrap mt-0.5">
-                          {task.status === 'in_progress' ? 'Đang làm' : 'Chưa bắt đầu'}
-                        </span>
-                      )}
-
-                      <div className="flex flex-col gap-1.5 min-w-0 flex-1">
-                        <div className="text-base font-bold text-on-surface flex items-center gap-2 flex-wrap">
-                          <span>{task.title}</span>
-                          <span className="text-xs font-semibold text-secondary bg-surface-container px-2 py-0.5 rounded">
-                            {task.category}
-                          </span>
-                        </div>
-
-                        {/* Blocker Note — Manager đọc "Vướng mắc" tại đây mà không cần mở task. */}
-                        {task.blockerNote ? (
-                          <div className="p-2.5 bg-white rounded-lg border border-error-fixed text-sm text-on-surface flex items-start gap-2 shadow-sm">
-                            <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px] text-error shrink-0 mt-0.5">
-                              priority_high
-                            </span>
-                            <span>
-                              <strong>Vướng mắc:</strong> “
-                              {task.blockerNote}”
-                            </span>
-                          </div>
-                        ) : null}
-
-                        {/* Metadata row */}
-                        <div className="flex items-center gap-3 text-xs text-secondary mt-0.5 flex-wrap">
-                          <div className="flex items-center gap-1.5">
-                            <Avatar name={task.ownerName} src={task.ownerAvatar} className="w-5 h-5 text-xs" />
-                            <span>
-                              Người làm: <strong>{task.ownerName}</strong>
-                            </span>
-                          </div>
-                          <span>•</span>
-                          <span>Giao ngày {formatDate(task.submittedAt)}</span>
-                          {task.deadline && (
-                            <>
-                              <span>•</span>
-                              <span className={isOverdue(task) ? 'text-error font-semibold' : ''}>
-                                Hạn chót: <strong>{formatDate(task.deadline)}</strong>
-                                {isOverdue(task) && ' — quá hạn'}
-                              </span>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Actions — Manager escalation qua tasks.blocker_note (xem khi mở task). */}
-                    <div className="flex items-center gap-2 self-end lg:self-center shrink-0">
-                      {isPending && (
-                        <button
-                          onClick={() => approve(task.id)}
-                          disabled={approvingId !== null}
-                          className="px-3.5 py-1.5 bg-tertiary text-on-tertiary hover:bg-tertiary-container rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                          type="button"
-                        >
-                          <span aria-hidden="true" className="material-symbols-outlined [--icon-size:16px]">
-                            {approvingId === task.id ? 'progress_activity' : 'check'}
-                          </span>
-                          <span>{approvingId === task.id ? 'Đang duyệt…' : 'Duyệt đạt'}</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
+                      </td>
+                      <td className="px-2 py-2.5 text-right">
+                        {t.status !== 'done' && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setAction({ kind: 'adjust', task: t });
+                            }}
+                            aria-label={`Dời hạn hoặc đổi người làm: ${t.title}`}
+                            title="Dời hạn / Đổi người làm"
+                            className="w-8 h-8 rounded-md inline-flex items-center justify-center text-secondary hover:bg-surface-container-low hover:text-on-surface"
+                          >
+                            <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px]">edit_calendar</span>
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
         </div>
-      </div>
+      </section>
+
+      <ActionDialog
+        action={action}
+        assignees={assignees}
+        onClose={() => setAction(null)}
+        onSubmit={async (a, input) => {
+          const ok = await run(a.task.id, () =>
+            a.kind === 'return'
+              ? onReturnTask(a.task.id, input.text)
+              : a.kind === 'unblock'
+                ? onUnblockTask(a.task.id, input.text)
+                : onAdjustTask(a.task.id, { ownerUserId: input.ownerUserId, endDate: input.endDate }),
+          );
+          if (ok) setAction(null);
+        }}
+        busy={busyId !== null}
+      />
     </div>
+  );
+};
+
+interface ActionInput {
+  text: string;
+  ownerUserId?: string;
+  endDate?: string;
+}
+
+/** Hộp thoại cho Trả về / Gỡ vướng / Dời hạn – đổi người. Mở lại với việc khác thì form bắt đầu mới. */
+const ActionDialog: React.FC<{
+  action: Action | null;
+  assignees: Assignee[];
+  busy: boolean;
+  onClose: () => void;
+  onSubmit: (action: Action, input: ActionInput) => void;
+}> = ({ action, assignees, busy, onClose, onSubmit }) => {
+  const [text, setText] = useState('');
+  const [owner, setOwner] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const key = action ? `${action.kind}:${action.task.id}` : '';
+  const [lastKey, setLastKey] = useState('');
+  if (key !== lastKey) {
+    setLastKey(key);
+    setText('');
+    setOwner(assignees.find((a) => a.username === action?.task.ownerUsername)?.id ?? '');
+    setEndDate(action?.task.deadline?.slice(0, 10) ?? '');
+  }
+  if (!action) return null;
+  const { kind, task } = action;
+  const title = kind === 'return' ? 'Trả về để làm lại' : kind === 'unblock' ? 'Gỡ vướng mắc' : 'Dời hạn / Đổi người làm';
+  const currentOwnerId = assignees.find((a) => a.username === task.ownerUsername)?.id ?? '';
+  const unchanged = kind === 'adjust' && owner === currentOwnerId && endDate === (task.deadline?.slice(0, 10) ?? '');
+
+  return (
+    <Dialog isOpen onClose={onClose} title={title} dismissible={!busy}>
+      <form
+        className="p-5 flex flex-col gap-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (unchanged) return;
+          onSubmit(action, {
+            text: text.trim(),
+            ownerUserId: kind === 'adjust' && owner !== currentOwnerId ? owner : undefined,
+            endDate: kind === 'adjust' && endDate !== task.deadline?.slice(0, 10) ? endDate : undefined,
+          });
+        }}
+      >
+        <div className="text-sm">
+          <span className="font-mono text-xs text-secondary mr-2">{task.code}</span>
+          <span className="font-semibold text-on-surface">{task.title}</span>
+          <div className="text-xs text-secondary mt-0.5">Người làm: {task.ownerName}</div>
+        </div>
+
+        {kind === 'unblock' && (
+          <blockquote className="text-sm border-l-2 border-error pl-3 text-on-surface">
+            {task.blockerNote || 'Nhân viên chưa ghi nội dung vướng mắc.'}
+          </blockquote>
+        )}
+
+        {kind === 'adjust' ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1.5">
+              <span className={labelCls}>Người làm</span>
+              <select data-autofocus value={owner} onChange={(e) => setOwner(e.target.value)} className={inputCls}>
+                {!currentOwnerId && <option value="">{task.ownerName}</option>}
+                {assignees.map((a) => (
+                  <option key={a.id} value={a.id}>{a.fullname}</option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className={labelCls}>Hạn chót</span>
+              <input type="date" required value={endDate} onChange={(e) => setEndDate(e.target.value)} className={inputCls} />
+            </label>
+          </div>
+        ) : (
+          <label className="flex flex-col gap-1.5">
+            <span className={labelCls}>
+              {kind === 'return' ? 'Lý do / cần sửa gì (không bắt buộc)' : 'Hướng xử lý (không bắt buộc)'}
+            </span>
+            <textarea
+              data-autofocus
+              rows={3}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder={kind === 'return' ? 'Ví dụ: Bổ sung bảng khối lượng trước khi nộp lại' : 'Ví dụ: Đã liên hệ nhà cung cấp, nhận báo giá thứ Năm'}
+              className={textareaCls}
+            />
+            <span className="text-xs text-secondary">Ghi vào lịch sử việc để nhân viên xem lại.</span>
+          </label>
+        )}
+
+        <div className="flex justify-end gap-2 pt-3 border-t border-surface-container-low">
+          <button type="button" onClick={onClose} disabled={busy} className={ghostButtonCls}>
+            Huỷ
+          </button>
+          <button type="submit" disabled={busy || unchanged} className={primaryButtonCls}>
+            {busy ? 'Đang lưu…' : kind === 'return' ? 'Trả về' : kind === 'unblock' ? 'Đã gỡ vướng' : 'Lưu thay đổi'}
+          </button>
+        </div>
+      </form>
+    </Dialog>
   );
 };

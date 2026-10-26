@@ -399,6 +399,14 @@ export const api = {
       'POST', `/api/tasks/${tier}/${id}/blocker`, { note }
     );
   },
+  /** POST /api/tasks/4/:id/return — TP trả việc chờ duyệt về làm lại. */
+  async returnTask(id: number, reason: string) {
+    return request<{ item: TaskApiRowDto }>('POST', `/api/tasks/4/${id}/return`, { reason });
+  },
+  /** POST /api/tasks/4/:id/unblock — TP gỡ vướng mắc (xoá blocker_note, đóng help message). */
+  async unblockTask(id: number, note: string) {
+    return request<{ item: TaskApiRowDto }>('POST', `/api/tasks/4/${id}/unblock`, { note });
+  },
   async toggleTask(tier: number, id: number) {
     return request<{ item: TaskApiRowDto }>('POST', `/api/tasks/${tier}/${id}/toggle`);
   },

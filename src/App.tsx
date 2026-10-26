@@ -119,6 +119,12 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     return () => { cancelled = true; };
   }, [user.id, user.role]);
 
+  // Người cùng phòng ban (admin — departments rỗng — thấy tất cả): ứng viên nhận việc.
+  const deptUsers = useMemo(
+    () => directoryUsers.filter((u) => user.departments.length === 0 || u.departments?.some((d) => user.departments.includes(d))),
+    [directoryUsers, user.departments],
+  );
+
   // ---------------- Role-based data slicing ----------------
   // Manager: thấy T2/T3/T4 thuộc phòng mình + chuỗi cha lên tới T1 làm ngữ cảnh chỉ đọc.
   // Employee: chỉ T4 của chính mình + chuỗi cha (T3 → T2 → T1) làm ngữ cảnh chỉ đọc.
@@ -192,7 +198,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       setParam('muc', null);
     }
   }, [loadStatus, drawerItemId, drawerItem, showToast, setParam]);
-  const [isNewItemModalOpen, setIsNewItemModalOpen] = useState(false);
+  const [newItemMode, setNewItemMode] = useState<'plan' | 'assign' | null>(null);
   const [isNewPersonalTaskOpen, setIsNewPersonalTaskOpen] = useState(false);
   const baoCaoSubTab: 'tong-quan' | 'tuan-phong-ban' = route.sub === 'tong-quan' ? 'tong-quan' : 'tuan-phong-ban';
 
@@ -269,6 +275,49 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       return false;
     }
     return (await commit(api.approveTask(ref.tier, ref.num), 'Đã duyệt nghiệm thu công việc.')) !== null;
+  };
+
+  const handleReturnTask = async (taskId: string, reason: string): Promise<boolean> => {
+    const ref = parseTaskId(taskId);
+    if (!ref) {
+      showToast(STALE_ITEM_MESSAGE, 'error');
+      return false;
+    }
+    return (await commit(api.returnTask(ref.num, reason), 'Đã trả việc về cho nhân viên làm lại.')) !== null;
+  };
+
+  const handleUnblockTask = async (taskId: string, note: string): Promise<boolean> => {
+    const ref = parseTaskId(taskId);
+    if (!ref) {
+      showToast(STALE_ITEM_MESSAGE, 'error');
+      return false;
+    }
+    return (await commit(api.unblockTask(ref.num, note), 'Đã gỡ vướng mắc.')) !== null;
+  };
+
+  /** Dời hạn và/hoặc đổi người làm — chỉ gửi trường thực sự thay đổi. */
+  const handleAdjustTask = async (
+    taskId: string,
+    changes: { ownerUserId?: string; endDate?: string },
+  ): Promise<boolean> => {
+    const ref = parseTaskId(taskId);
+    if (!ref) {
+      showToast(STALE_ITEM_MESSAGE, 'error');
+      return false;
+    }
+    const newOwner = changes.ownerUserId ? deptUsers.find((u) => u.id === changes.ownerUserId) : undefined;
+    const message = [newOwner && `giao lại cho ${newOwner.fullname}`, changes.endDate && `dời hạn sang ${changes.endDate.split('-').reverse().join('/')}`]
+      .filter(Boolean)
+      .join(', ');
+    return (
+      (await commit(
+        api.updateTask(ref.tier, ref.num, {
+          ...(changes.ownerUserId ? { owner_user_id: Number(changes.ownerUserId) } : {}),
+          ...(changes.endDate ? { end_date: changes.endDate } : {}),
+        }),
+        `Đã ${message}.`,
+      )) !== null
+    );
   };
 
   /** Chuyển task sang bước kế tiếp do server quyết định: Chuẩn bị → Đang làm → Chờ duyệt. */
@@ -385,7 +434,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
             tierItems={visibleTierItems}
             currentUser={user}
             onSelectItem={(item) => openDrawer(item.id)}
-            onOpenNewModal={() => setIsNewItemModalOpen(true)}
+            onOpenNewModal={() => setNewItemMode('plan')}
             timeRange={route.params.xem === '13-tuan' ? '13-tuan' : 'thang'}
             onTimeRangeChange={(r) => setParam('xem', r === 'thang' ? null : r)}
           />
@@ -397,13 +446,20 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
           <GiaoViecNhomView
             teamMembers={visibleTeamMembers}
             tasks={visibleTeamTasks}
+            // Chỉ người có id thật từ /api/users — danh bạ dự phòng (SEED_USERS) không có id dùng được.
+            assignees={deptUsers
+              .filter((u) => /^\d+$/.test(u.id))
+              .map((u) => ({ id: u.id, username: u.username, fullname: u.fullname }))}
             onApproveTask={handleApproveTeamTask}
+            onReturnTask={handleReturnTask}
+            onUnblockTask={handleUnblockTask}
+            onAdjustTask={handleAdjustTask}
+            onOpenTask={openDrawer}
+            onAssignTask={() => setNewItemMode('assign')}
             filter={route.params.loc}
-            onFilterChange={(f) => setParam('loc', f)}
+            onFilterChange={(f) => setParam('loc', f === 'open' ? null : f)}
             memberFilter={route.params.nv ?? null}
             onMemberFilterChange={(u) => setParam('nv', u)}
-            onOpenNewTaskModal={() => setIsNewItemModalOpen(true)}
-            onOpenNewBundleModal={() => setIsNewItemModalOpen(true)}
           />
         );
       case 'viec-cua-toi':
@@ -472,7 +528,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       <Header
         activeTab={activeTab}
         setActiveTab={(tab) => navigate(tab)}
-        unreadCount={visibleTeamTasks.filter((t) => t.status === 'need_help').length}
+        unreadCount={visibleTeamTasks.filter((t) => t.needsHelp).length}
       />
 
       <main className="w-full pt-[6.5rem] md:pt-14 flex-1">{renderTab()}</main>
@@ -494,15 +550,14 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       />
 
       <NewItemModal
-        isOpen={isNewItemModalOpen}
-        onClose={() => setIsNewItemModalOpen(false)}
+        isOpen={newItemMode !== null}
+        mode={newItemMode ?? 'plan'}
+        onClose={() => setNewItemMode(null)}
         onAddItem={handleAddTierItem}
         parents={tierItems.map((i) => ({ id: i.id, title: i.title, tier: i.tier }))}
         currentUser={user}
         // Lọc theo phòng ban của user; admin (departments=[]) thấy hết.
-        deptUsers={directoryUsers
-          .filter((u) => user.departments.length === 0 || u.departments?.some((d) => user.departments.includes(d)))
-          .map((u) => ({ username: u.username, fullname: u.fullname }))}
+        deptUsers={deptUsers.map((u) => ({ username: u.username, fullname: u.fullname }))}
       />
 
       <NewPersonalTaskModal
