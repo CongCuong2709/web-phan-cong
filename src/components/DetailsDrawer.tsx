@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { TierItem, DailyLog, HistoryEntry, User } from '../types';
 import { canEditTierItem, canAddDailyLog } from '../auth/permissions';
 import { api } from '../lib/apiClient';
-import { apiToHistoryEntry, extractBackendId, TIER_STATUS_OPTIONS, viStatusToEnum } from '../lib/transforms';
+import { apiToHistoryEntry, extractBackendId, isTierItemOverdue, TIER_STATUS_OPTIONS, viStatusToEnum } from '../lib/transforms';
 import { Dialog, ghostButtonCls, inputCls, primaryButtonCls, textareaCls } from './ui/Dialog';
 
 interface DetailsDrawerProps {
@@ -21,6 +21,9 @@ interface DetailsDrawerProps {
     progress: number,
   ) => Promise<boolean>;
   currentUser?: User;
+  /** Nghiệm thu mục cha (T1–T3). `openChildren` = số mục con trực tiếp chưa xong. */
+  acceptance?: { allowed: boolean; openChildren: number; childLabel: string; deniedReason: string };
+  onAcceptItem?: (itemId: string) => Promise<boolean>;
 }
 
 /** Bản sao client của TRANSITIONS trong backend/lib/stateMachine.js — chỉ để ẩn lựa chọn chắc chắn bị từ chối. */
@@ -65,6 +68,8 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
   dailyLogs = [],
   onAddDailyLog,
   currentUser,
+  acceptance,
+  onAcceptItem,
 }) => {
   const [formData, setFormData] = useState<TierItem | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -72,6 +77,7 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
   const [newLogDraft, setNewLogDraft] = useState<LogDraft | null>(null);
   const [savingLog, setSavingLog] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[] | null>(null);
+  const [accepting, setAccepting] = useState(false);
 
   // Đổi sang item khác: bỏ chế độ sửa + nháp nhật ký.
   useEffect(() => {
@@ -112,15 +118,28 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
     return Math.round((end.getTime() - now.getTime()) / 86400000);
   }, [formData?.endDate]);
 
-  const busy = saving || savingLog;
+  const busy = saving || savingLog || accepting;
 
   if (!isOpen || !formData || !item) return null;
 
   const currentEnum = viStatusToEnum(item.status);
-  const statusChoices = TIER_STATUS_OPTIONS.filter(
-    (s) => s === item.status || NEXT_STATUS[currentEnum]?.includes(viStatusToEnum(s)),
-  );
   const isLeaf = formData.tier === 4;
+  // Mục cha chỉ "Đã xong" qua Nghiệm thu (server kiểm tra mục con) — không chọn tay.
+  const statusChoices = TIER_STATUS_OPTIONS.filter(
+    (s) =>
+      s === item.status ||
+      (NEXT_STATUS[currentEnum]?.includes(viStatusToEnum(s)) && (isLeaf || s !== 'Đã xong')),
+  );
+
+  const handleAccept = async () => {
+    if (!onAcceptItem) return;
+    setAccepting(true);
+    try {
+      await onAcceptItem(formData.id);
+    } finally {
+      setAccepting(false);
+    }
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -194,7 +213,7 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
                 className={`text-xs font-semibold px-2 py-0.5 rounded border ${
                   daysRemaining === undefined
                     ? 'bg-surface-container-low text-secondary border-surface-container-high'
-                    : daysRemaining < 0 && formData.status !== 'Đã xong'
+                    : isTierItemOverdue({ daysRemaining, status: formData.status })
                       ? 'bg-error-container text-on-error-container border-error-fixed'
                       : 'bg-tertiary-fixed/40 text-tertiary border-tertiary/30'
                 }`}
@@ -203,6 +222,8 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
                   ? 'Chưa đặt hạn'
                   : formData.status === 'Đã xong'
                     ? 'Đã hoàn thành'
+                    : formData.status === 'Chờ duyệt'
+                    ? 'Đã báo xong, chờ duyệt'
                     : daysRemaining === 0
                       ? 'Đến hạn hôm nay'
                       : daysRemaining < 0
@@ -298,6 +319,22 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
                 {formData.status}
               </span>
             )}
+            {!isLeaf && acceptance && item.status !== 'Đã xong' && !isEditing && (
+              <div className="mt-3 pt-3 border-t border-surface-container flex items-center justify-between gap-3">
+                <p className="text-xs text-secondary">
+                  {!acceptance.allowed
+                    ? acceptance.deniedReason
+                    : acceptance.openChildren > 0
+                      ? `Còn ${acceptance.openChildren} ${acceptance.childLabel} chưa xong — nghiệm thu khi tất cả đã xong.`
+                      : `Mọi ${acceptance.childLabel} đã xong. Nghiệm thu để đóng ${formData.tierName.split(': ')[1]?.toLowerCase() ?? 'mục này'}.`}
+                </p>
+                {acceptance.allowed && acceptance.openChildren === 0 && (
+                  <button type="button" onClick={handleAccept} disabled={busy} className={primaryButtonCls}>
+                    {accepting ? 'Đang nghiệm thu…' : 'Nghiệm thu'}
+                  </button>
+                )}
+              </div>
+            )}
           </Section>
 
           <Section title="Mức độ ưu tiên">
@@ -358,9 +395,9 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
           </Section>
 
           {isLeaf && (
-            <Section title="Nhật ký thi công" aside={<span className="text-xs font-mono text-primary font-semibold">{itemLogs.length} mục</span>}>
+            <Section title="Nhật ký công việc" aside={<span className="text-xs font-mono text-primary font-semibold">{itemLogs.length} mục</span>}>
               {itemLogs.length === 0 ? (
-                <p className="text-xs text-outline italic">Đầu việc này chưa có nhật ký thi công nào.</p>
+                <p className="text-xs text-outline italic">Đầu việc này chưa có nhật ký nào.</p>
               ) : (
                 <ul className="space-y-2">
                   {itemLogs.map((log) => (

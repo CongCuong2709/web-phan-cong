@@ -94,7 +94,7 @@ Xem chi tiết trong `backend/README.md`.
 | `/api/tasks/4/:id/blocker` | POST | NV ghi blocker_note + lưu lịch sử help message |
 | `/api/tasks/4/:id/help-messages` | GET | Lịch sử escalation |
 | `/api/tasks/4/:id/help-messages/:msgId/resolve` | POST | Manager đánh dấu đã xử lý |
-| `/api/tasks/:taskId/logs` | GET/POST | Nhật ký thi công của 1 task |
+| `/api/tasks/:taskId/logs` | GET/POST | Nhật ký công việc của 1 task |
 | `/api/daily-logs` | GET | Toàn bộ nhật ký (cho Báo cáo) |
 | `/api/daily-logs/:id` | DELETE | Xoá log (admin/manager) |
 | `/api/users` | GET | Danh bạ user (admin/manager) |

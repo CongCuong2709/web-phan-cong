@@ -155,9 +155,13 @@ function statusEnumToVi(s: string | null | undefined): TierItem['status'] {
   return STATUS_VI[String(s)] ?? 'Chuẩn bị';
 }
 
-/** Quá hạn = đã qua end_date mà chưa xong. Mục chưa đặt hạn không tính là quá hạn. */
+/**
+ * Quá hạn = đã qua hạn chót mà CHƯA BÁO XONG. Việc "Chờ duyệt" không tính quá hạn
+ * (nhân viên đã làm xong, phần chờ là của người duyệt) — cùng định nghĩa với
+ * "Việc của tôi" và "Giao việc nhóm". Mục chưa đặt hạn không tính là quá hạn.
+ */
 export function isTierItemOverdue(i: Pick<TierItem, 'daysRemaining' | 'status'>): boolean {
-  return i.daysRemaining !== undefined && i.daysRemaining < 0 && i.status !== 'Đã xong';
+  return i.daysRemaining !== undefined && i.daysRemaining < 0 && i.status !== 'Đã xong' && i.status !== 'Chờ duyệt';
 }
 
 export function viStatusToEnum(s: TierItem['status']): string {
@@ -370,7 +374,7 @@ function parseJson(s: string | null): Record<string, unknown> {
 /** Câu mô tả tiếng Việt cho 1 dòng audit — không hiện mã enum thô ra UI. */
 function describeAudit(api: HistoryEntryDto, oldV: Record<string, unknown>, newV: Record<string, unknown>): string {
   if (api.entity_type === 'daily_log') {
-    return `Ghi nhật ký thi công${newV.progress != null ? ` (${newV.progress}%)` : ''}`;
+    return `Ghi nhật ký công việc${newV.progress != null ? ` (${newV.progress}%)` : ''}`;
   }
   if (api.entity_type === 'task_help_message') {
     return api.action === 'resolve' ? 'Đã xử lý vướng mắc' : `Báo vướng mắc: ${newV.body ?? ''}`;

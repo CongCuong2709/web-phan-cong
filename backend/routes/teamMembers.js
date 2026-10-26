@@ -12,6 +12,7 @@ import { Router } from 'express';
 import { db } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { inDepartment } from '../lib/policies.js';
+import { today } from '../lib/dates.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -31,9 +32,7 @@ router.get('/', (req, res) => {
     SELECT id, owner_user_id, department_code, status, progress, end_date
     FROM tasks
   `).all();
-  // Ngày theo giờ máy chủ (không dùng toISOString: lệch ngày trước 7h sáng giờ VN).
-  const now = new Date();
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const todayStr = today();
 
   const members = [];
 
@@ -48,7 +47,7 @@ router.get('/', (req, res) => {
     const userItems = allT4.filter((t) => t.owner_user_id === u.id);
     // "Đang mở" = chưa báo xong (không tính chờ duyệt / đã xong).
     const open = userItems.filter((t) => t.status !== 'done' && t.status !== 'pending_approval');
-    const overdue = open.filter((t) => t.end_date && t.end_date < today).length;
+    const overdue = open.filter((t) => t.end_date && t.end_date < todayStr).length;
     const blocked = userItems.filter((t) => t.status === 'blocked').length;
 
     // Chỉ trả số liệu; câu chữ hiển thị do frontend dựng từ các con số này.

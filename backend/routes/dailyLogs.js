@@ -1,5 +1,5 @@
 /**
- * routes/dailyLogs.js — DailyLog CRUD (nhật ký thi công).
+ * routes/dailyLogs.js — DailyLog CRUD (nhật ký công việc).
  *
  * daily_log FK trực tiếp vào tasks (không qua subtask).
  * Mount tại /api/daily-logs (bulk) và /api/tasks/:taskId/logs (per-task).
@@ -18,6 +18,8 @@ import { Router } from 'express';
 import { db, stmt, tx } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { authorize } from '../lib/policies.js';
+import { today } from '../lib/dates.js';
+import { recomputeRollup } from '../lib/rollup.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -52,7 +54,7 @@ router.post('/tasks/:taskId/logs', (req, res) => {
     return res.status(400).json({ error: 'missing_description' });
   }
   const progress = Number(body.progress ?? task.progress ?? 0);
-  const logDate = body.log_date ?? new Date().toISOString().slice(0, 10);
+  const logDate = body.log_date ?? today();
   const description = body.description.trim();
   const result = body.result ?? '';
   const obstacle = body.obstacle ?? '';
@@ -112,6 +114,7 @@ router.post('/tasks/:taskId/logs', (req, res) => {
         task.blocker_note || '',
         taskId,
       );
+      recomputeRollup(taskId);
     }
   });
 

@@ -230,7 +230,7 @@ export interface TeamMember {
 
 /**
  * Construction-domain extensions: each T4 task can have several Daily Logs
- * (Nhật ký thi công) — sub-resource 1:N duy nhất còn lại.
+ * (Nhật ký công việc) — sub-resource 1:N duy nhất còn lại.
  *
  * 1 log/(task, ngày) — UPSERT atomic ở routes/dailyLogs.js.
  */

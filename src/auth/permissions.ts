@@ -96,15 +96,33 @@ export function canEditTierItem(
 /** Cho phép đổi trạng thái (status dropdown) — cùng guard với edit. */
 export const canChangeStatus = canEditTierItem;
 
+/**
+ * Nghiệm thu / đóng mục cha — khớp policy `task:close` ở backend:
+ * T3 hạng mục: admin, hoặc manager quản lý mọi phòng ban của các đầu việc con
+ * (`childDepartments`); T2, T1: admin hoặc BGĐ.
+ */
+export function canAcceptTierItem(
+  user: User | null | undefined,
+  item: TierItem | null | undefined,
+  childDepartments: (string | undefined)[] = [],
+): boolean {
+  if (!user || !item || item.tier === 4) return false;
+  if (user.role === 'admin') return true;
+  if (item.tier === 3) {
+    return user.role === 'manager' && childDepartments.every((d) => !d || inDepartment(user, d as Department));
+  }
+  return user.role === 'director';
+}
+
 // ---------------------------------------------------------------------------
-// DailyLog (nhật ký thi công — gắn trực tiếp vào task)
+// DailyLog (nhật ký công việc — gắn trực tiếp vào task)
 // ---------------------------------------------------------------------------
 
 /**
  * Quyền hiện nút "Ghi nhật ký".
  * Mirror: policies.js `canAddDailyLog` (dùng bởi policy `daily_log:create`).
  *
- * Theo nghiệp vụ xây dựng:
+ * Quy tắc:
  *   - admin: luôn được
  *   - director: read-only (không ghi log)
  *   - manager: cùng phòng ban với task

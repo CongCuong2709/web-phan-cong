@@ -252,13 +252,6 @@ export const stmt = {
   getChildrenProgress: db.prepare(
     'SELECT progress FROM tasks WHERE bundle_id = ?'
   ),
-  getTaskBundlePhase: db.prepare(`
-    SELECT t.bundle_id, b.phase_id, ph.project_id
-    FROM tasks t LEFT JOIN bundles b ON b.id = t.bundle_id
-      LEFT JOIN phases ph ON ph.id = b.phase_id
-    WHERE t.id = ?
-  `),
-
   // --- Daily logs (FK trực tiếp vào tasks, không qua subtasks) ---
   // ON CONFLICT(task_id, log_date) DO UPDATE — atomic UPSERT.
   upsertDailyLog: db.prepare(`

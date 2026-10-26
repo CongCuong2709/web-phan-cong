@@ -15,7 +15,7 @@ interface BaoCaoTongQuanViewProps {
   tierItems: TierItem[];
   teamMembers: TeamMember[];
   teamTasks: TeamLeadTask[];
-  /** Nhật ký thi công (DailyLog) — dùng để tóm tắt hoạt động nhân viên trong ngày. */
+  /** Nhật ký công việc (DailyLog) — dùng để tóm tắt hoạt động nhân viên trong ngày. */
   dailyLogs?: DailyLog[];
   /** User đang đăng nhập — dùng để filter báo cáo theo phòng ban khi là manager. */
   currentUser?: User | null;
@@ -449,10 +449,9 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
                   Chưa có nhân viên nào ghi nhật ký hôm nay ({today}).
                 </p>
                 <p className="text-xs text-secondary mt-0.5">
-                  Nhật ký được tạo trong mục "Ghi nhật ký thi công" của từng đầu việc trên tab
-                  <span className="font-mono mx-1">Giao việc nhóm</span>
-                  / <span className="font-mono">Việc của tôi</span>. Đây là bằng chứng thi công
-                  thực tế theo ngày, dùng để đối chiếu tiến độ khi review.
+                  Nhân viên ghi nhật ký ở tab <span className="font-semibold">Việc của tôi</span>, hoặc
+                  trong mục "Nhật ký công việc" khi mở chi tiết một đầu việc. Nhật ký theo ngày
+                  dùng để đối chiếu tiến độ khi xem báo cáo.
                 </p>
               </div>
             </div>

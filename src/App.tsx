@@ -10,7 +10,7 @@ import {
   DailyLog,
 } from './types';
 import { AuthProvider, useAuth } from './auth/AuthContext';
-import { canAddDailyLog, visibleTabsFor } from './auth/permissions';
+import { canAcceptTierItem, canAddDailyLog, visibleTabsFor } from './auth/permissions';
 import { api, describeApiError, type ApiResponse } from './lib/apiClient';
 import {
   apiToTierItem,
@@ -199,6 +199,21 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     }
   }, [loadStatus, drawerItemId, drawerItem, showToast, setParam]);
   const [newItemMode, setNewItemMode] = useState<'plan' | 'assign' | null>(null);
+
+  // Nghiệm thu mục cha đang mở: cần mọi con trực tiếp đã xong (server kiểm tra lại).
+  const drawerAcceptance = useMemo(() => {
+    if (!drawerItem || drawerItem.tier === 4) return undefined;
+    const children = tierItems.filter((t) => t.parentId === drawerItem.id);
+    return {
+      allowed: canAcceptTierItem(user, drawerItem, children.map((c) => c.department)),
+      openChildren: children.filter((c) => c.status !== 'Đã xong').length,
+      childLabel: drawerItem.tier === 1 ? 'giai đoạn' : drawerItem.tier === 2 ? 'hạng mục' : 'đầu việc',
+      deniedReason:
+        drawerItem.tier === 3
+          ? 'Trưởng phòng phụ trách sẽ nghiệm thu hạng mục này.'
+          : 'Ban giám đốc sẽ nghiệm thu giai đoạn / dự án.',
+    };
+  }, [drawerItem, tierItems, user]);
   const [isNewPersonalTaskOpen, setIsNewPersonalTaskOpen] = useState(false);
   const baoCaoSubTab: 'tong-quan' | 'tuan-phong-ban' = route.sub === 'tong-quan' ? 'tong-quan' : 'tuan-phong-ban';
 
@@ -274,7 +289,8 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       showToast(STALE_ITEM_MESSAGE, 'error');
       return false;
     }
-    return (await commit(api.approveTask(ref.tier, ref.num), 'Đã duyệt nghiệm thu công việc.')) !== null;
+    const message = ref.tier === 4 ? 'Đã duyệt nghiệm thu công việc.' : 'Đã nghiệm thu — mục này đã đóng.';
+    return (await commit(api.approveTask(ref.tier, ref.num), message)) !== null;
   };
 
   const handleReturnTask = async (taskId: string, reason: string): Promise<boolean> => {
@@ -433,8 +449,8 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
             currentUser={user}
             onSelectItem={(item) => openDrawer(item.id)}
             onOpenNewModal={() => setNewItemMode('plan')}
-            timeRange={route.params.xem === '13-tuan' ? '13-tuan' : 'thang'}
-            onTimeRangeChange={(r) => setParam('xem', r === 'thang' ? null : r)}
+            month={route.params.thang ?? null}
+            onMonthChange={(m) => setParam('thang', m)}
           />
         );
       case 'giao-viec-nhom':
@@ -545,6 +561,8 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
         dailyLogs={dailyLogs}
         currentUser={user}
         onAddDailyLog={handleAddDrawerLog}
+        acceptance={drawerAcceptance}
+        onAcceptItem={handleApproveTeamTask}
       />
 
       <NewItemModal

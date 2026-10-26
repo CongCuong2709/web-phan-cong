@@ -171,6 +171,25 @@ const POLICIES = {
     return allow();
   },
 
+  /**
+   * Nghiệm thu / đóng mục cha (T1–T3).
+   * T3 hạng mục: admin, hoặc manager quản lý MỌI phòng ban của các đầu việc trong hạng mục
+   *   (bảng bundles không có cột phòng ban — `childDepartments` do route truyền vào).
+   * T2 giai đoạn, T1 dự án: admin, hoặc director (BGĐ).
+   */
+  'task:close': (user, { task, childDepartments = [] }) => {
+    if (user.role === 'admin') return allow();
+    if (task.tier === 3) {
+      const ownsAll = childDepartments.every((d) => inDepartment(user, d));
+      return user.role === 'manager' && ownsAll
+        ? allow()
+        : deny(403, 'forbidden', 'Chỉ Trưởng phòng phụ trách các đầu việc trong hạng mục mới nghiệm thu.');
+    }
+    return user.role === 'director'
+      ? allow()
+      : deny(403, 'forbidden', 'Chỉ Ban giám đốc mới nghiệm thu giai đoạn / dự án.');
+  },
+
   'task:approve': (user, { task }) => {
     if (!['admin', 'manager'].includes(user.role)) {
       return deny(403, 'forbidden', 'Chỉ admin/manager mới duyệt task.');

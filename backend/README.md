@@ -157,7 +157,7 @@ backend/
 │   ├── auth.js                # /login /logout /me /change-password
 │   ├── users.js               # Danh bạ user (lọc theo role + phòng ban)
 │   ├── tasks.js               # Unified 4-tier CRUD + approve/toggle/blocker/help
-│   ├── dailyLogs.js           # Nhật ký thi công (UPSERT 1 log/task/ngày)
+│   ├── dailyLogs.js           # Nhật ký công việc (UPSERT 1 log/task/ngày)
 │   ├── teamMembers.js         # Workload derived
 │   └── history.js             # Audit log (read-only)
 ├── sql/

@@ -191,7 +191,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_today ON tasks(is_today, is_today_date);
 CREATE INDEX IF NOT EXISTS idx_tasks_end_date ON tasks(end_date);
 
 -- ============================================================================
--- 3. DailyLog (nhật ký thi công) — sub-resource duy nhất còn lại
+-- 3. DailyLog (nhật ký công việc) — sub-resource duy nhất còn lại
 -- ============================================================================
 --
 -- Phase G1: UNIQUE(task_id, log_date) constraint.

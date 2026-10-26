@@ -34,6 +34,8 @@ import { db, stmt, tx } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { authorize, inDepartment, uid } from '../lib/policies.js';
 import { canTransition } from '../lib/stateMachine.js';
+import { today } from '../lib/dates.js';
+import { recomputeRollup, rollupFrom } from '../lib/rollup.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -90,88 +92,19 @@ function canSee(user, item) {
   return true;
 }
 
-/**
- * Auto-rollup progress — single-statement UPDATE với subquery.
- *
- * Atomic vì SQLite thực thi mỗi UPDATE trong 1 statement; kết hợp với việc
- * gọi trong tx() (caller), toàn bộ chain rollup an toàn concurrent.
- *
- * Status rollup vẫn ở JS vì:
- *   - Cần respect manual status (Fix C9): nếu parent.status đang ở trạng thái
- *     manual (pending_approval/blocked/done) thì KHÔNG auto-override.
- *   - Cần compute new_status dựa trên progress_rollup mới.
- *
- * @param {number} taskId
- */
-function recomputeRollup(taskId) {
-  if (!taskId) return;
-  const task = stmt.getTaskBundlePhase.get(taskId);
-  if (!task) return;
+/** Bảng con trực tiếp của mục cha (T1–T3) — dùng khi nghiệm thu. */
+const CHILDREN_OF = {
+  1: { table: 'phases', fk: 'project_id', label: 'giai đoạn' },
+  2: { table: 'bundles', fk: 'phase_id', label: 'hạng mục' },
+  3: { table: 'tasks', fk: 'bundle_id', label: 'đầu việc' },
+};
 
-  // 1. Bundle: AVG(progress) của tasks trong bundle
-  if (task.bundle_id) {
-    db.prepare(`
-      UPDATE bundles
-      SET progress_rollup = COALESCE(
-        (SELECT ROUND(AVG(progress)) FROM tasks WHERE bundle_id = ?),
-        0
-      )
-      WHERE id = ?
-    `).run(task.bundle_id, task.bundle_id);
-    // Status auto-override (respect manual)
-    const bundle = stmt.getBundle.get(task.bundle_id);
-    if (bundle) {
-      const newStatus = bundle.progress_rollup === 100 ? 'done'
-        : bundle.progress_rollup > 90 ? 'pending_approval' : 'doing';
-      const AUTOMATIC = new Set(['pending', 'doing']);
-      if (AUTOMATIC.has(bundle.status) && bundle.status !== newStatus) {
-        db.prepare('UPDATE bundles SET status = ? WHERE id = ?').run(newStatus, task.bundle_id);
-      }
-    }
-  }
-
-  // 2. Phase: AVG(progress_rollup) của bundles trong phase
-  if (task.phase_id) {
-    db.prepare(`
-      UPDATE phases
-      SET progress_rollup = COALESCE(
-        (SELECT ROUND(AVG(progress_rollup)) FROM bundles WHERE phase_id = ?),
-        0
-      )
-      WHERE id = ?
-    `).run(task.phase_id, task.phase_id);
-    const phase = stmt.getPhase.get(task.phase_id);
-    if (phase) {
-      const newStatus = phase.progress_rollup === 100 ? 'done'
-        : phase.progress_rollup > 90 ? 'pending_approval' : 'doing';
-      const AUTOMATIC = new Set(['pending', 'doing']);
-      if (AUTOMATIC.has(phase.status) && phase.status !== newStatus) {
-        db.prepare('UPDATE phases SET status = ? WHERE id = ?').run(newStatus, task.phase_id);
-      }
-    }
-  }
-
-  // 3. Project: AVG(progress_rollup) của phases trong project
-  if (task.project_id) {
-    db.prepare(`
-      UPDATE projects
-      SET progress_rollup = COALESCE(
-        (SELECT ROUND(AVG(progress_rollup)) FROM phases WHERE project_id = ?),
-        0
-      )
-      WHERE id = ?
-    `).run(task.project_id, task.project_id);
-    const project = stmt.getProject.get(task.project_id);
-    if (project) {
-      const newStatus = project.progress_rollup === 100 ? 'done'
-        : project.progress_rollup > 90 ? 'pending_approval' : 'doing';
-      const AUTOMATIC = new Set(['pending', 'doing']);
-      if (AUTOMATIC.has(project.status) && project.status !== newStatus) {
-        db.prepare('UPDATE projects SET status = ? WHERE id = ?').run(newStatus, task.project_id);
-      }
-    }
-  }
-}
+/** Cột khoá ngoại tới mục cha, theo tier của mục con. */
+const PARENT_OF = {
+  2: { tier: 1, fk: 'project_id' },
+  3: { tier: 2, fk: 'phase_id' },
+  4: { tier: 3, fk: 'bundle_id' },
+};
 
 /** Helper: load 1 item theo tier. */
 function loadItem(tier, id) {
@@ -287,6 +220,9 @@ router.post('/', (req, res) => {
   if (!isIsoDate(body.start_date) || !isIsoDate(body.end_date)) {
     return res.status(400).json({ error: 'invalid_date', message: 'start_date và end_date phải có format YYYY-MM-DD.' });
   }
+  if (body.start_date > body.end_date) {
+    return res.status(400).json({ error: 'invalid_date_range', message: 'Ngày bắt đầu phải trước hoặc bằng hạn chót.' });
+  }
 
   // ============================================================
   // IMPORTANT: All pre-tx() validation MUST send response and early-return.
@@ -315,7 +251,7 @@ router.post('/', (req, res) => {
     const title = String(body.title || '').trim() || 'Chưa đặt tên';
     const startDate = body.start_date
       || (body.end_date ? dateMinusDays(body.end_date, 14) : null)
-      || new Date().toISOString().slice(0, 10);
+      || today();
     const endDate = body.end_date || '2099-12-31';
     const status = normalizeStatus(body.status);
     const priority = normalizePriority(body.priority);
@@ -356,7 +292,7 @@ router.post('/', (req, res) => {
       // is_today_date mặc định = hôm nay nếu is_today=1, else null.
       const isToday = body.is_today ? 1 : 0;
       const isTodayDate = isToday
-        ? (body.is_today_date ?? new Date().toISOString().slice(0, 10))
+        ? (body.is_today_date ?? today())
         : null;
       const info = stmt.insertTask.run(
         bundleId, code, title, body.description || '',
@@ -372,6 +308,8 @@ router.post('/', (req, res) => {
       entityType = 'task';
     }
     logAudit(entityType, lastId, 'create', null, { code, title }, req);
+    // Mục cha có thêm 1 con (0%) → tính lại tiến độ.
+    if (tierNum > 1 && body.parent_id) rollupFrom(tierNum - 1, Number(body.parent_id));
   });
 
   const created = loadItem(tierNum, lastId);
@@ -401,11 +339,24 @@ router.patch('/:tier(\\d+)/:id(\\d+)', (req, res) => {
     return res.status(400).json({ error: 'invalid_is_today_date' });
   }
 
+  // Gộp với giá trị đang có: chỉ đổi 1 trong 2 ngày cũng phải giữ thứ tự hợp lệ.
+  const nextStart = body.start_date ?? item.start_date;
+  const nextEnd = body.end_date ?? item.end_date;
+  if (nextStart && nextEnd && nextStart > nextEnd) {
+    return res.status(400).json({ error: 'invalid_date_range', message: 'Ngày bắt đầu phải trước hoặc bằng hạn chót.' });
+  }
+
   const oldValues = { ...item };
 
   // Validate status transition (state machine)
   if (body.status) {
     const newStatus = normalizeStatus(body.status);
+    if (tier < 4 && newStatus === 'done' && item.status !== 'done') {
+      return res.status(400).json({
+        error: 'use_close',
+        message: 'Đóng hạng mục / giai đoạn / dự án bằng thao tác Nghiệm thu.',
+      });
+    }
     if (newStatus !== item.status) {
       const tr = canTransition(item.status, newStatus, req.user, enriched);
       if (!tr.ok) {
@@ -469,7 +420,7 @@ router.patch('/:tier(\\d+)/:id(\\d+)', (req, res) => {
         ? body.is_today_date
         : item.is_today_date;
       if (nextIsToday === 1 && !nextIsTodayDate) {
-        nextIsTodayDate = new Date().toISOString().slice(0, 10);
+        nextIsTodayDate = today();
       }
       if (nextIsToday === 0) {
         nextIsTodayDate = null;
@@ -548,6 +499,9 @@ router.delete('/:tier(\\d+)/:id(\\d+)', (req, res) => {
     else if (tier === 2) stmt.deletePhase.run(id);
     else if (tier === 3) stmt.deleteBundle.run(id);
     else stmt.deleteTask.run(id);
+    // Mục cha mất 1 con → tính lại tiến độ (T1 không có cha).
+    const parent = PARENT_OF[tier];
+    if (parent && item[parent.fk]) rollupFrom(parent.tier, item[parent.fk]);
   });
   return res.status(204).send();
 });
@@ -569,7 +523,12 @@ router.get('/:tier(\\d+)/:id(\\d+)/help-messages', (req, res) => {
   return res.json({ items });
 });
 
-/** POST /api/tasks/:tier/:id/approve — Manager nghiệm thu. */
+/**
+ * POST /api/tasks/:tier/:id/approve — Nghiệm thu.
+ *   T4: duyệt việc nhân viên báo xong (pending_approval → done), quyền `task:approve`.
+ *   T1–T3: đóng hạng mục / giai đoạn / dự án, quyền `task:close`; chỉ khi MỌI mục con
+ *   trực tiếp đã xong. Tầng cha không bao giờ tự sang done (xem lib/rollup.js).
+ */
 router.post('/:tier(\\d+)/:id(\\d+)/approve', (req, res) => {
   const tier = Number(req.params.tier);
   const id = Number(req.params.id);
@@ -584,11 +543,30 @@ router.post('/:tier(\\d+)/:id(\\d+)/approve', (req, res) => {
     return res.status(403).json({ error: 'invalid_transition', message: 'Task đã done, không thể duyệt lại.' });
   }
 
-  const authz = authorize('task:approve', req.user, { task: enriched });
-  if (!authz.ok) return res.status(authz.status).json(authz);
-  const tr = canTransition(item.status, 'done', req.user, enriched);
-  if (!tr.ok) {
-    return res.status(403).json({ error: 'invalid_transition', message: tr.reason });
+  if (tier < 4) {
+    const childDepartments = tier === 3
+      ? db.prepare('SELECT DISTINCT department_code AS d FROM tasks WHERE bundle_id = ? AND department_code IS NOT NULL')
+        .all(id).map((r) => r.d)
+      : [];
+    const authz = authorize('task:close', req.user, { task: enriched, childDepartments });
+    if (!authz.ok) return res.status(authz.status).json(authz);
+    const child = CHILDREN_OF[tier];
+    const { n } = db.prepare(
+      `SELECT COUNT(*) AS n FROM ${child.table} WHERE ${child.fk} = ? AND status <> 'done'`,
+    ).get(id);
+    if (n > 0) {
+      return res.status(409).json({
+        error: 'children_open',
+        message: `Còn ${n} ${child.label} chưa xong — chưa thể nghiệm thu.`,
+      });
+    }
+  } else {
+    const authz = authorize('task:approve', req.user, { task: enriched });
+    if (!authz.ok) return res.status(authz.status).json(authz);
+    const tr = canTransition(item.status, 'done', req.user, enriched);
+    if (!tr.ok) {
+      return res.status(403).json({ error: 'invalid_transition', message: tr.reason });
+    }
   }
 
   tx(() => {
@@ -846,9 +824,9 @@ router.post('/:tier(\\d+)/:id(\\d+)/toggle-today', (req, res) => {
   const authz = authorize('task:toggle', req.user, { task: enriched });
   if (!authz.ok) return res.status(authz.status).json(authz);
 
-  const currentlyToday = task.is_today === 1 && task.is_today_date === new Date().toISOString().slice(0, 10);
+  const currentlyToday = task.is_today === 1 && task.is_today_date === today();
   const nextIsToday = currentlyToday ? 0 : 1;
-  const nextIsTodayDate = nextIsToday === 1 ? new Date().toISOString().slice(0, 10) : null;
+  const nextIsTodayDate = nextIsToday === 1 ? today() : null;
 
   tx(() => {
     stmt.setTaskToday.run(nextIsToday, nextIsTodayDate, id);
