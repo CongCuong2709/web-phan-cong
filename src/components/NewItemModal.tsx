@@ -1,35 +1,43 @@
 import React, { useState, useEffect } from 'react';
 import { TierItem, TierLevel, User } from '../types';
+import { todayIso } from '../lib/transforms';
+import { Dialog, ghostButtonCls, inputCls, labelCls, primaryButtonCls, textareaCls } from './ui/Dialog';
 
 interface NewItemModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onAddItem: (item: Partial<TierItem>) => void;
+  /** Resolve true khi server đã tạo xong — modal chỉ đóng khi đó. */
+  onAddItem: (item: Partial<TierItem>) => Promise<boolean>;
   parents: { id: string; title: string; tier: TierLevel }[];
   currentUser: User;
   /** Danh sách users cùng phòng ban (dùng cho dropdown owner) */
   deptUsers?: { username: string; fullname: string }[];
 }
 
-/** Format Date → 'YYYY-MM-DD' (local time, tránh UTC shift). */
-function fmtIsoDate(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const TIER_OPTIONS: { lvl: TierLevel; label: string; code: string }[] = [
+  { lvl: 1, label: 'Dự án', code: 'T1' },
+  { lvl: 2, label: 'Giai đoạn', code: 'T2' },
+  { lvl: 3, label: 'Hạng mục', code: 'T3' },
+  { lvl: 4, label: 'Đầu việc', code: 'T4' },
+];
+
+/** Class tĩnh — Tailwind không sinh được class ghép chuỗi động như `grid-cols-${n}`. */
+const GRID_COLS: Record<number, string> = { 1: 'grid-cols-1', 2: 'grid-cols-2', 3: 'grid-cols-3', 4: 'grid-cols-4' };
+
+/** Tầng được tạo theo vai trò — khớp `canCreateTiers` ở backend/lib/policies.js. */
+function allowedTiersFor(role: User['role']): TierLevel[] {
+  switch (role) {
+    case 'admin': return [1, 2, 3, 4];
+    case 'director': return [1, 2];
+    case 'manager': return [3, 4];
+    default: return [4];
+  }
 }
 
-/**
- * Derive gantt.startWeek/endWeek từ startDate/endDate.
- * Logic: 
- *   - startWeek = 1 + (days from first day of month containing startDate) / 7
- *   - endWeek   = startWeek + durationDays / 7
- * Chỉ dùng cho month view; quarter/year view dùng date trực tiếp.
- */
-function deriveWeekIndex(isoDate: string): number {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
-  if (!m) return 1;
-  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  const firstOfMonth = new Date(d.getFullYear(), d.getMonth(), 1);
-  const dayOfMonth = d.getDate();
-  return 1 + (dayOfMonth - 1) / 7;
+function plusDays(iso: string, days: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(y, m - 1, d + days);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
 }
 
 export const NewItemModal: React.FC<NewItemModalProps> = ({
@@ -40,292 +48,234 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
   currentUser,
   deptUsers = [],
 }) => {
-  // Xác định tầng được phép tạo theo nghiệp vụ:
-  // Admin = tất cả | Director (BGĐ) = T1 Dự án + T2 Giai đoạn
-  // Manager (TP) = T3 Hạng mục + T4 Đầu việc | Employee = T4 đầu việc
-  const allowedTiers: TierLevel[] =
-    currentUser.role === 'admin'
-      ? [1, 2, 3, 4]
-      : currentUser.role === 'director'
-      ? [1, 2]
-      : currentUser.role === 'manager'
-      ? [3, 4]
-      : [4];
-
-  const defaultTier = allowedTiers[allowedTiers.length - 1]; // lowest allowed
+  const allowedTiers = allowedTiersFor(currentUser.role);
+  const defaultTier = allowedTiers[allowedTiers.length - 1];
 
   const [tier, setTier] = useState<TierLevel>(defaultTier);
   const [title, setTitle] = useState('');
   const [parentId, setParentId] = useState('');
   const [ownerUsername, setOwnerUsername] = useState(currentUser.username);
-
-  // Dùng startDate + endDate (ISO 'YYYY-MM-DD'). Default: startDate = today, endDate = +30 ngày.
-  const today = new Date();
-  const todayIso = fmtIsoDate(today);
-  const in30Days = new Date(today);
-  in30Days.setDate(in30Days.getDate() + 30);
-  const in30Iso = fmtIsoDate(in30Days);
-
-  const [startDate, setStartDate] = useState(todayIso);
-  const [endDate, setEndDate] = useState(in30Iso);
+  const [startDate, setStartDate] = useState(todayIso());
+  const [endDate, setEndDate] = useState(plusDays(todayIso(), 30));
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<TierItem['priority']>('Trung bình');
+  const [submitting, setSubmitting] = useState(false);
 
-  // Validation: startDate <= endDate
-  const dateRangeError = startDate > endDate;
-
-  // A11 fix: reset toàn bộ form state mỗi khi modal đóng/mở.
+  // Mở modal là bắt đầu một form mới.
   useEffect(() => {
-    if (isOpen) {
-      setTier(defaultTier);
-      setTitle('');
-      setParentId('');
-      setOwnerUsername(currentUser.username);
-      setStartDate(fmtIsoDate(new Date()));
-      const future = new Date();
-      future.setDate(future.getDate() + 30);
-      setEndDate(fmtIsoDate(future));
-      setDescription('');
-      setPriority('Trung bình');
-    }
+    if (!isOpen) return;
+    setTier(defaultTier);
+    setTitle('');
+    setParentId('');
+    setOwnerUsername(currentUser.username);
+    setStartDate(todayIso());
+    setEndDate(plusDays(todayIso(), 30));
+    setDescription('');
+    setPriority('Trung bình');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
-  if (!isOpen) return null;
+  const parentOptions = parents.filter((p) => p.tier === tier - 1);
+  // T2, T3 bắt buộc có cha; T4 được phép độc lập.
+  const parentRequired = tier === 2 || tier === 3;
+  const dateRangeError = startDate > endDate;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) return;
-    if (dateRangeError) return; // form đã show lỗi
-
-    // Resolve owner from selected username
-    const ownerUser = deptUsers.find((u) => u.username === ownerUsername) ??
-      { username: currentUser.username, fullname: currentUser.fullname };
-
-    const tierName =
-      tier === 1 ? 'Tầng 1: Dự án'
-      : tier === 2 ? 'Tầng 2: Giai đoạn'
-      : tier === 3 ? 'Tầng 3: Hạng mục giao'
-      : 'Tầng 4: Đầu việc';
-
-    const tierBadge =
-      tier === 1 ? 'DỰ ÁN T1'
-      : tier === 2 ? 'GIAI ĐOẠN T2'
-      : tier === 3 ? 'HẠNG MỤC T3'
-      : 'VIỆC T4';
-
-    // Derive startWeek/endWeek từ startDate/endDate (month-view index 1..N)
-    const sw = deriveWeekIndex(startDate);
-    const ew = deriveWeekIndex(endDate);
-
-    onAddItem({
-      // code để trống — backend tự generate (NEW-XXXXXX).
-      code: '',
-      tier,
-      tierName,
-      tierBadge,
-      title,
-      parentId: tier > 1 ? parentId : undefined,
-      owner: {
-        name: ownerUser.fullname,
-        role: 'Phụ trách thực thi',
-        initial: ownerUser.fullname.charAt(0),
-      },
-      ownerUsername: ownerUser.username,
-      department: currentUser.departments[0],
-      startDate,
-      endDate,
-      progress: 0,
-      status: 'Chuẩn bị',
-      priority,
-      description,
-      managementNotes: `Mới tạo bởi ${currentUser.fullname}, đang chờ phân bổ chi tiết.`,
-      gantt: {
-        startWeek: sw,
-        endWeek: Math.max(sw + 0.1, ew),
-      },
-    });
-
-    onClose();
+    if (!title.trim() || dateRangeError || submitting) return;
+    if (parentRequired && !parentId) return;
+    setSubmitting(true);
+    try {
+      const ok = await onAddItem({
+        tier,
+        title,
+        parentId: tier > 1 && parentId ? parentId : undefined,
+        ownerUsername,
+        department: currentUser.departments[0],
+        startDate,
+        endDate,
+        priority,
+        description,
+        managementNotes: `Tạo bởi ${currentUser.fullname}.`,
+      });
+      if (ok) onClose();
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0b1c30]/40 backdrop-blur-sm p-4">
-      <div className="bg-white w-full max-w-lg rounded-xl shadow-2xl border border-[#e5eeff] overflow-hidden flex flex-col animate-scaleUp">
-        <div className="p-4 bg-[#eff4ff] flex items-center justify-between border-b border-[#dce9ff]">
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-[#004ac6] text-[22px]">
-              add_task
-            </span>
-            <h4 className="text-[17px] font-bold text-[#0b1c30]">
-              Thêm công việc mới
-            </h4>
+    <Dialog isOpen={isOpen} onClose={onClose} title="Thêm công việc mới" icon="add_task" dismissible={!submitting}>
+      <form onSubmit={handleSubmit} className="p-5 flex flex-col gap-4">
+        <fieldset className="flex flex-col gap-1.5">
+          <legend className={`${labelCls} mb-1.5`}>Chọn cấp tầng quản lý *</legend>
+          <div className={`grid gap-1.5 p-1 bg-surface-container-low rounded-lg ${GRID_COLS[allowedTiers.length]}`}>
+            {TIER_OPTIONS.filter((opt) => allowedTiers.includes(opt.lvl)).map((opt) => (
+              <button
+                key={opt.lvl}
+                type="button"
+                aria-pressed={tier === opt.lvl}
+                onClick={() => {
+                  setTier(opt.lvl);
+                  setParentId('');
+                }}
+                className={`py-1.5 px-1 text-xs font-bold rounded transition-colors flex flex-col items-center leading-tight ${
+                  tier === opt.lvl ? 'bg-white text-primary shadow-sm' : 'text-secondary hover:text-on-surface'
+                }`}
+              >
+                <span className="opacity-70">{opt.code}</span>
+                <span>{opt.label}</span>
+              </button>
+            ))}
           </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-[#565e74] hover:bg-[#dce9ff] transition-colors"
-          >
-            <span className="material-symbols-outlined text-[20px]">close</span>
-          </button>
+        </fieldset>
+
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="new-item-title" className={labelCls}>
+            Tên công việc / Hạng mục *
+          </label>
+          <input
+            id="new-item-title"
+            data-autofocus
+            type="text"
+            required
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Ví dụ: Triển khai kiểm thử bảo mật..."
+            className={inputCls}
+          />
         </div>
 
-        <form onSubmit={handleSubmit} className="p-5 flex flex-col gap-4">
-          {/* Tier Selection — filtered by role */}
+        {tier > 1 && (
           <div className="flex flex-col gap-1.5">
-            <label className="text-[12px] font-bold text-[#0b1c30]">
-              Chọn cấp tầng quản lý *
+            <label htmlFor="new-item-parent" className={labelCls}>
+              Thuộc mục cấp trên (Tầng {tier - 1}){parentRequired ? ' *' : ''}
             </label>
-            <div className={`grid gap-1.5 p-1 bg-[#eff4ff] rounded-lg grid-cols-${allowedTiers.length}`}>
-              {([
-                { lvl: 1 as TierLevel, label: 'Dự án', code: 'T1' },
-                { lvl: 2 as TierLevel, label: 'Giai đoạn', code: 'T2' },
-                { lvl: 3 as TierLevel, label: 'Hạng mục', code: 'T3' },
-                { lvl: 4 as TierLevel, label: 'Đầu việc', code: 'T4' },
-              ]).filter((opt) => allowedTiers.includes(opt.lvl)).map((opt) => (
-                <button
-                  key={opt.lvl}
-                  type="button"
-                  onClick={() => setTier(opt.lvl)}
-                  title={`${opt.code} – ${opt.label}`}
-                  className={`py-1.5 px-1 text-[11px] font-bold rounded transition-colors flex flex-col items-center leading-tight ${
-                    tier === opt.lvl
-                      ? 'bg-white text-[#004ac6] shadow-sm'
-                      : 'text-[#565e74] hover:text-[#0b1c30]'
-                  }`}
-                >
-                  <span className="text-[9px] opacity-70">{opt.code}</span>
-                  <span>{opt.label}</span>
-                </button>
+            <select
+              id="new-item-parent"
+              value={parentId}
+              required={parentRequired}
+              onChange={(e) => setParentId(e.target.value)}
+              className={inputCls}
+            >
+              <option value="">{parentRequired ? '-- Chọn mục cha --' : '-- Không thuộc hạng mục nào --'}</option>
+              {parentOptions.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.title}
+                </option>
               ))}
-            </div>
-            </div>
-
-          {/* Title */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[12px] font-bold text-[#0b1c30]">
-              Tên công việc / Hạng mục *
-            </label>
-            <input
-              type="text"
-              required
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Ví dụ: Triển khai kiểm thử bảo mật..."
-              className="w-full h-10 px-3 rounded-lg bg-[#eff4ff] text-[#0b1c30] text-[13px] border border-[#dce9ff] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#004ac6]"
-            />
+            </select>
+            {parentRequired && parentOptions.length === 0 && (
+              <p className="text-xs text-error font-semibold">
+                Chưa có mục Tầng {tier - 1} nào bạn được xem — cần tạo mục cấp trên trước.
+              </p>
+            )}
           </div>
+        )}
 
-          {/* Parent selection if tier > 1 */}
-          {tier > 1 && (
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[12px] font-bold text-[#0b1c30]">
-                Thuộc mục cấp trên (Tầng {tier - 1})
-              </label>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="new-item-owner" className={labelCls}>
+              Người phụ trách
+            </label>
+            {deptUsers.length > 1 ? (
               <select
-                value={parentId}
-                onChange={(e) => setParentId(e.target.value)}
-                className="w-full h-10 px-3 rounded-lg bg-[#eff4ff] text-[#0b1c30] text-[13px] border border-[#dce9ff] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#004ac6]"
+                id="new-item-owner"
+                value={ownerUsername}
+                onChange={(e) => setOwnerUsername(e.target.value)}
+                className={inputCls}
               >
-                <option value="">-- Chọn mục cha --</option>
-                {parents
-                  .filter((p) => p.tier === tier - 1)
-                  .map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.title}
-                    </option>
-                  ))}
+                {deptUsers.map((u) => (
+                  <option key={u.username} value={u.username}>
+                    {u.fullname}
+                  </option>
+                ))}
               </select>
-            </div>
-          )}
-
-          {/* Owner & Date range */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[12px] font-bold text-[#0b1c30]">
-                Người phụ trách
-              </label>
-              {deptUsers.length > 1 ? (
-                <select
-                  value={ownerUsername}
-                  onChange={(e) => setOwnerUsername(e.target.value)}
-                  className="w-full h-10 px-3 rounded-lg bg-[#eff4ff] text-[#0b1c30] text-[13px] border border-[#dce9ff] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#004ac6]"
-                >
-                  {deptUsers.map((u) => (
-                    <option key={u.username} value={u.username}>{u.fullname}</option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  type="text"
-                  value={currentUser.fullname}
-                  readOnly
-                  className="w-full h-10 px-3 rounded-lg bg-[#f0f0f0] text-[#565e74] text-[13px] border border-[#dce9ff] cursor-not-allowed"
-                />
-              )}
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[12px] font-bold text-[#0b1c30]">
-                Ngày bắt đầu <span className="text-[10px] font-normal text-[#737686]">(tuỳ chọn)</span>
-              </label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="w-full h-10 px-3 rounded-lg bg-[#eff4ff] text-[#0b1c30] text-[13px] border border-[#dce9ff] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#004ac6]"
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[12px] font-bold text-[#0b1c30]">
-              Hạn hoàn thành <span className="text-[#ba1a1a]">*</span>
-            </label>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              required
-              className="w-full h-10 px-3 rounded-lg bg-[#eff4ff] text-[#0b1c30] text-[13px] border border-[#dce9ff] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#004ac6]"
-            />
-            {dateRangeError && (
-              <span className="text-[11px] text-[#ba1a1a] font-semibold mt-0.5">
-                ⚠ Ngày bắt đầu phải trước hoặc bằng hạn hoàn thành.
-              </span>
+            ) : (
+              <input id="new-item-owner" type="text" value={currentUser.fullname} disabled className={inputCls} />
             )}
           </div>
 
-          {/* Description */}
           <div className="flex flex-col gap-1.5">
-            <label className="text-[12px] font-bold text-[#0b1c30]">
-              Mô tả & Phạm vi
+            <label htmlFor="new-item-priority" className={labelCls}>
+              Mức ưu tiên
             </label>
-            <textarea
-              rows={2}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Mục tiêu bàn giao chính..."
-              className="w-full p-2.5 rounded-lg bg-[#eff4ff] text-[#0b1c30] text-[13px] border border-[#dce9ff] focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#004ac6]"
+            <select
+              id="new-item-priority"
+              value={priority}
+              onChange={(e) => setPriority(e.target.value as TierItem['priority'])}
+              className={inputCls}
+            >
+              <option value="Cao (Critical Path)">Cao (đường găng)</option>
+              <option value="Trung bình">Trung bình</option>
+              <option value="Thấp">Thấp</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="new-item-start" className={labelCls}>
+              Ngày bắt đầu *
+            </label>
+            <input
+              id="new-item-start"
+              type="date"
+              required
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className={inputCls}
             />
           </div>
-
-          <div className="pt-2 flex items-center justify-end gap-2.5 border-t border-[#eff4ff]">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-[#565e74] hover:bg-[#eff4ff] rounded-lg text-[13px] font-semibold"
-            >
-              Hủy bỏ
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-2 bg-[#004ac6] hover:bg-[#2563eb] text-white text-[13px] font-bold rounded-lg shadow-sm"
-            >
-              Lưu công việc
-            </button>
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="new-item-end" className={labelCls}>
+              Hạn hoàn thành *
+            </label>
+            <input
+              id="new-item-end"
+              type="date"
+              required
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              aria-invalid={dateRangeError}
+              aria-describedby={dateRangeError ? 'new-item-date-error' : undefined}
+              className={inputCls}
+            />
           </div>
-        </form>
-      </div>
-    </div>
+          {dateRangeError && (
+            <p id="new-item-date-error" role="alert" className="col-span-2 text-xs text-error font-semibold">
+              Ngày bắt đầu phải trước hoặc bằng hạn hoàn thành.
+            </p>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="new-item-desc" className={labelCls}>
+            Mô tả & Phạm vi
+          </label>
+          <textarea
+            id="new-item-desc"
+            rows={2}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Mục tiêu bàn giao chính..."
+            className={textareaCls}
+          />
+        </div>
+
+        <div className="pt-3 flex items-center justify-end gap-2.5 border-t border-surface-container-low">
+          <button type="button" onClick={onClose} disabled={submitting} className={ghostButtonCls}>
+            Hủy bỏ
+          </button>
+          <button
+            type="submit"
+            disabled={submitting || dateRangeError || !title.trim() || (parentRequired && !parentId)}
+            className={primaryButtonCls}
+          >
+            {submitting ? 'Đang lưu…' : 'Lưu công việc'}
+          </button>
+        </div>
+      </form>
+    </Dialog>
   );
 };

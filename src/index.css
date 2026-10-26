@@ -50,6 +50,25 @@
   --color-on-error: #ffffff;
   --color-error-container: #ffdad6;
   --color-on-error-container: #93000a;
+  --color-error-fixed: #ffb4ab;
+
+  --color-warning: #8a5100;
+  --color-on-warning: #ffffff;
+  --color-warning-container: #ffddb3;
+  --color-on-warning-container: #2c1600;
+  --color-warning-fixed: #ffb95c;
+
+  /* Gantt — màu phân biệt 4 tầng của cây công việc */
+  --color-gantt-t1: #0f172a;
+  --color-gantt-t2: #004ac6;
+  --color-gantt-t3: #0284c7;
+  --color-gantt-t4: #006243;
+  --color-gantt-readonly: #94a3b8;
+
+  /* Thang chữ: xs 12 · sm 14 · base 16 · lg 18 · xl 20 · 2xl 24 · 3xl 30 · display 32.
+     Không dùng chữ dưới 12px — dấu tiếng Việt không đọc được. */
+  --text-display: 2rem;
+  --text-display--line-height: 1;
 
   --font-inter: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
@@ -69,7 +88,13 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Material symbols adjustments */
+/* Stylesheet Material Symbols của Google không nằm trong @layer nên luôn thắng
+   utility `text-*` của Tailwind (nằm trong @layer utilities) → mọi icon bị ép 24px.
+   Cỡ icon vì vậy truyền qua biến: class `[--icon-size:16px]`. */
+span.material-symbols-outlined {
+  font-size: var(--icon-size, 24px);
+}
+
 .material-symbols-outlined {
   font-variation-settings:
     'FILL' 0,
@@ -99,7 +124,6 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* MI-01 fix: slideUp animation cho Toast (đã được class `animate-slideUp` reference). */
 @keyframes slideUp {
   from { transform: translateY(8px); opacity: 0; }
   to   { transform: translateY(0);   opacity: 1; }
@@ -108,17 +132,27 @@ body {
   animation: slideUp 0.22s ease-out;
 }
 
-/* Weekly Report — dot status (Tailwind v4 không có dot utility sẵn) */
+/* Người dùng bật "giảm chuyển động" ở hệ điều hành → tắt animation/transition. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Weekly Report — dot status, luôn đi kèm nhãn chữ (không truyền trạng thái chỉ bằng màu) */
 .dot {
   width: 8px; height: 8px; border-radius: 999px;
   display: inline-block; position: absolute;
   left: 8px; top: 50%; transform: translateY(-50%);
   pointer-events: none;
 }
-.dot-green { background: #16a34a; }
-.dot-amber { background: #f59e0b; }
-.dot-red   { background: #dc2626; }
-.dot-gray  { background: #9ca3af; }
+.dot-green { background: var(--color-tertiary); }
+.dot-amber { background: var(--color-warning-fixed); }
+.dot-red   { background: var(--color-error); }
+.dot-gray  { background: var(--color-outline); }
 
 /* ===== Báo cáo tuần — bản in / lưu PDF =====
    Ponytail: dùng print của trình duyệt (window.print()) thay vì thêm
@@ -131,7 +165,7 @@ body {
         → Bỏ table-fixed, bỏ width cố định của <col>, cho bảng tự co theo nội dung.
      2. Wrapper `overflow-x-auto` giữ chiều rộng cũ và cắt chữ.
         → Buộc overflow: visible + width 100%.
-     3. Container `max-w-[1240px] px-6` giữ padding + max-width của màn hình.
+     3. Container `max-w-7xl px-6` giữ padding + max-width của màn hình.
         → Nới max-width: none, padding: 0. */
 @media print {
   body { background: #fff !important; font-size: 11pt; }

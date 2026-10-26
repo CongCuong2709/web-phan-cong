@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../auth/AuthContext';
 import { api } from '../lib/apiClient';
-import { BRAND_LOGO_URL } from '../lib/constants';
+import { BrandMark } from './ui/Brand';
 
 type Mode = 'login' | 'change-password';
 
@@ -88,23 +88,16 @@ const LoginPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#eef3ff] via-[#f8f9ff] to-[#e7f0ff] flex items-center justify-center px-4 py-10">
-      <div className="w-full max-w-md bg-white rounded-2xl border border-[#e5eeff] shadow-xl shadow-blue-900/5 p-7 sm:p-9 flex flex-col gap-6">
+    <div className="min-h-screen bg-gradient-to-br from-surface-container-low via-surface to-surface-container flex items-center justify-center px-4 py-10">
+      <div className="w-full max-w-md bg-white rounded-2xl border border-surface-container shadow-xl p-7 sm:p-9 flex flex-col gap-6">
         {/* ===== Brand ===== */}
         <div className="flex items-center gap-3">
-          <img
-            src={BRAND_LOGO_URL}
-            alt="Brand"
-            className="h-10 w-auto object-contain"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.display = 'none';
-            }}
-          />
-          <span className="text-[16px] font-bold text-[#0b1c30]">Hệ thống công việc và báo cáo TAG</span>
+          <BrandMark className="h-10 w-10 shrink-0" />
+          <span className="text-base font-bold text-on-surface">Hệ thống công việc và báo cáo TAG</span>
         </div>
 
         {/* ===== Title ===== */}
-        <h1 className="text-[24px] sm:text-[28px] font-bold text-[#0b1c30] tracking-tight">
+        <h1 className="text-2xl sm:text-3xl font-bold text-on-surface tracking-tight">
           {mode === 'login' ? 'Đăng nhập hệ thống' : 'Đổi mật khẩu'}
         </h1>
 
@@ -115,7 +108,7 @@ const LoginPage: React.FC = () => {
               <div className="flex flex-col gap-1.5">
                 <label
                   htmlFor="username"
-                  className="text-[12px] font-semibold text-[#0b1c30] uppercase tracking-wider"
+                  className="text-xs font-semibold text-on-surface uppercase tracking-wider"
                 >
                   Tên đăng nhập
                 </label>
@@ -126,14 +119,14 @@ const LoginPage: React.FC = () => {
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   placeholder="Tên đăng nhập"
-                  className="px-4 py-2.5 rounded-lg bg-[#eff4ff] border border-[#dce9ff] focus:border-[#004ac6] focus:outline-none focus:bg-white text-[14px] text-[#0b1c30] placeholder:text-[#737686]"
+                  className="px-4 py-2.5 rounded-lg bg-surface-container-low border border-surface-container-high focus:border-primary focus:outline-none focus:bg-white text-sm text-on-surface placeholder:text-outline"
                 />
               </div>
 
               <div className="flex flex-col gap-1.5">
                 <label
                   htmlFor="password"
-                  className="text-[12px] font-semibold text-[#0b1c30] uppercase tracking-wider"
+                  className="text-xs font-semibold text-on-surface uppercase tracking-wider"
                 >
                   Mật khẩu
                 </label>
@@ -145,15 +138,15 @@ const LoginPage: React.FC = () => {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="Mật khẩu"
-                    className="w-full px-4 py-2.5 pr-12 rounded-lg bg-[#eff4ff] border border-[#dce9ff] focus:border-[#004ac6] focus:outline-none focus:bg-white text-[14px] text-[#0b1c30] placeholder:text-[#737686]"
+                    className="w-full px-4 py-2.5 pr-12 rounded-lg bg-surface-container-low border border-surface-container-high focus:border-primary focus:outline-none focus:bg-white text-sm text-on-surface placeholder:text-outline"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword((s) => !s)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-md flex items-center justify-center text-[#565e74] hover:bg-[#dce9ff] transition-colors"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-md flex items-center justify-center text-secondary hover:bg-surface-container-high transition-colors"
                     title={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
                   >
-                    <span className="material-symbols-outlined text-[18px]">
+                    <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px]">
                       {showPassword ? 'visibility_off' : 'visibility'}
                     </span>
                   </button>
@@ -161,8 +154,8 @@ const LoginPage: React.FC = () => {
               </div>
 
               {error && (
-                <div className="flex items-center gap-2 px-3 py-2 bg-[#ffdad6]/40 border border-red-200 rounded-lg text-[12px] text-[#93000a] font-medium">
-                  <span className="material-symbols-outlined text-[16px]">error</span>
+                <div className="flex items-center gap-2 px-3 py-2 bg-error-container/40 border border-error-fixed rounded-lg text-xs text-on-error-container font-medium">
+                  <span aria-hidden="true" className="material-symbols-outlined [--icon-size:16px]">error</span>
                   <span>{error}</span>
                 </div>
               )}
@@ -170,20 +163,20 @@ const LoginPage: React.FC = () => {
               <button
                 type="submit"
                 disabled={submitting}
-                className="w-full mt-2 px-4 py-3 rounded-lg bg-[#004ac6] hover:bg-[#2563eb] disabled:opacity-60 disabled:cursor-not-allowed text-white text-[14px] font-bold transition-all shadow-md active:scale-[0.98] flex items-center justify-center gap-2"
+                className="w-full mt-2 px-4 py-3 rounded-lg bg-primary hover:bg-primary-container disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-bold transition-all shadow-md active:scale-[0.98] flex items-center justify-center gap-2"
               >
-                <span className="material-symbols-outlined text-[18px]">login</span>
+                <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px]">login</span>
                 <span>{submitting ? 'Đang đăng nhập…' : 'Đăng nhập'}</span>
               </button>
             </form>
 
             {/* ===== Switch to change-password ===== */}
-            <div className="flex items-center justify-center gap-2 -mt-2 text-[12px] text-[#565e74]">
+            <div className="flex items-center justify-center gap-2 -mt-2 text-xs text-secondary">
               <span>Bạn muốn thay đổi mật khẩu?</span>
               <button
                 type="button"
                 onClick={() => switchMode('change-password')}
-                className="font-semibold text-[#004ac6] hover:text-[#2563eb] hover:underline transition-colors"
+                className="font-semibold text-primary hover:text-primary-container hover:underline transition-colors"
               >
                 Đổi mật khẩu
               </button>
@@ -192,7 +185,7 @@ const LoginPage: React.FC = () => {
         ) : (
           <>
             {/* ===== Change-password form ===== */}
-            <p className="text-[12px] text-[#565e74] -mt-2">
+            <p className="text-xs text-secondary -mt-2">
               Nhập tên đăng nhập và mật khẩu hiện tại để đặt mật khẩu mới.
             </p>
 
@@ -201,7 +194,7 @@ const LoginPage: React.FC = () => {
               <div className="flex flex-col gap-1.5">
                 <label
                   htmlFor="cp-username"
-                  className="text-[12px] font-semibold text-[#0b1c30] uppercase tracking-wider"
+                  className="text-xs font-semibold text-on-surface uppercase tracking-wider"
                 >
                   Tên đăng nhập
                 </label>
@@ -212,7 +205,7 @@ const LoginPage: React.FC = () => {
                   value={cpUsername}
                   onChange={(e) => setCpUsername(e.target.value)}
                   placeholder="Tên đăng nhập"
-                  className="px-4 py-2.5 rounded-lg bg-[#eff4ff] border border-[#dce9ff] focus:border-[#004ac6] focus:outline-none focus:bg-white text-[14px] text-[#0b1c30] placeholder:text-[#737686]"
+                  className="px-4 py-2.5 rounded-lg bg-surface-container-low border border-surface-container-high focus:border-primary focus:outline-none focus:bg-white text-sm text-on-surface placeholder:text-outline"
                 />
               </div>
 
@@ -220,7 +213,7 @@ const LoginPage: React.FC = () => {
               <div className="flex flex-col gap-1.5">
                 <label
                   htmlFor="cp-current"
-                  className="text-[12px] font-semibold text-[#0b1c30] uppercase tracking-wider"
+                  className="text-xs font-semibold text-on-surface uppercase tracking-wider"
                 >
                   Mật khẩu hiện tại
                 </label>
@@ -232,15 +225,15 @@ const LoginPage: React.FC = () => {
                     value={cpCurrent}
                     onChange={(e) => setCpCurrent(e.target.value)}
                     placeholder="Nhập mật khẩu hiện tại"
-                    className="w-full px-4 py-2.5 pr-12 rounded-lg bg-[#eff4ff] border border-[#dce9ff] focus:border-[#004ac6] focus:outline-none focus:bg-white text-[14px] text-[#0b1c30] placeholder:text-[#737686]"
+                    className="w-full px-4 py-2.5 pr-12 rounded-lg bg-surface-container-low border border-surface-container-high focus:border-primary focus:outline-none focus:bg-white text-sm text-on-surface placeholder:text-outline"
                   />
                   <button
                     type="button"
                     onClick={() => setShowCurrent((s) => !s)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-md flex items-center justify-center text-[#565e74] hover:bg-[#dce9ff] transition-colors"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-md flex items-center justify-center text-secondary hover:bg-surface-container-high transition-colors"
                     title={showCurrent ? 'Ẩn' : 'Hiện'}
                   >
-                    <span className="material-symbols-outlined text-[18px]">
+                    <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px]">
                       {showCurrent ? 'visibility_off' : 'visibility'}
                     </span>
                   </button>
@@ -251,7 +244,7 @@ const LoginPage: React.FC = () => {
               <div className="flex flex-col gap-1.5">
                 <label
                   htmlFor="cp-new"
-                  className="text-[12px] font-semibold text-[#0b1c30] uppercase tracking-wider"
+                  className="text-xs font-semibold text-on-surface uppercase tracking-wider"
                 >
                   Mật khẩu mới
                 </label>
@@ -263,15 +256,15 @@ const LoginPage: React.FC = () => {
                     value={cpNew}
                     onChange={(e) => setCpNew(e.target.value)}
                     placeholder="Nhập mật khẩu mới"
-                    className="w-full px-4 py-2.5 pr-12 rounded-lg bg-[#eff4ff] border border-[#dce9ff] focus:border-[#004ac6] focus:outline-none focus:bg-white text-[14px] text-[#0b1c30] placeholder:text-[#737686]"
+                    className="w-full px-4 py-2.5 pr-12 rounded-lg bg-surface-container-low border border-surface-container-high focus:border-primary focus:outline-none focus:bg-white text-sm text-on-surface placeholder:text-outline"
                   />
                   <button
                     type="button"
                     onClick={() => setShowNew((s) => !s)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-md flex items-center justify-center text-[#565e74] hover:bg-[#dce9ff] transition-colors"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-md flex items-center justify-center text-secondary hover:bg-surface-container-high transition-colors"
                     title={showNew ? 'Ẩn' : 'Hiện'}
                   >
-                    <span className="material-symbols-outlined text-[18px]">
+                    <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px]">
                       {showNew ? 'visibility_off' : 'visibility'}
                     </span>
                   </button>
@@ -282,7 +275,7 @@ const LoginPage: React.FC = () => {
               <div className="flex flex-col gap-1.5">
                 <label
                   htmlFor="cp-confirm"
-                  className="text-[12px] font-semibold text-[#0b1c30] uppercase tracking-wider"
+                  className="text-xs font-semibold text-on-surface uppercase tracking-wider"
                 >
                   Xác nhận mật khẩu mới
                 </label>
@@ -294,15 +287,15 @@ const LoginPage: React.FC = () => {
                     value={cpConfirm}
                     onChange={(e) => setCpConfirm(e.target.value)}
                     placeholder="Nhập lại mật khẩu mới"
-                    className="w-full px-4 py-2.5 pr-12 rounded-lg bg-[#eff4ff] border border-[#dce9ff] focus:border-[#004ac6] focus:outline-none focus:bg-white text-[14px] text-[#0b1c30] placeholder:text-[#737686]"
+                    className="w-full px-4 py-2.5 pr-12 rounded-lg bg-surface-container-low border border-surface-container-high focus:border-primary focus:outline-none focus:bg-white text-sm text-on-surface placeholder:text-outline"
                   />
                   <button
                     type="button"
                     onClick={() => setShowConfirm((s) => !s)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-md flex items-center justify-center text-[#565e74] hover:bg-[#dce9ff] transition-colors"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-md flex items-center justify-center text-secondary hover:bg-surface-container-high transition-colors"
                     title={showConfirm ? 'Ẩn' : 'Hiện'}
                   >
-                    <span className="material-symbols-outlined text-[18px]">
+                    <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px]">
                       {showConfirm ? 'visibility_off' : 'visibility'}
                     </span>
                   </button>
@@ -310,15 +303,15 @@ const LoginPage: React.FC = () => {
               </div>
 
               {cpError && (
-                <div className="flex items-center gap-2 px-3 py-2 bg-[#ffdad6]/40 border border-red-200 rounded-lg text-[12px] text-[#93000a] font-medium">
-                  <span className="material-symbols-outlined text-[16px]">error</span>
+                <div className="flex items-center gap-2 px-3 py-2 bg-error-container/40 border border-error-fixed rounded-lg text-xs text-on-error-container font-medium">
+                  <span aria-hidden="true" className="material-symbols-outlined [--icon-size:16px]">error</span>
                   <span>{cpError}</span>
                 </div>
               )}
 
               {cpSuccess && (
-                <div className="flex items-center gap-2 px-3 py-2 bg-[#85f8c4]/30 border border-emerald-200 rounded-lg text-[12px] text-[#006243] font-medium">
-                  <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                <div className="flex items-center gap-2 px-3 py-2 bg-tertiary-fixed/30 border border-tertiary-fixed-dim rounded-lg text-xs text-tertiary font-medium">
+                  <span aria-hidden="true" className="material-symbols-outlined [--icon-size:16px]">check_circle</span>
                   <span>{cpSuccess}</span>
                 </div>
               )}
@@ -326,20 +319,20 @@ const LoginPage: React.FC = () => {
               <button
                 type="submit"
                 disabled={cpSubmitting}
-                className="w-full mt-2 px-4 py-3 rounded-lg bg-[#004ac6] hover:bg-[#2563eb] disabled:opacity-60 disabled:cursor-not-allowed text-white text-[14px] font-bold transition-all shadow-md active:scale-[0.98] flex items-center justify-center gap-2"
+                className="w-full mt-2 px-4 py-3 rounded-lg bg-primary hover:bg-primary-container disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-bold transition-all shadow-md active:scale-[0.98] flex items-center justify-center gap-2"
               >
-                <span className="material-symbols-outlined text-[18px]">lock_reset</span>
+                <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px]">lock_reset</span>
                 <span>{cpSubmitting ? 'Đang đổi mật khẩu…' : 'Đổi mật khẩu'}</span>
               </button>
             </form>
 
             {/* ===== Switch back to login ===== */}
-            <div className="flex items-center justify-center gap-2 -mt-2 text-[12px] text-[#565e74]">
+            <div className="flex items-center justify-center gap-2 -mt-2 text-xs text-secondary">
               <span>Đã nhớ mật khẩu?</span>
               <button
                 type="button"
                 onClick={() => switchMode('login')}
-                className="font-semibold text-[#004ac6] hover:text-[#2563eb] hover:underline transition-colors"
+                className="font-semibold text-primary hover:text-primary-container hover:underline transition-colors"
               >
                 Quay lại đăng nhập
               </button>

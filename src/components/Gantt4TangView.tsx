@@ -1,4 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { Avatar } from './ui/Brand';
+import { isTierItemOverdue } from '../lib/transforms';
 import { TierItem, User } from '../types';
 
 interface Gantt4TangViewProps {
@@ -8,7 +10,7 @@ interface Gantt4TangViewProps {
   onOpenNewModal: () => void;
 }
 
-/** Format dd/MM (Fix UI-05 helper). */
+/** Format dd/MM. */
 function fmtDdMm(d: Date): string {
   return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
@@ -138,6 +140,27 @@ function buildTimeline(timeFilter: 'month' | 'quarter' | 'year', today: Date): T
   };
 }
 
+/** Màu thanh Gantt theo tầng/trạng thái — token trong index.css (--color-gantt-*). */
+const GANTT_COLOR = {
+  t1: 'var(--color-gantt-t1)',
+  t2: 'var(--color-gantt-t2)',
+  t3: 'var(--color-gantt-t3)',
+  t4: 'var(--color-gantt-t4)',
+  blocked: 'var(--color-error)',
+  critical: 'var(--color-warning-fixed)',
+  readonly: 'var(--color-gantt-readonly)',
+} as const;
+
+const GANTT_LEGEND: { key: keyof typeof GANTT_COLOR; label: string; dot?: boolean }[] = [
+  { key: 't1', label: 'T1: Dự án' },
+  { key: 't2', label: 'T2: Giai đoạn' },
+  { key: 't3', label: 'T3: Hạng mục' },
+  { key: 't4', label: 'T4: Đầu việc' },
+  { key: 'blocked', label: 'Điểm nghẽn' },
+  { key: 'critical', label: 'Đường găng', dot: true },
+  { key: 'readonly', label: 'Chỉ đọc (ngữ cảnh)' },
+];
+
 export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
   tierItems,
   currentUser,
@@ -145,7 +168,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
   onOpenNewModal,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  // Fix #15: searchTermRaw lưu giá trị input ngay, debounce 300ms xuống searchTerm
+  // searchTermRaw lưu giá trị input ngay, debounce 300ms xuống searchTerm
   const [searchTermRaw, setSearchTermRaw] = useState('');
   useEffect(() => {
     const handle = setTimeout(() => setSearchTerm(searchTermRaw), 300);
@@ -156,7 +179,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
   const [collapsedMap, setCollapsedMap] = useState<Record<string, boolean>>({});
   const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
 
-  // Fix UI-05: timeline tính động từ timeFilter + Date.now()
+  // timeline tính động từ timeFilter + Date.now()
   const timeline = useMemo(() => buildTimeline(timeFilter, new Date()), [timeFilter]);
   // Tính today column index cho cả 3 view (month/quarter/year), clamp về [0, columnsCount-1]
   const todayCol = Math.max(
@@ -205,7 +228,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
   };
 
   const toggleRowCollapse = (e: React.MouseEvent, id: string) => {
-    // Fix #16: chặn cả bubble (click) và capture (mousedown) để chắc chắn
+    // chặn cả bubble (click) và capture (mousedown) để chắc chắn
     // row's onClick (DetailsDrawer) không trigger khi click toggle.
     e.stopPropagation();
     e.preventDefault();
@@ -242,14 +265,11 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
       : Math.round(tierItems.reduce((s, i) => s + i.progress, 0) / tierItems.length);
 
   const blockedItems = tierItems.filter(
-    (i) => i.status === 'Đang nghẽn' || i.status === 'Điểm nghẽn' || i.blockerAlert
+    (i) => i.status === 'Điểm nghẽn' || i.blockerAlert
   );
 
-  // On-time rate for T3: non-blocked items
   const t3Items = tierItems.filter((i) => i.tier === 3);
-  const t3OnTime = t3Items.filter(
-    (i) => i.status !== 'Đang nghẽn' && i.status !== 'Điểm nghẽn'
-  ).length;
+  const t3OnTime = t3Items.filter((i) => !isTierItemOverdue(i)).length;
   const t3OnTimePct =
     t3Items.length === 0 ? 0 : Math.round((t3OnTime / t3Items.length) * 100);
 
@@ -259,35 +279,35 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
   return (
     <div className="flex flex-col w-full">
       {/* Top Minimalist Sub-Header */}
-      <div className="w-full px-4 sm:px-6 py-5 bg-white border-b border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+      <div className="w-full px-4 sm:px-6 py-5 bg-white border-b border-surface-container shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
         <div className="max-w-[1720px] mx-auto flex flex-col lg:flex-row lg:items-end justify-between gap-4">
           <div className="space-y-1.5">
-            <h1 className="text-[22px] sm:text-[26px] font-bold text-[#0b1c30] tracking-tight">
+            <h1 className="text-2xl sm:text-3xl font-bold text-on-surface tracking-tight">
               Hệ thống công việc và báo cáo TAG
             </h1>
-            <p className="text-[13px] text-[#434655] flex items-center gap-2 flex-wrap">
+            <p className="text-sm text-on-surface-variant flex items-center gap-2 flex-wrap">
               <span>Dự án</span>
-              <span className="material-symbols-outlined text-[13px] text-[#737686]">arrow_forward</span>
+              <span aria-hidden="true" className="material-symbols-outlined [--icon-size:13px] text-outline">arrow_forward</span>
               <span>Giai đoạn</span>
-              <span className="material-symbols-outlined text-[13px] text-[#737686]">arrow_forward</span>
+              <span aria-hidden="true" className="material-symbols-outlined [--icon-size:13px] text-outline">arrow_forward</span>
               <span>Hạng mục</span>
-              <span className="material-symbols-outlined text-[13px] text-[#737686]">arrow_forward</span>
+              <span aria-hidden="true" className="material-symbols-outlined [--icon-size:13px] text-outline">arrow_forward</span>
               <span>Đầu việc</span>
             </p>
           </div>
 
           {/* Action & View Controls */}
           <div className="flex items-center gap-2.5 flex-wrap shrink-0">
-            {/* Time Filter Segmented — Fix UI-05: labels động theo current month/quarter/year */}
-            <div className="flex items-center bg-[#eff4ff] p-1 rounded-md">
+            {/* Time Filter Segmented: labels động theo current month/quarter/year */}
+            <div className="flex items-center bg-surface-container-low p-1 rounded-md">
               {(['month', 'quarter', 'year'] as const).map((tf) => (
                 <button
                   key={tf}
                   onClick={() => setTimeFilter(tf)}
-                  className={`px-3 py-1 text-[12px] font-semibold rounded transition-colors ${
+                  className={`px-3 py-1 text-xs font-semibold rounded transition-colors ${
                     timeFilter === tf
-                      ? 'bg-white shadow-sm text-[#004ac6]'
-                      : 'text-[#565e74] hover:text-[#0b1c30]'
+                      ? 'bg-white shadow-sm text-primary'
+                      : 'text-secondary hover:text-on-surface'
                   }`}
                   type="button"
                 >
@@ -302,10 +322,10 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
             {/* Tree Controls */}
             <button
               onClick={toggleCollapseAll}
-              className="h-8 px-3 bg-[#eff4ff] hover:bg-[#e5eeff] text-[#0b1c30] text-[12px] font-semibold rounded flex items-center gap-1.5 transition-colors"
+              className="h-8 px-3 bg-surface-container-low hover:bg-surface-container text-on-surface text-xs font-semibold rounded flex items-center gap-1.5 transition-colors"
               type="button"
             >
-              <span className="material-symbols-outlined text-[16px]">
+              <span aria-hidden="true" className="material-symbols-outlined [--icon-size:16px]">
                 {allCollapsed ? 'unfold_more' : 'unfold_less'}
               </span>
               <span>{allCollapsed ? 'Mở rộng tất cả' : 'Thu gọn tất cả'}</span>
@@ -313,28 +333,28 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
 
             <button
               onClick={onOpenNewModal}
-              className="h-8 px-3.5 bg-[#004ac6] hover:bg-[#2563eb] text-white text-[12px] font-semibold rounded flex items-center gap-1.5 shadow-sm transition-all active:scale-[0.98]"
+              className="h-8 px-3.5 bg-primary hover:bg-primary-container text-white text-xs font-semibold rounded flex items-center gap-1.5 shadow-sm transition-all active:scale-[0.98]"
               type="button"
             >
-              <span className="material-symbols-outlined text-[17px]">add</span>
-              <span>+ Thêm mới</span>
+              <span aria-hidden="true" className="material-symbols-outlined [--icon-size:17px]">add</span>
+              <span>Thêm mới</span>
             </button>
           </div>
         </div>
       </div>
 
       {/* Segmented KPI Strip — tính động từ tierItems */}
-      <div className="w-full px-4 sm:px-6 py-4 bg-[#f8f9ff]">
+      <div className="w-full px-4 sm:px-6 py-4 bg-surface">
         <div className="max-w-[1720px] mx-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* KPI 1: Tổng tiến độ */}
-          <div className="bg-white p-4 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between">
+          <div className="bg-white p-4 rounded-lg border border-surface-container shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold text-[#565e74] uppercase tracking-wider">
+              <span className="text-xs font-bold text-secondary uppercase tracking-wider">
                 Tổng tiến độ
               </span>
             </div>
             <div className="my-2 flex items-baseline gap-2">
-              <span className="text-[32px] font-bold text-[#0b1c30] tabular-nums tracking-tight">
+              <span className="text-display font-bold text-on-surface tabular-nums tracking-tight">
                 {avgAll}%
               </span>
             </div>
@@ -343,7 +363,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                 <div
                   key={i}
                   className={`h-2 flex-1 rounded-sm ${
-                    i < filledSegs(avgAll) ? 'bg-[#004ac6]' : 'bg-[#e5eeff]'
+                    i < filledSegs(avgAll) ? 'bg-primary' : 'bg-surface-container'
                   }`}
                 />
               ))}
@@ -351,17 +371,17 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
           </div>
 
           {/* KPI 2: Dự án Tầng 1 */}
-          <div className="bg-white p-4 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between">
+          <div className="bg-white p-4 rounded-lg border border-surface-container shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold text-[#565e74] uppercase tracking-wider">
+              <span className="text-xs font-bold text-secondary uppercase tracking-wider">
                 Dự án
               </span>
             </div>
             <div className="my-2 flex items-baseline gap-2">
-              <span className="text-[32px] font-bold text-[#0b1c30] tabular-nums tracking-tight">
+              <span className="text-display font-bold text-on-surface tabular-nums tracking-tight">
                 {t1Count}
               </span>
-              <span className="text-[12px] text-[#565e74]">
+              <span className="text-xs text-secondary">
                 dự án đang kích hoạt
               </span>
             </div>
@@ -370,7 +390,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                 <div
                   key={i}
                   className={`h-2 flex-1 rounded-sm ${
-                    i < Math.min(t1Count, 10) ? 'bg-[#004ac6]' : 'bg-[#e5eeff]'
+                    i < Math.min(t1Count, 10) ? 'bg-primary' : 'bg-surface-container'
                   }`}
                 />
               ))}
@@ -378,20 +398,20 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
           </div>
 
           {/* KPI 3: Hạng mục T3 */}
-          <div className="bg-white p-4 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between">
+          <div className="bg-white p-4 rounded-lg border border-surface-container shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold text-[#565e74] uppercase tracking-wider">
+              <span className="text-xs font-bold text-secondary uppercase tracking-wider">
                 Hạng mục giao &amp; Gói việc
               </span>
-              <span className="text-[11px] font-semibold text-[#006243]">
+              <span className="text-xs font-semibold text-tertiary">
                 {t3OnTimePct}% đúng hạn
               </span>
             </div>
             <div className="my-2 flex items-baseline gap-2">
-              <span className="text-[32px] font-bold text-[#0b1c30] tabular-nums tracking-tight">
+              <span className="text-display font-bold text-on-surface tabular-nums tracking-tight">
                 {t3Count}
               </span>
-              <span className="text-[12px] text-[#565e74]">
+              <span className="text-xs text-secondary">
                 hạng mục (Tầng 3)
               </span>
             </div>
@@ -400,7 +420,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                 <div
                   key={i}
                   className={`h-2 flex-1 rounded-sm ${
-                    i < filledSegs(t3OnTimePct) ? 'bg-[#007d57]' : 'bg-[#e5eeff]'
+                    i < filledSegs(t3OnTimePct) ? 'bg-tertiary-container' : 'bg-surface-container'
                   }`}
                 />
               ))}
@@ -408,21 +428,21 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
           </div>
 
           {/* KPI 4: Điểm nghẽn */}
-          <div className="bg-white p-4 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between">
+          <div className="bg-white p-4 rounded-lg border border-surface-container shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold text-[#565e74] uppercase tracking-wider">
+              <span className="text-xs font-bold text-secondary uppercase tracking-wider">
                 Điểm nghẽn
               </span>
             </div>
             <div className="my-2 flex items-baseline gap-2">
               <span
-                className={`text-[32px] font-bold tabular-nums tracking-tight ${
-                  blockedItems.length > 0 ? 'text-[#ba1a1a]' : 'text-[#006243]'
+                className={`text-display font-bold tabular-nums tracking-tight ${
+                  blockedItems.length > 0 ? 'text-error' : 'text-tertiary'
                 }`}
               >
                 {blockedItems.length}
               </span>
-              <span className="text-[12px] text-[#565e74]">
+              <span className="text-xs text-secondary">
                 {blockedItems.length > 0 ? 'điểm nghẽn phụ thuộc' : 'không có vướng mắc'}
               </span>
             </div>
@@ -432,10 +452,10 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                   key={i}
                   className={`h-2 flex-1 rounded-sm ${
                     blockedItems.length > 0 && i < Math.min(blockedItems.length, 10)
-                      ? 'bg-[#ba1a1a]'
+                      ? 'bg-error'
                       : blockedItems.length === 0 && i < 10
-                      ? 'bg-[#006243]'
-                      : 'bg-[#e5eeff]'
+                      ? 'bg-tertiary'
+                      : 'bg-surface-container'
                   }`}
                 />
               ))}
@@ -446,64 +466,44 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
 
       {/* Main Unified Workspace: Tree Table + Gantt Timeline */}
       <div className="w-full px-4 sm:px-6 pb-10">
-        <div className="max-w-[1720px] mx-auto bg-white rounded-lg border border-[#e5eeff] shadow-sm overflow-hidden flex flex-col">
+        <div className="max-w-[1720px] mx-auto bg-white rounded-lg border border-surface-container shadow-sm overflow-hidden flex flex-col">
           {/* Top Search & Timeline Legend Bar */}
-          <div className="h-12 px-4 bg-white flex items-center justify-between gap-4 border-b border-[#eff4ff]">
+          <div className="h-12 px-4 bg-white flex items-center justify-between gap-4 border-b border-surface-container-low">
             <div className="flex items-center gap-4">
               <div className="relative w-64 sm:w-72">
-                <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-[16px] text-[#737686]">
+                <span aria-hidden="true" className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 [--icon-size:16px] text-outline">
                   search
                 </span>
                 <input
                   value={searchTermRaw}
                   onChange={(e) => setSearchTermRaw(e.target.value)}
-                  className="w-full h-8 pl-8 pr-3 text-[13px] bg-[#eff4ff] text-[#0b1c30] placeholder:text-[#737686] rounded focus:outline-none focus:ring-1 focus:ring-[#004ac6]"
+                  className="w-full h-8 pl-8 pr-3 text-sm bg-surface-container-low text-on-surface placeholder:text-outline rounded focus:outline-none focus:ring-1 focus:ring-primary"
                   placeholder="Lọc dự án, gói việc, mã..."
                   type="text"
                 />
               </div>
-              <span className="text-[12px] text-[#565e74] hidden md:inline-block">
-                Hiển thị <strong className="text-[#0b1c30]">{t1Count} Dự án</strong> ·{' '}
+              <span className="text-xs text-secondary hidden md:inline-block">
+                Hiển thị <strong className="text-on-surface">{t1Count} Dự án</strong> ·{' '}
                 {t2Count} Giai đoạn · {t3Count} Hạng mục · {t4Count} Đầu việc
               </span>
             </div>
 
-            {/* Timeline Legend */}
-            <div className="hidden xl:flex items-center gap-4 text-[11px] font-semibold text-[#565e74]">
-              <div className="flex items-center gap-1.5">
-                <span className="w-3 h-2 rounded-sm bg-[#0F172A]"></span>
-                <span>T1: Dự án</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="w-3 h-2 rounded-sm bg-[#004ac6]"></span>
-                <span>T2: Giai đoạn</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="w-3 h-2 rounded-sm bg-[#0284c7]"></span>
-                <span>T3: Hạng mục</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="w-3 h-2 rounded-sm bg-[#006243]"></span>
-                <span>T4: Đầu việc</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="w-3 h-2 rounded-sm bg-[#f59e0b]"></span>
-                <span>T4: Nghẽn</span>
-              </div>
-              {hasReadOnlyContext && (
-                <div className="flex items-center gap-1.5">
-                  <span className="w-3 h-2 rounded-sm bg-[#94a3b8]"></span>
-                  <span>Chỉ đọc</span>
-                </div>
-              )}
-            </div>
+            {/* Chú thích — đọc cùng GANTT_COLOR với thanh vẽ nên không thể lệch nhau */}
+            <ul aria-label="Chú thích màu" className="hidden xl:flex items-center gap-4 text-xs font-semibold text-secondary">
+              {GANTT_LEGEND.filter((l) => l.key !== 'readonly' || hasReadOnlyContext).map((l) => (
+                <li key={l.key} className="flex items-center gap-1.5">
+                  <span aria-hidden="true" className={l.dot ? 'w-2 h-2 rounded-full' : 'w-3 h-2 rounded-sm'} style={{ backgroundColor: GANTT_COLOR[l.key] }} />
+                  <span>{l.label}</span>
+                </li>
+              ))}
+            </ul>
           </div>
 
           {/* Split Layout Container */}
-          <div className="w-full overflow-x-auto no-scrollbar">
+          <div className="w-full overflow-x-auto" tabIndex={-1}>
             <div className="min-w-[1280px] flex flex-col">
               {/* Table Column Headers */}
-              <div className="flex items-stretch bg-[#eff4ff] text-[#565e74] text-[11px] font-bold uppercase tracking-wider h-10 select-none border-b border-[#dce9ff]">
+              <div className="flex items-stretch bg-surface-container-low text-secondary text-xs font-bold uppercase tracking-wider h-10 select-none border-b border-surface-container-high">
                 {/* Left 50% Tree Grid Header */}
                 <div className="w-[50%] flex items-center px-4">
                   <span className="flex-1">Cấu trúc & Tên công việc</span>
@@ -517,7 +517,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                     minmax(20px, 1fr) đảm bảo ngày luôn đủ rộng để đọc số,
                     horizontal scroll nếu nhiều ngày (quarter 91 / year 365). */}
                 <div
-                  className="w-[50%] bg-[#e5eeff] text-center font-mono text-[10px] relative font-semibold text-[#434655]"
+                  className="w-[50%] bg-surface-container text-center font-mono text-xs relative font-semibold text-on-surface-variant"
                   style={{ display: 'grid', gridTemplateColumns: `repeat(${timeline.columnsCount}, minmax(20px, 1fr))` }}
                 >
                   {timeline.columns.map((label, idx) => {
@@ -528,19 +528,19 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                     return (
                       <div
                         key={idx}
-                        className={`py-1 flex flex-col items-center justify-center border-l border-[#dce9ff] ${
-                          isTodayCol ? 'bg-[#004ac6] text-white' : isWeekend ? 'bg-[#dce9ff]/50 text-[#737686]' : ''
+                        className={`py-1 flex flex-col items-center justify-center border-l border-surface-container-high ${
+                          isTodayCol ? 'bg-primary text-white' : isWeekend ? 'bg-surface-container-high/50 text-outline' : ''
                         }`}
                         title={isMonthStart ? `Ngày đầu tháng` : undefined}
                       >
                         {timeFilter === 'month' && (
-                          <span className={`text-[8px] font-medium ${isTodayCol ? 'text-white/80' : 'text-[#737686]'}`}>
+                          <span className={`text-xs font-medium ${isTodayCol ? 'text-white/80' : 'text-outline'}`}>
                             T{weekday === 0 ? 7 : weekday}
                           </span>
                         )}
-                        <span className="text-[10px] font-bold leading-none">{label}</span>
+                        <span className="text-xs font-bold leading-none">{label}</span>
                         {isTodayCol && (
-                          <span className="text-[8px] font-bold mt-0.5">HÔM NAY</span>
+                          <span className="text-xs font-bold mt-0.5">HÔM NAY</span>
                         )}
                       </div>
                     );
@@ -549,29 +549,29 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
               </div>
 
               {/* DATA ROWS LIST */}
-              <div className="flex flex-col relative divide-y divide-[#eff4ff]">
-                {/* Fix #4: today marker nằm trong timeline column (50% phải), không phải full width.
+              <div className="flex flex-col relative divide-y divide-surface-container-low">
+                {/* today marker nằm trong timeline column (50% phải), không phải full width.
                     Position = 50% (offset của timeline column) + todayLeftPct * 50% (tỷ lệ trong timeline). */}
                 <div
-                  className="absolute top-0 bottom-0 w-[2px] bg-[#004ac6] z-20 pointer-events-none"
+                  className="absolute top-0 bottom-0 w-[2px] bg-primary z-20 pointer-events-none"
                   style={{ left: `calc(50% + ${timeline.todayLeftPct / 2}%)` }}
                 >
-                  <div className="sticky top-10 -ml-1.5 w-3.5 h-3.5 rounded-full bg-[#004ac6] flex items-center justify-center shadow-md">
+                  <div className="sticky top-10 -ml-1.5 w-3.5 h-3.5 rounded-full bg-primary flex items-center justify-center shadow-md">
                     <div className="w-1.5 h-1.5 rounded-full bg-white"></div>
                   </div>
                 </div>
 
                 {filteredItems.length === 0 && (
                   <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
-                    <span className="material-symbols-outlined text-[#c3c6d7] text-[48px] mb-2">
+                    <span aria-hidden="true" className="material-symbols-outlined text-outline-variant [--icon-size:48px] mb-2">
                       {currentUser?.role === 'employee' ? 'task_alt' : 'inbox'}
                     </span>
-                    <h3 className="text-[15px] font-semibold text-[#0b1c30] mb-1">
+                    <h3 className="text-base font-semibold text-on-surface mb-1">
                       {currentUser?.role === 'employee'
                         ? 'Bạn chưa có task nào được giao'
                         : 'Chưa có dữ liệu để hiển thị'}
                     </h3>
-                    <p className="text-[12px] text-[#737686] max-w-md">
+                    <p className="text-xs text-outline max-w-md">
                       {currentUser?.role === 'employee'
                         ? 'Liên hệ Trưởng phòng để được phân công đầu việc. Khi có task, bạn sẽ thấy task đó cùng với cây dự án (T1) → giai đoạn (T2) → hạng mục (T3) ở chế độ chỉ đọc.'
                         : 'Hãy thêm dự án, giai đoạn, hạng mục hoặc đầu việc mới để bắt đầu.'}
@@ -586,7 +586,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                   const readonlyCtx = isReadOnlyContext(item);
 
                   // Zebra striping: dòng chẵn tint nhẹ, dòng lẻ trắng → quét mắt dễ hơn
-                  const zebraBase = idx % 2 === 0 ? 'bg-white' : 'bg-[#f8faff]';
+                  const zebraBase = idx % 2 === 0 ? 'bg-white' : 'bg-surface';
 
                   // Indentation calculation based on Tier
                   const indentClass =
@@ -599,56 +599,69 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                       : 'pl-16';
 
                   const rowBg = readonlyCtx
-                    ? 'bg-slate-50/70 hover:bg-slate-100/80'
+                    ? 'bg-surface/70 hover:bg-surface-container-low/80'
                     : item.blockerAlert
-                    ? 'bg-amber-50/60 hover:bg-amber-100/70'
+                    ? 'bg-warning-container/40 hover:bg-warning-container/70'
                     : item.tier === 1
-                    ? `${zebraBase} hover:bg-[#eff4ff]/80`
-                    : `${zebraBase} hover:bg-[#eff4ff]/70`;
+                    ? `${zebraBase} hover:bg-surface-container-low/80`
+                    : `${zebraBase} hover:bg-surface-container-low/70`;
 
                   return (
                     <div
                       key={item.id}
                       onClick={() => onSelectItem(item)}
-                      // Fix #9: hover state trigger từ row để bắt tooltip cả khi di chuột vào phần tree (left 50%)
+                      // Tooltip mở khi rê chuột HOẶC khi focus bằng bàn phím; Enter/Space mở chi tiết.
                       onMouseEnter={() => setHoveredItemId(item.id)}
                       onMouseLeave={() => setHoveredItemId(null)}
-                      className={`flex items-stretch transition-colors cursor-pointer group ${rowBg}`}
+                      onFocus={() => setHoveredItemId(item.id)}
+                      onBlur={() => setHoveredItemId(null)}
+                      onKeyDown={(e) => {
+                        if (e.target !== e.currentTarget) return;
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          onSelectItem(item);
+                        }
+                      }}
+                      tabIndex={0}
+                      aria-label={`${item.code} ${item.title} — ${item.status}, ${item.progress}%. Nhấn Enter để xem chi tiết`}
+                      className={`flex items-stretch transition-colors cursor-pointer group focus-visible:outline-2 focus-visible:outline-primary focus-visible:-outline-offset-2 ${rowBg}`}
                     >
                       {/* Left Cell (50%) */}
                       <div
-                        className={`w-[50%] flex items-center px-4 py-2 ${indentClass} border-r border-[#eff4ff]`}
+                        className={`w-[50%] flex items-center px-4 py-2 ${indentClass} border-r border-surface-container-low`}
                       >
                         <div className="flex-1 flex items-center gap-1.5 min-w-0 pr-3">
                           {readonlyCtx ? (
                             <span
-                              className="w-5 h-5 flex items-center justify-center text-slate-400 shrink-0"
+                              className="w-5 h-5 flex items-center justify-center text-outline shrink-0"
                               title="Dự án do phòng ban khác phụ trách — bạn chỉ có thể xem, không sửa"
                             >
-                              <span className="material-symbols-outlined text-[16px]">lock</span>
+                              <span aria-hidden="true" className="material-symbols-outlined [--icon-size:16px]">lock</span>
                             </span>
                           ) : isCollapsible ? (
                             <button
                               onClick={(e) => toggleRowCollapse(e, item.id)}
                               onMouseDown={(e) => e.stopPropagation()}
-                              className="w-5 h-5 flex items-center justify-center text-[#565e74] hover:bg-[#e5eeff] rounded"
+                              aria-expanded={!isCollapsed}
+                              aria-label={`${isCollapsed ? 'Mở rộng' : 'Thu gọn'} ${item.title}`}
+                              className="w-5 h-5 flex items-center justify-center text-secondary hover:bg-surface-container rounded"
                               type="button"
                             >
-                              <span className="material-symbols-outlined text-[17px]">
+                              <span aria-hidden="true" className="material-symbols-outlined [--icon-size:17px]">
                                 {isCollapsed ? 'chevron_right' : 'keyboard_arrow_down'}
                               </span>
                             </button>
                           ) : (
-                            <span className="w-1.5 h-1.5 rounded-full bg-[#737686] shrink-0 mr-1.5"></span>
+                            <span className="w-1.5 h-1.5 rounded-full bg-outline shrink-0 mr-1.5"></span>
                           )}
 
                           {/* Tier Badge */}
                           {item.tier === 1 && (
                             <span
-                              className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 uppercase tracking-wider ${
+                              className={`text-xs font-bold px-1.5 py-0.5 rounded shrink-0 uppercase tracking-wider ${
                                 readonlyCtx
-                                  ? 'bg-slate-300 text-slate-700'
-                                  : 'bg-[#0F172A] text-white'
+                                  ? 'bg-outline-variant text-on-surface-variant'
+                                  : 'bg-gantt-t1 text-white'
                               }`}
                             >
                               DỰ ÁN T1
@@ -656,25 +669,25 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                           )}
                           {readonlyCtx && (
                             <span
-                              className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 shrink-0 uppercase tracking-wider flex items-center gap-0.5"
+                              className="text-xs font-bold px-1.5 py-0.5 rounded bg-surface-container text-secondary shrink-0 uppercase tracking-wider flex items-center gap-0.5"
                               title={`Dự án thuộc phòng ban "${item.department}" — không thuộc phòng ban của bạn. Bạn có thể xem nhưng không thể sửa.`}
                             >
-                              <span className="material-symbols-outlined text-[11px]">visibility</span>
+                              <span aria-hidden="true" className="material-symbols-outlined [--icon-size:11px]">visibility</span>
                               <span>Chỉ đọc</span>
                             </span>
                           )}
                           {item.tier === 2 && (
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#dbe1ff] text-[#00174b] shrink-0 uppercase tracking-wider">
+                            <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-primary-fixed text-on-primary-fixed shrink-0 uppercase tracking-wider">
                               GIAI ĐOẠN T2
                             </span>
                           )}
                           {item.tier === 3 && (
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 shrink-0 uppercase tracking-wider">
+                            <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-primary-fixed text-on-primary-fixed-variant shrink-0 uppercase tracking-wider">
                               HẠNG MỤC T3
                             </span>
                           )}
                           {item.tier === 4 && (
-                            <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-[#eff4ff] text-[#434655] shrink-0 uppercase tracking-wider">
+                            <span className="text-xs font-bold px-1 py-0.5 rounded bg-surface-container-low text-on-surface-variant shrink-0 uppercase tracking-wider">
                               VIỆC T4
                             </span>
                           )}
@@ -682,22 +695,22 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                           <span
                             className={`truncate ${
                               readonlyCtx
-                                ? 'font-bold text-[14px] text-slate-500'
+                                ? 'font-bold text-sm text-secondary'
                                 : item.tier === 1
-                                ? 'font-bold text-[14px] text-[#0b1c30]'
+                                ? 'font-bold text-sm text-on-surface'
                                 : item.tier === 2
-                                ? 'font-semibold text-[13px] text-[#0b1c30]'
+                                ? 'font-semibold text-sm text-on-surface'
                                 : item.tier === 3
-                                ? 'font-medium text-[13px] text-[#0b1c30]'
-                                : 'text-[13px] text-[#434655] group-hover:text-[#0b1c30]'
+                                ? 'font-medium text-sm text-on-surface'
+                                : 'text-sm text-on-surface-variant group-hover:text-on-surface'
                             }`}
                           >
                             {item.title}
                           </span>
 
                           {item.blockerAlert && (
-                            <span
-                              className="material-symbols-outlined text-[15px] text-[#ba1a1a] shrink-0"
+                            <span aria-hidden="true"
+                              className="material-symbols-outlined [--icon-size:15px] text-error shrink-0"
                               title={item.blockerAlert}
                             >
                               warning
@@ -707,26 +720,16 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
 
                         {/* Owner */}
                         <div className="w-28 flex items-center gap-1.5 shrink-0">
-                          {item.owner.avatar ? (
-                            <img
-                              src={item.owner.avatar}
-                              alt={item.owner.name}
-                              className="w-5 h-5 rounded-full object-cover ring-1 ring-slate-200"
-                            />
-                          ) : (
-                            <span className="w-5 h-5 rounded-full bg-[#dae2fd] text-[#131b2e] text-[10px] flex items-center justify-center font-bold">
-                              {item.owner.initial}
-                            </span>
-                          )}
-                          <span className="text-[13px] text-[#0b1c30] truncate">
+                          <Avatar name={item.owner.name} src={item.owner.avatar} className="w-5 h-5 text-xs shrink-0" />
+                          <span className="text-sm text-on-surface truncate">
                             {item.owner.name}
                           </span>
                         </div>
 
                         {/* Deadline */}
                         <div
-                          className={`w-24 text-center font-mono text-[12px] shrink-0 ${
-                            item.blockerAlert ? 'text-[#ba1a1a] font-semibold' : 'text-[#434655]'
+                          className={`w-24 text-center font-mono text-xs shrink-0 ${
+                            item.blockerAlert ? 'text-error font-semibold' : 'text-on-surface-variant'
                           }`}
                         >
                           {item.endDate}
@@ -734,8 +737,8 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
 
                         {/* Progress */}
                         <div className="w-28 px-1.5 shrink-0">
-                          <div className="flex items-center justify-between text-[11px] mb-0.5">
-                            <span className="font-mono text-[#565e74]">
+                          <div className="flex items-center justify-between text-xs mb-0.5">
+                            <span className="font-mono text-secondary">
                               {item.tier === 1
                                 ? 'Tổng'
                                 : item.tier === 2
@@ -745,23 +748,23 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                             <span
                               className={`font-bold font-mono ${
                                 item.progress === 100
-                                  ? 'text-[#006243]'
+                                  ? 'text-tertiary'
                                   : item.blockerAlert
-                                  ? 'text-amber-700'
-                                  : 'text-[#004ac6]'
+                                  ? 'text-warning'
+                                  : 'text-primary'
                               }`}
                             >
                               {item.progress}%
                             </span>
                           </div>
-                          <div className="w-full h-1.5 bg-[#eff4ff] rounded-full overflow-hidden">
+                          <div className="w-full h-1.5 bg-surface-container-low rounded-full overflow-hidden">
                             <div
                               className={`h-full rounded-full transition-all duration-300 ${
                                 item.progress === 100
-                                  ? 'bg-[#006243]'
+                                  ? 'bg-tertiary'
                                   : item.blockerAlert
-                                  ? 'bg-amber-500'
-                                  : 'bg-[#004ac6]'
+                                  ? 'bg-warning-fixed'
+                                  : 'bg-primary'
                               }`}
                               style={{ width: `${item.progress}%` }}
                             ></div>
@@ -771,22 +774,18 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                         {/* Status */}
                         <div className="w-24 text-center shrink-0">
                           {item.progress === 100 ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#006243]">
-                              <span className="material-symbols-outlined text-[15px]">
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-tertiary">
+                              <span aria-hidden="true" className="material-symbols-outlined [--icon-size:15px]">
                                 check_circle
                               </span>
                               <span>Đã xong</span>
                             </span>
-                          ) : item.status === 'Đang nghẽn' ? (
-                            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-red-100 text-[#ba1a1a]">
-                              Đang nghẽn
-                            </span>
                           ) : item.status === 'Điểm nghẽn' ? (
-                            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">
-                              Cần gỡ
+                            <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-error-container text-on-error-container">
+                              Điểm nghẽn
                             </span>
                           ) : (
-                            <span className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-[#eff4ff] text-[#004ac6]">
+                            <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-surface-container-low text-primary">
                               {item.status}
                             </span>
                           )}
@@ -794,7 +793,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                       </div>
 
                       {/* Right Cell: Gantt Bar Timeline (50%) */}
-                      <div className="w-[50%] relative flex items-center px-1.5 bg-[#eff4ff]/15">
+                      <div className="w-[50%] relative flex items-center px-1.5 bg-surface-container-low/15">
                         {/* Timeline Grid vertical guides — day-based columns */}
                         <div
                           className="absolute inset-0 pointer-events-none"
@@ -810,21 +809,21 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                             return (
                               <div
                                 key={i}
-                                className={`border-r border-dashed border-[#dce9ff] ${
-                                  i === todayCol ? 'bg-[#004ac6]/[0.015]' :
-                                  isWeekend ? 'bg-[#dce9ff]/40' : ''
-                                } ${isMonthStart ? 'border-r-2 border-r-[#004ac6]/40' : ''}`}
+                                className={`border-r border-dashed border-surface-container-high ${
+                                  i === todayCol ? 'bg-primary/[0.015]' :
+                                  isWeekend ? 'bg-surface-container-high/40' : ''
+                                } ${isMonthStart ? 'border-r-2 border-r-primary/40' : ''}`}
                               />
                             );
                           })}
                         </div>
 
-                        {/* Dynamic Gantt Bar — Fix UI-05:
+                        {/* Dynamic Gantt Bar:
                             month view: dùng gantt.startWeek/endWeek (1..N tuần)
                             year view: dùng deadline để suy ra vị trí */}
                         {(() => {
                           // Tính bar position/width từ startDate/endDate trực tiếp (đơn vị ngày).
-                          // Không dùng week index nữa — fix #17 sau refactor day-based.
+                          // Không dùng week index nữa.
                           const parseDate = (s: string): number | null => {
                             const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s)
                               ?? /^(\d{2})\/(\d{2})(?:\/(\d{4}))?$/.exec(s);
@@ -847,17 +846,11 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                           const widthPct = endPct > startPct
                             ? endPct - startPct
                             : Math.max(0.5, (1 / timeline.unitDays) * 100);
-                          const isBlocked = item.status === 'Đang nghẽn' || item.status === 'Điểm nghẽn';
-                          // Fix #6: isBlocked ưu tiên tier color — T1/T2/T3 nghẽn cũng đỏ.
-                          const barColor =
-                            readonlyCtx ? '#94a3b8' :
-                            isBlocked ? '#ba1a1a' :
-                            item.tier === 1 ? '#0F172A'
-                            : item.tier === 2 ? '#004ac6'
-                            : item.tier === 3 ? '#0284c7'
-                            : '#006243';
+                          const isBlocked = item.status === 'Điểm nghẽn';
+                          // isBlocked ưu tiên tier color — T1/T2/T3 nghẽn cũng đỏ.
+                          const barColor = GANTT_COLOR[readonlyCtx ? 'readonly' : isBlocked ? 'blocked' : (`t${item.tier}` as const)];
                           const height = item.tier === 1 ? 'h-5' : item.tier === 2 ? 'h-4' : item.tier === 3 ? 'h-3.5' : 'h-3';
-                          // Fix #3: width < 2% (≈ < 1 ngày trong month view, < 2 ngày trong quarter,
+                          // width < 2% (≈ < 1 ngày trong month view, < 2 ngày trong quarter,
                           // < 1 tuần trong year) → milestone (◆ diamond) thay vì clamp bar
                           // quá rộng khiến task ngắn bị "phóng to" trực quan.
                           const isMilestone = widthPct < 2 && item.tier >= 2;
@@ -868,9 +861,9 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                                 <div
                                   className={`absolute ${height} w-3.5 -translate-x-1/2 rotate-45 transition-all duration-150 cursor-pointer ${
                                     isHovered
-                                      ? 'shadow-xl ring-2 ring-[#004ac6]/50 z-10 brightness-110 scale-110'
+                                      ? 'shadow-xl ring-2 ring-primary/50 z-10 brightness-110 scale-110'
                                       : 'shadow-sm'
-                                  } ${isBlocked ? 'ring-2 ring-[#ba1a1a]/60' : ''}`}
+                                  } ${isBlocked ? 'ring-2 ring-error/60' : ''}`}
                                   style={{
                                     left: `${leftPct}%`,
                                     backgroundColor: barColor,
@@ -881,9 +874,9 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                                 <div
                                   className={`absolute ${height} rounded flex items-center overflow-hidden transition-all duration-150 ${
                                     isHovered
-                                      ? 'shadow-xl ring-2 ring-[#004ac6]/50 z-10 brightness-110'
+                                      ? 'shadow-xl ring-2 ring-primary/50 z-10 brightness-110'
                                       : 'shadow-sm'
-                                  } ${isBlocked ? 'ring-2 ring-[#ba1a1a]/60 ring-offset-1' : ''}`}
+                                  } ${isBlocked ? 'ring-2 ring-error/60 ring-offset-1' : ''}`}
                                   style={{
                                     left: `${leftPct}%`,
                                     width: `${Math.max(widthPct, 3)}%`,
@@ -891,29 +884,30 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                                   }}
                                 >
                                   {item.tier <= 3 && !isMilestone && (
-                                    <span className="font-mono text-[9px] px-1.5 text-white truncate">
+                                    <span className="font-mono text-xs px-1.5 text-white truncate">
                                       {item.progress}%
                                     </span>
                                   )}
                                   {item.tier === 1 && (
-                                    <span className="font-mono text-[11px] font-bold text-white shrink-0 ml-auto mr-1.5">
+                                    <span className="font-mono text-xs font-bold text-white shrink-0 ml-auto mr-1.5">
                                       {item.progress}%
                                     </span>
                                   )}
                                   {/* Blocked: thay animate-ping bằng icon warning tĩnh — pro hơn, không gây mỏi mắt */}
                                   {isBlocked && (
-                                    <span
-                                      className="material-symbols-outlined text-white text-[12px] ml-auto mr-1 shrink-0"
+                                    <span aria-hidden="true"
+                                      className="material-symbols-outlined text-white [--icon-size:12px] ml-auto mr-1 shrink-0"
                                       style={{ fontVariationSettings: "'wght' 700, 'FILL' 1" }}
                                     >
                                       priority_high
                                     </span>
                                   )}
-                                  {/* Fix #11: critical path marker */}
+                                  {/* critical path marker */}
                                   {item.priority === 'Cao (Critical Path)' && !isBlocked && (
                                     <span
-                                      className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-[#f59e0b] ring-1 ring-white"
-                                      title="Critical path"
+                                      className="absolute -top-1 -right-1 w-2 h-2 rounded-full ring-1 ring-white"
+                                      style={{ backgroundColor: GANTT_COLOR.critical }}
+                                      title="Đường găng"
                                     />
                                   )}
                                 </div>
@@ -924,44 +918,44 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                                 <div
                                   className="absolute z-30 pointer-events-none"
                                   style={{
-                                    // Fix #8: milestone anchor tại leftPct (center diamond),
+                                    // milestone anchor tại leftPct (center diamond),
                                     // bar center vẫn dùng leftPct + widthPct/2.
                                     left: `${Math.min(95, Math.max(5, isMilestone ? leftPct : leftPct + widthPct / 2))}%`,
                                     bottom: 'calc(100% + 10px)',
                                     transform: 'translateX(-50%)',
                                   }}
                                 >
-                                  <div className="bg-slate-900 text-white text-[11px] rounded-lg shadow-2xl px-3 py-2 min-w-[200px] max-w-[260px]">
-                                    <div className="font-bold text-[12px] mb-1.5 text-white leading-tight">
+                                  <div className="bg-inverse-surface text-white text-xs rounded-lg shadow-2xl px-3 py-2 min-w-[200px] max-w-[260px]">
+                                    <div className="font-bold text-xs mb-1.5 text-white leading-tight">
                                       {item.title}
                                     </div>
                                     <div className="flex justify-between gap-3 mb-0.5">
-                                      <span className="text-slate-400">Mã:</span>
+                                      <span className="text-outline">Mã:</span>
                                       <span className="font-mono font-semibold">{item.code}</span>
                                     </div>
                                     <div className="flex justify-between gap-3 mb-0.5">
-                                      <span className="text-slate-400">Phụ trách:</span>
+                                      <span className="text-outline">Phụ trách:</span>
                                       <span className="font-medium truncate max-w-[120px]">{item.owner.name}</span>
                                     </div>
                                     <div className="flex justify-between gap-3 mb-0.5">
-                                      <span className="text-slate-400">Hạn:</span>
+                                      <span className="text-outline">Hạn:</span>
                                       <span className="font-mono">{item.endDate}</span>
                                     </div>
                                     <div className="flex justify-between gap-3 mb-0.5">
-                                      <span className="text-slate-400">Trạng thái:</span>
+                                      <span className="text-outline">Trạng thái:</span>
                                       <span className="font-medium">{item.status}</span>
                                     </div>
-                                    <div className="flex justify-between gap-3 pt-1 border-t border-slate-700">
-                                      <span className="text-slate-400">Tiến độ:</span>
+                                    <div className="flex justify-between gap-3 pt-1 border-t border-on-surface-variant">
+                                      <span className="text-outline">Tiến độ:</span>
                                       <span
                                         className="font-bold font-mono"
-                                        style={{ color: item.progress === 100 ? '#86efac' : '#bfdbfe' }}
+                                        style={{ color: item.progress === 100 ? 'var(--color-tertiary-fixed)' : 'var(--color-primary-fixed-dim)' }}
                                       >
                                         {item.progress}%
                                       </span>
                                     </div>
                                     {item.blockerAlert && (
-                                      <div className="mt-1.5 pt-1.5 border-t border-slate-700 text-amber-300 text-[10px] leading-snug">
+                                      <div className="mt-1.5 pt-1.5 border-t border-on-surface-variant text-warning-fixed text-xs leading-snug">
                                         <span className="font-semibold">⚠ Vướng mắc: </span>
                                         {item.blockerAlert}
                                       </div>

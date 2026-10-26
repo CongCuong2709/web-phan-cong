@@ -8,194 +8,86 @@ import {
   User,
   ROLE_LABEL,
   DailyLog,
-  HistoryEntry,
 } from './types';
-
-// ─────────────────────────────────────────────────────────────────────
-// Helper maps: Tiếng Việt (UI) ↔ enum DB
-// ─────────────────────────────────────────────────────────────────────
-
-/** Map UI status tiếng Việt → enum DB. */
-export function viStatusToEnum(s: string | undefined): string {
-  switch (s) {
-    case 'Đã xong': return 'done';
-    case 'Đang chạy':
-    case 'Đang làm': return 'doing';
-    case 'Sắp xong': return 'pending_approval';
-    case 'Điểm nghẽn':
-    case 'Đang nghẽn': return 'blocked';
-    case 'Lên lịch':
-    case 'Chuẩn bị':
-    default: return 'pending';
-  }
-}
-
-/** Map UI priority tiếng Việt → enum DB. */
-export function viPriorityToEnum(p: string | undefined): string {
-  switch (p) {
-    case 'Cao (Critical Path)': return 'critical';
-    case 'Thấp': return 'low';
-    case 'Trung bình':
-    default: return 'normal';
-  }
-}
 import { AuthProvider, useAuth } from './auth/AuthContext';
-import { canAddDailyLog, findManagerOf, uid } from './auth/permissions';
-import { api, fireAndForget } from './lib/apiClient';
+import { canAddDailyLog } from './auth/permissions';
+import { api, describeApiError, type ApiResponse } from './lib/apiClient';
 import {
   apiToTierItem,
   apiToTeamLeadTask,
-  apiToEmployeeTask,
   apiToDailyLog,
   apiToTeamMember,
-  apiToHistoryEntry,
+  buildEmployeeTasks,
   extractBackendId,
-  toCompositeId,
+  todayIso,
+  viPriorityToEnum,
+  viStatusToEnum,
 } from './lib/transforms';
+import { useWorkspaceData } from './lib/useWorkspaceData';
 import { SEED_USERS } from './data/users';
 import { Header } from './components/Header';
 import { Gantt4TangView } from './components/Gantt4TangView';
 import { GiaoViecNhomView } from './components/GiaoViecNhomView';
-import { ViecCuaToiView } from './components/ViecCuaToiView';
+import { ViecCuaToiView, type SaveLogEntry } from './components/ViecCuaToiView';
 import { BaoCaoTongQuanView } from './components/BaoCaoTongQuanView';
 import { WeeklyReportView } from './components/WeeklyReportView';
 import { WeeklyReportTeamView } from './components/WeeklyReportTeamView';
 import { DetailsDrawer } from './components/DetailsDrawer';
 import { NewItemModal } from './components/NewItemModal';
-
 import { NewPersonalTaskModal } from './components/NewPersonalTaskModal';
-import { Toast } from './components/Toast';
+import { ToastStack, useToasts } from './components/Toast';
 import LoginPage from './components/LoginPage';
 
-const ROLE_HELLO: Record<User['role'], string> = {
-  admin: 'Quản trị hệ thống',
-  director: 'Điều hành',
-  manager: 'Trưởng phòng',
-  employee: 'Nhân viên',
-};
-
 function AppShell() {
-  const { user, logout, users: onlineUsers } = useAuth();
+  const { user } = useAuth();
 
   if (!user) {
     return <LoginPage />;
   }
 
-  return <AuthenticatedApp key={user.id} user={user} onlineUsers={onlineUsers} />;
+  return <AuthenticatedApp key={user.id} user={user} />;
 }
 
 interface AuthenticatedAppProps {
   user: User;
-  /** Danh sách user đã biết ở AuthContext (SEED + user backend vừa login). */
-  onlineUsers: User[];
 }
 
-function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
-  // Navigation
-  const [activeTab, setActiveTab] = useState<ActiveAppTab>(() => {
-    // Employees land on "Việc của tôi" by default.
-    return user.role === 'employee' ? 'viec-cua-toi' : 'cay-gantt-4-tang';
-  });
+/** Composite id "<tier>-<num>" → tier + id số để gọi API. */
+function parseTaskId(id: string): { tier: 1 | 2 | 3 | 4; num: number } | null {
+  const tier = Number(id.split('-')[0]);
+  const num = extractBackendId(id);
+  if (![1, 2, 3, 4].includes(tier) || !Number.isFinite(num)) return null;
+  return { tier: tier as 1 | 2 | 3 | 4, num };
+}
 
-  // Core state — backend là source of truth. Initial state = rỗng;
-  // được fill sau login qua useEffect bên dưới.
-  const [tierItems, setTierItems] = useState<TierItem[]>([]);
+const STALE_ITEM_MESSAGE = 'Không xác định được công việc này. Hãy tải lại trang.';
 
-  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+function AuthenticatedApp({ user }: AuthenticatedAppProps) {
+  const [activeTab, setActiveTab] = useState<ActiveAppTab>(() =>
+    user.role === 'employee' ? 'viec-cua-toi' : 'cay-gantt-4-tang',
+  );
 
-  const [teamTasks, setTeamTasks] = useState<TeamLeadTask[]>([]);
+  const { data, status: loadStatus, error: loadError, reload, retry } = useWorkspaceData(user.id);
+  const toast = useToasts();
+  const showToast = toast.show;
 
-  const [employeeTasks, setEmployeeTasks] = useState<EmployeeTask[]>([]);
+  // Mọi view đọc từ một danh sách gốc (GET /api/tasks) — không có state song song.
+  const tierItems = useMemo<TierItem[]>(() => data.tasks.map(apiToTierItem), [data.tasks]);
+  const teamTasks = useMemo<TeamLeadTask[]>(
+    () => data.tasks.filter((t) => t.tier === 4).map(apiToTeamLeadTask),
+    [data.tasks],
+  );
+  const employeeTasks = useMemo<EmployeeTask[]>(
+    () => buildEmployeeTasks(data.tasks, data.logs),
+    [data.tasks, data.logs],
+  );
+  const dailyLogs = useMemo<DailyLog[]>(() => data.logs.map(apiToDailyLog), [data.logs]);
+  const teamMembers = useMemo<TeamMember[]>(() => data.members.map(apiToTeamMember), [data.members]);
 
-  /** Fetch toàn bộ data từ backend sau khi user login. Chạy lại khi user.id thay đổi. */
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      // Single source of truth — 1 endpoint /api/tasks cho cả 3 view
-      // (Gantt, Giao việc nhóm, Việc của tôi). Transform sang 3 derived types.
-      // Lưu ý: /api/tasks trả về DỮ LIỆU CẢ 4 TIER. Chỉ tier 4 mới là "đầu việc"
-      // cá nhân (team lead / employee view) — tier 1/2/3 (dự án / giai đoạn / hạng mục)
-      // chỉ hiển thị trên cây Gantt. Nếu không filter, manager xem "Việc của tôi"
-      // sẽ thấy cả project/phase/bundle (vì seed cho manager làm owner) → bug.
-      //
-      // Phải chạy Promise.all với /api/daily-logs để merge log hôm nay vào
-      // employeeTasks ngay từ đầu — nếu không, sau reload Status Strip sẽ
-      // hiển thị "Chưa nộp" dù DB đã có daily_log.result thật.
-      const [tasksRes, logRes, memRes, histRes] = await Promise.all([
-        api.listTasks(),
-        api.listDailyLogs(),
-        api.listTeamMembers(),
-        api.listHistory(50),
-      ]);
-      if (cancelled) return;
-
-      // Build lookup: taskNumId → daily_log của HÔM NAY (mới nhất trong ngày).
-      const today = new Date().toISOString().slice(0, 10);
-      const todayLogByTaskNum: Record<number, ReturnType<typeof apiToDailyLog>> = {};
-      if (logRes.ok) {
-        for (const raw of logRes.data.items) {
-          const log = apiToDailyLog(raw);
-          if (log.logDate !== today) continue;
-          const numId = Number(log.taskId);
-          if (!Number.isFinite(numId)) continue;
-          if (todayLogByTaskNum[numId] !== undefined) continue;
-          todayLogByTaskNum[numId] = log;
-        }
-      }
-
-      if (tasksRes.ok) {
-        const items = tasksRes.data.items;
-        const tier4Only = items.filter((it) => it.tier === 4);
-        setTierItems(items.map(apiToTierItem));
-        setTeamTasks(tier4Only.map(apiToTeamLeadTask));
-        // Merge log hôm nay vào currentDeliverable / description baseline trước
-        // khi set state — đảm bảo render đầu đã có data, không flicker.
-        setEmployeeTasks(
-          tier4Only.map((api) => {
-            const base = apiToEmployeeTask(api);
-            const log: ReturnType<typeof apiToDailyLog> | undefined =
-              todayLogByTaskNum[api.id];
-            if (!log) return base;
-            return {
-              ...base,
-              currentDeliverable: log.result ?? '',
-              // desc form-prefill: nếu user đã ghi log hôm nay thì dùng description
-              // của log đó (mới nhất) thay vì description gốc của task.
-              description: log.description?.trim() ? log.description : base.description,
-              lastUpdated: 'Hôm nay',
-              // Fix #1: lấy progress mới nhất từ daily_log.progress hôm nay
-              // để slider hiển thị đúng baseline. Tránh bug reset về 0 khi Save All.
-              progress: log.progress ?? 0,
-            };
-          }),
-        );
-      }
-
-      if (logRes.ok) {
-        setDailyLogs(logRes.data.items.map(apiToDailyLog));
-      }
-
-      if (memRes.ok) {
-        setTeamMembers(memRes.data.members.map(apiToTeamMember));
-      }
-
-      if (histRes.ok) {
-        setHistory(histRes.data.items.map(apiToHistoryEntry));
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [user.id]);
-
-  // Sub-tasks + nhật ký thi công + history (cho DetailsDrawer)
-  const [dailyLogs, setDailyLogs] = useState<DailyLog[]>([]);
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
-
-  // Danh sách user từ backend (cho dropdown "Người phụ trách" trong NewItemModal).
-  // Admin thấy tất cả; Manager thấy user cùng phòng; Employee bị 403 (skip).
-  // Initial = SEED_USERS để tránh flash rỗng khi đang fetch.
+  // Danh sách user từ backend (dropdown "Người phụ trách" trong NewItemModal).
+  // Admin thấy tất cả; Manager thấy user cùng phòng; Employee bị 403 (bỏ qua).
   const [directoryUsers, setDirectoryUsers] = useState<User[]>(SEED_USERS);
 
-  /** Fetch /api/users sau khi login. Employee skip (backend 403). */
   useEffect(() => {
     if (user.role === 'employee') {
       setDirectoryUsers([]);
@@ -204,748 +96,380 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
     let cancelled = false;
     (async () => {
       const r = await api.listUsers();
-      if (cancelled) return;
-      if (r.ok) {
-        const rawDepts = (u: { departments?: string | null }): string[] => {
-          const d = u.departments;
-          if (!d) return [];
-          return d.split(',').map((s) => s.trim()).filter(Boolean);
-        };
-        setDirectoryUsers(
-          r.data.users.map((u) => ({
-            id: String(u.id),
-            username: u.username,
-            fullname: u.fullname,
-            email: u.email ?? undefined,
-            role: u.role,
-            departments: rawDepts(u) as User['departments'],
-            initial: u.initial ?? u.fullname.charAt(0),
-            avatar: u.avatar_url ?? undefined,
-          }))
-        );
-      }
-      // Fail → giữ SEED_USERS (offline fallback)
+      if (cancelled || !r.ok) return;
+      setDirectoryUsers(
+        r.data.users.map((u) => ({
+          id: String(u.id),
+          username: u.username,
+          fullname: u.fullname,
+          email: u.email ?? undefined,
+          role: u.role,
+          departments: (u.departments ?? '').split(',').map((s) => s.trim()).filter(Boolean) as User['departments'],
+          initial: u.initial ?? u.fullname.charAt(0),
+          avatar: u.avatar_url ?? undefined,
+        })),
+      );
     })();
     return () => { cancelled = true; };
   }, [user.id, user.role]);
 
-  /** Ghi HistoryEntry vào state — được gọi từ các handler chính. */
-  const logHistory = (
-    entityType: HistoryEntry['entityType'],
-    entityId: string,
-    action: string
-  ) => {
-    setHistory((prev) => [
-      ...prev,
-      {
-        id: uid('hist'),
-        entityType,
-        entityId,
-        action,
-        username: user.username,
-        userName: user.fullname,
-        createdAt: new Date().toISOString().slice(0, 16).replace('T', ' '),
-      },
-    ]);
-  };
-
   // ---------------- Role-based data slicing ----------------
-  // Manager: thấy descendants thuộc dept của mình (T2/T3/T4), đồng thời include
-  // cả T1 project cha như là read-only context header — đúng pattern enterprise PM
-  // (Jira, MS Project) để user không bị "mất bức tranh lớn".
-  // Employee: chỉ thấy T4 của chính mình + parent chain (T3 → T2 → T1) làm read-only
-  // context — minimal-leak pattern, đúng use case "task này thuộc dự án nào?".
+  // Manager: thấy T2/T3/T4 thuộc phòng mình + chuỗi cha lên tới T1 làm ngữ cảnh chỉ đọc.
+  // Employee: chỉ T4 của chính mình + chuỗi cha (T3 → T2 → T1) làm ngữ cảnh chỉ đọc.
   const visibleTierItems = useMemo<TierItem[]>(() => {
     if (user.role === 'admin' || user.role === 'director') return tierItems;
-    if (user.role === 'manager') {
-      const depts = user.departments ?? [];
-      const result: TierItem[] = [];
-      const seen = new Set<string>();
-
-      // 1. Descendants (T2/T3/T4) thuộc dept của manager
-      const descendants = tierItems.filter(
-        (t) => t.tier >= 2 && (!t.department || depts.includes(t.department))
-      );
-      for (const d of descendants) {
-        if (!seen.has(d.id)) { result.push(d); seen.add(d.id); }
+    const byId = new Map(tierItems.map((t) => [t.id, t]));
+    const roots =
+      user.role === 'manager'
+        ? tierItems.filter((t) => t.tier >= 2 && (!t.department || user.departments.includes(t.department)))
+        : tierItems.filter((t) => t.tier === 4 && t.ownerUsername === user.username);
+    const seen = new Set<string>();
+    const result: TierItem[] = [];
+    for (const r of roots) {
+      let cur: TierItem | undefined = r;
+      while (cur && !seen.has(cur.id)) {
+        seen.add(cur.id);
+        result.push(cur);
+        cur = cur.parentId ? byId.get(cur.parentId) : undefined;
       }
-
-      // 2. Walk UP: với mỗi descendant, include cả parent chain até T1.
-      //    → T1 project hiện như read-only context (DetailsDrawer đã có canEdit guard).
-      for (const d of descendants) {
-        let pid = d.parentId;
-        while (pid) {
-          if (seen.has(pid)) break;
-          const parent = tierItems.find((p) => p.id === pid);
-          if (!parent) break;
-          result.push(parent);
-          seen.add(pid);
-          if (parent.tier === 1) break; // đã lên T1, dừng
-          pid = parent.parentId;
-        }
-      }
-      return result;
     }
-    if (user.role === 'employee') {
-      // 1. T4 của chính employee
-      const myT4 = tierItems.filter(
-        (t) => t.tier === 4 && t.ownerUsername === user.username
-      );
-      const result: TierItem[] = [];
-      const seen = new Set<string>();
-
-      for (const t of myT4) {
-        if (!seen.has(t.id)) { result.push(t); seen.add(t.id); }
-      }
-
-      // 2. Walk UP: T4 → T3 → T2 → T1 (parent chain làm read-only context)
-      for (const t of myT4) {
-        let cur: string | undefined = t.parentId ?? undefined;
-        while (cur) {
-          if (seen.has(cur)) break;
-          const parent = tierItems.find((p) => p.id === cur);
-          if (!parent) break;
-          result.push(parent);
-          seen.add(cur);
-          cur = parent.parentId ?? undefined;
-        }
-      }
-      return result;
-    }
-    return [];
+    return result;
   }, [tierItems, user]);
 
   const visibleTeamMembers = useMemo<TeamMember[]>(() => {
     if (user.role === 'admin') return teamMembers;
     if (user.role === 'manager') {
-      const depts = user.departments ?? [];
-      return teamMembers.filter(
-        (m) => !m.department || depts.includes(m.department)
-      );
+      return teamMembers.filter((m) => !m.department || user.departments.includes(m.department));
     }
-    // Director & Employee: không truy cập tab giao việc nhóm
     return [];
   }, [teamMembers, user]);
 
   const visibleTeamTasks = useMemo<TeamLeadTask[]>(() => {
     if (user.role === 'admin') return teamTasks;
     if (user.role === 'manager') {
-      const depts = user.departments ?? [];
-      return teamTasks.filter(
-        (t) => !t.department || depts.includes(t.department)
-      );
+      return teamTasks.filter((t) => !t.department || user.departments.includes(t.department));
     }
-    // Director & Employee: không truy cập tab giao việc nhóm
     return [];
   }, [teamTasks, user]);
 
+  // "Việc của tôi" luôn là việc mà chính user là owner — kể cả manager/admin.
   const visibleEmployeeTasks = useMemo<EmployeeTask[]>(() => {
-    if (user.role === 'admin') {
-      // Admin xem tất cả employee tasks
-      return employeeTasks;
-    }
-    if (user.role === 'director') {
-      // BGĐ không có tab Việc của tôi nên trả về rỗng — tránh leak dữ liệu nhân viên
-      return [];
-    }
-    // BUG-01 fix (FE): tab "Việc của tôi" của Manager chỉ hiển thị task mà CHÍNH HỌ là owner,
-    // không lọc theo department nữa (sẽ lộ việc của nhân viên dưới quyền).
-    // Pattern đồng nhất với employee ở dưới — case-insensitive username check.
-    const usernameLower = user.username.toLowerCase();
-    return employeeTasks.filter(
-      (t) => t.ownerUsername?.toLowerCase() === usernameLower
-    );
+    if (user.role === 'director') return [];
+    const me = user.username.toLowerCase();
+    return employeeTasks.filter((t) => t.ownerUsername?.toLowerCase() === me);
   }, [employeeTasks, user]);
 
-  // ---------------- Modals & Drawers state ----------------
-  const [selectedItemForDrawer, setSelectedItemForDrawer] = useState<TierItem | null>(null);
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  // ---------------- Modals & Drawer ----------------
+  const [drawerItemId, setDrawerItemId] = useState<string | null>(null);
+  const drawerItem = useMemo(
+    () => (drawerItemId ? tierItems.find((t) => t.id === drawerItemId) ?? null : null),
+    [drawerItemId, tierItems],
+  );
   const [isNewItemModalOpen, setIsNewItemModalOpen] = useState(false);
   const [isNewPersonalTaskOpen, setIsNewPersonalTaskOpen] = useState(false);
-
-  /** Sub-view của tab Báo cáo (manager+): 'tong-quan' = báo cáo cũ, 'tuan-phong-ban' = weekly report NV. */
   const [baoCaoSubTab, setBaoCaoSubTab] = useState<'tong-quan' | 'tuan-phong-ban'>('tuan-phong-ban');
 
-  // Toast state
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [toastType, setToastType] = useState<'success' | 'error' | 'warning'>('success');
-  const showToast = (
-    msg: string,
-    type: 'success' | 'error' | 'warning' = 'success'
-  ) => {
-    setToastMessage(msg);
-    setToastType(type);
-    setTimeout(() => setToastMessage(null), 3500);
+  // ---------------- Ghi dữ liệu ----------------
+  /**
+   * Mọi thao tác ghi đi qua đây: chờ server trả lời, lỗi thì báo đúng lý do và
+   * KHÔNG đổi gì trên UI; thành công thì tải lại dữ liệu thật rồi mới báo.
+   */
+  async function commit<T>(request: Promise<ApiResponse<T>>, successMessage?: string | ((data: T) => string)) {
+    const r = await request;
+    if (!r.ok) {
+      showToast(describeApiError(r), 'error');
+      return null;
+    }
+    const refreshed = await reload();
+    if (successMessage) {
+      showToast(typeof successMessage === 'function' ? successMessage(r.data) : successMessage);
+    }
+    if (!refreshed) {
+      showToast('Đã lưu, nhưng chưa tải lại được dữ liệu mới nhất. Hãy tải lại trang.', 'warning');
+    }
+    return r.data;
+  }
+
+  const handleUpdateTierItem = async (updated: TierItem): Promise<boolean> => {
+    const ref = parseTaskId(updated.id);
+    if (!ref) {
+      showToast(STALE_ITEM_MESSAGE, 'error');
+      return false;
+    }
+    const saved = await commit(
+      api.updateTask(ref.tier, ref.num, {
+        title: updated.title,
+        progress: updated.progress,
+        status: viStatusToEnum(updated.status),
+        priority: viPriorityToEnum(updated.priority),
+        start_date: updated.startDate,
+        end_date: updated.endDate,
+        description: updated.description,
+        management_notes: updated.managementNotes,
+      }),
+      `Đã lưu thay đổi cho ${updated.code}.`,
+    );
+    return saved !== null;
+  };
+
+  const handleAddTierItem = async (item: Partial<TierItem>): Promise<boolean> => {
+    const tier = item.tier ?? 4;
+    const parent = item.parentId ? parseTaskId(item.parentId) : null;
+    const created = await commit(
+      api.createTask({
+        tier,
+        title: item.title?.trim() || 'Đầu việc mới',
+        parent_id: parent?.num ?? null,
+        department_code: item.department ?? user.departments[0] ?? null,
+        owner_username: item.ownerUsername || undefined,
+        progress: 0,
+        status: 'pending',
+        priority: viPriorityToEnum(item.priority),
+        description: item.description ?? '',
+        management_notes: item.managementNotes ?? '',
+        start_date: item.startDate,
+        end_date: item.endDate,
+      }),
+      (res) => `Đã tạo ${res.item.code}: ${res.item.title}`,
+    );
+    return created !== null;
+  };
+
+  const handleApproveTeamTask = async (taskId: string): Promise<boolean> => {
+    const ref = parseTaskId(taskId);
+    if (!ref) {
+      showToast(STALE_ITEM_MESSAGE, 'error');
+      return false;
+    }
+    return (await commit(api.approveTask(ref.tier, ref.num), 'Đã duyệt nghiệm thu công việc.')) !== null;
+  };
+
+  /** Chuyển task sang bước kế tiếp do server quyết định: Chuẩn bị → Đang làm → Chờ duyệt. */
+  const handleAdvanceEmployeeTask = async (taskId: string): Promise<boolean> => {
+    const ref = parseTaskId(taskId);
+    if (!ref) {
+      showToast(STALE_ITEM_MESSAGE, 'error');
+      return false;
+    }
+    const res = await commit(api.toggleTask(ref.tier, ref.num), (r) =>
+      r.item.status === 'pending_approval'
+        ? 'Đã báo xong — đang chờ Trưởng phòng duyệt.'
+        : 'Đã chuyển sang Đang làm.',
+    );
+    return res !== null;
+  };
+
+  const handleAddPersonalTask = async (title: string, endDate: string, notes: string): Promise<boolean> => {
+    const today = todayIso();
+    const created = await commit(
+      api.createTask({
+        tier: 4,
+        title: title.trim(),
+        description: notes.trim(),
+        start_date: today,
+        end_date: endDate,
+        priority: 'normal',
+        status: 'pending',
+        department_code: user.departments[0] ?? null,
+        is_today: endDate === today ? 1 : 0,
+        is_today_date: endDate === today ? today : null,
+      }),
+      `Đã thêm việc cá nhân: "${title.trim()}"`,
+    );
+    return created !== null;
   };
 
   /**
-   * Tính lại tiến độ cộng dồn: T4→T3→T2→T1.
-   * Pre-group theo parent trong 1 pass O(N) để tránh nested filter O(N²).
+   * Lưu nhật ký cho nhiều task. Trả về id các task đã lưu thành công — view chỉ
+   * xoá bản nháp của những task này, task lỗi giữ nguyên nháp để người dùng sửa lại.
+   * Vướng mắc mới được gửi qua /blocker để Trưởng phòng thấy (nhật ký chỉ lưu lịch sử).
    */
-  /** Cập nhật 1 item trong cây 4 tầng + sync backend (backend tự rollup). */
-  const handleUpdateTierItem = (updated: TierItem) => {
-    // FE chỉ giữ optimistic update cho UX mượt; backend là source of truth (xem recomputeRollup).
-    const newItems = tierItems.map((item) => (item.id === updated.id ? updated : item));
-    setTierItems(newItems);
-    setSelectedItemForDrawer(updated);
-    logHistory('task', updated.id, `Cập nhật tiến độ ${updated.code} → ${updated.progress}%`);
-    // Sync lên backend nếu id là của row thật (không phải local placeholder).
-    // ID frontend giờ là composite "<tier>-<num>" (vd "4-1"); extract số để gọi API.
-    const numId = extractBackendId(updated.id);
-    if (Number.isFinite(numId)) {
-      fireAndForget(
-        api.updateTask(updated.tier, numId, {
-          title: updated.title,
-          progress: updated.progress,
-          status: viStatusToEnum(updated.status),
-          priority: viPriorityToEnum(updated.priority),
-          start_date: updated.startDate,
-          end_date: updated.endDate,
-          description: updated.description,
-          management_notes: updated.managementNotes,
-        }),
-        `updateTask#${updated.id}`,
-      );
-    }
-    showToast(`Đã cập nhật tiến độ ${updated.code} lên ${updated.progress}%`);
-  };
+  const handleSaveLogs = async (entries: SaveLogEntry[]): Promise<string[]> => {
+    const saved: string[] = [];
+    const failures: string[] = [];
 
-  /** Thêm item mới vào cây 4 tầng: optimistic update trước, rồi sync backend. */
-  const handleAddTierItem = async (newItemData: Partial<TierItem>) => {
-    const localId = `tier-item-${Date.now()}`;
-    const newItem: TierItem = {
-      id: localId,
-      // code để trống — backend tự generate (NEW-XXXXXX) trong response.
-      code: '',
-      tier: newItemData.tier || 4,
-      tierName: newItemData.tierName || 'Tầng 4: Đầu việc',
-      tierBadge: newItemData.tierBadge || 'VIỆC T4',
-      title: newItemData.title || 'Đầu việc mới',
-      parentId: newItemData.parentId,
-      owner: newItemData.owner || {
-        name: user.fullname,
-        role: `${ROLE_HELLO[user.role]} · ${user.departments[0] ?? ''}`,
-        initial: user.initial ?? user.fullname.charAt(0),
-        avatar: user.avatar,
-      },
-      ownerUsername: newItemData.ownerUsername ?? '',
-      department: newItemData.department ?? user.departments[0],
-      // 2026-10: deadline → end_date; startDate mặc định = today nếu không có
-      startDate: newItemData.startDate || new Date().toISOString().slice(0, 10),
-      endDate: newItemData.endDate || '2099-12-31',
-      progress: newItemData.progress || 0,
-      status: newItemData.status || 'Chuẩn bị',
-      priority: newItemData.priority || 'Trung bình',
-      description: newItemData.description || 'Chưa có mô tả',
-      managementNotes: newItemData.managementNotes || `Tạo bởi ${user.fullname}.`,
-      gantt: newItemData.gantt || {
-        startWeek: 2,
-        endWeek: 3,
-      },
-    };
-
-    // Optimistic update — backend tự rollup progress khi response trả về.
-    const newItems = [...tierItems, newItem];
-    setTierItems(newItems);
-    logHistory(
-      newItem.tier === 1 ? 'project' : newItem.tier === 2 ? 'phase' : newItem.tier === 3 ? 'bundle' : 'task',
-      localId,
-      `Tạo mới ${newItem.code}: ${newItem.title}`,
-    );
-    showToast(`Đã thêm thành công: ${newItem.title}`);
-
-    // Sync lên backend — đợi response để replace local id bằng backend INTEGER id,
-    // đảm bảo các PATCH sau gọi đúng endpoint.
-    // parentId giờ là composite "<tier>-<num>" → extract numeric cho backend.
-    const parentNumericId = newItem.parentId
-      ? extractBackendId(newItem.parentId)
-      : NaN;
-
-    const result = await api.createTask({
-      code: newItem.code,
-      tier: newItem.tier,
-      title: newItem.title,
-      parent_id: parentNumericId,
-      department_code: newItem.department,
-      // Gửi owner_username để backend tra cứu user_id (thay vì để undefined).
-      owner_username: newItem.ownerUsername,
-      progress: newItem.progress,
-      // Map status VN → enum DB
-      status: viStatusToEnum(newItem.status),
-      priority: viPriorityToEnum(newItem.priority),
-      description: newItem.description,
-      management_notes: newItem.managementNotes,
-      start_date: newItem.startDate,
-      end_date: newItem.endDate,
-      // Không gửi start_week/end_week: Gantt derive tuần từ start_date/end_date
-      // (xem transforms.ts:computeWeekFromDate) — không lưu 2 nguồn sự thật.
-    });
-
-    if (result.ok && result.data?.item?.id != null) {
-      // Replace local id bằng composite id mới từ backend (giữ tier để walk cây đúng).
-      const backendCompositeId = toCompositeId(newItem.tier, result.data.item.id);
-      // Đồng thời cập nhật code nếu backend đã generate lại (vd: NEW-XXXXXX)
-      const backendItem = result.data.item;
-      setTierItems((prev) =>
-        prev.map((t) =>
-          t.id === localId
-            ? {
-                ...t,
-                id: backendCompositeId,
-                code: backendItem.code ?? t.code,
-                // Sync các field từ backend để khớp với DB.
-                // Cast progress/status vì TierItemDto dùng string/number thay vì literal union.
-                progress: typeof backendItem.progress === 'number'
-                  ? backendItem.progress
-                  : t.progress,
-                status: (backendItem.status as TierItem['status']) ?? t.status,
-              }
-            : t
-        )
-      );
-      // Cập nhật history entry id tương ứng
-      setHistory((prev) =>
-        prev.map((h) =>
-          h.entityId === localId && h.entityType === (
-            newItem.tier === 1 ? 'project' :
-            newItem.tier === 2 ? 'phase' :
-            newItem.tier === 3 ? 'bundle' : 'task'
-          )
-            ? { ...h, entityId: backendCompositeId }
-            : h
-        )
-      );
-    } else {
-      console.warn(`[handleAddTierItem] Backend lưu thất bại: ${result.error?.message || 'unknown'}`);
-      showToast(
-        `Đã lưu local nhưng backend lỗi: ${result.error?.message || 'unknown'}`,
-        'warning'
-      );
-    }
-  };
-
-  // Approve Team Task
-  const handleApproveTeamTask = (taskId: string) => {
-    setTeamTasks((prev) =>
-      prev.map((t) => (t.id === taskId ? { ...t, status: 'done' as const } : t))
-    );
-    logHistory('task', taskId, 'Nghiệm thu & duyệt hoàn thành');
-    // Dual-write: sync lên backend (id là composite "<tier>-<num>").
-    const numId = extractBackendId(taskId);
-    if (Number.isFinite(numId)) {
-      // Cần tier để dispatch; tìm trong tierItems.
-      const found = tierItems.find((t) => String(t.id) === String(taskId));
-      const tier = found?.tier ?? 4;
-      fireAndForget(api.approveTask(tier, numId), `approveTask#${taskId}`);
-    }
-    showToast('Đã phê duyệt nghiệm thu công việc!');
-  };
-
-  /** Toggle trạng thái done/doing của EmployeeTask — sync backend. */
-  const handleToggleEmployeeTask = (taskId: string) => {
-    setEmployeeTasks((prev) =>
-      prev.map((t) => {
-        if (t.id === taskId) {
-          const isDone = t.status === 'done';
-          return {
-            ...t,
-            status: isDone ? 'doing' : 'done',
-            lastUpdated: isDone ? 'Đang làm' : 'Vừa báo xong việc',
-          };
+    await Promise.all(
+      entries.map(async (e) => {
+        const item = tierItems.find((t) => t.id === e.taskId);
+        const ref = parseTaskId(e.taskId);
+        if (!item || !ref) {
+          failures.push(STALE_ITEM_MESSAGE);
+          return;
         }
-        return t;
-      })
-    );
-    showToast('Tuyệt vời! Kết quả công việc đã tự động cập nhật lên bảng của Trưởng phòng.');
-    // Sync lên backend — chỉ gọi nếu id trỏ về row thật (composite "<tier>-<num>").
-    const numId = extractBackendId(taskId);
-    if (Number.isFinite(numId)) {
-      // Cần tier; lookup trong tierItems.
-      const found = tierItems.find((t) => String(t.id) === String(taskId));
-      const tier = found?.tier ?? 4;
-      fireAndForget(
-        api.toggleTask(tier, numId),
-        `toggleTask#${taskId}`,
-      );
-    }
-  };
-
-  /** Chuyển task từ pending → doing. Dùng PATCH thay vì toggle (toggle chỉ done↔doing). */
-  const handleStartEmployeeTask = (taskId: string) => {
-    setEmployeeTasks((prev) =>
-      prev.map((t) => (t.id === taskId ? { ...t, status: 'doing' } : t))
-    );
-    showToast('Trạng thái chuyển sang: Đang tiến hành làm.');
-    const numId = extractBackendId(taskId);
-    if (Number.isFinite(numId)) {
-      const found = tierItems.find((t) => String(t.id) === String(taskId));
-      const tier = found?.tier ?? 4;
-      fireAndForget(
-        api.updateTask(tier, numId, { status: 'doing' }),
-        `startEmployeeTask#${taskId}`,
-      );
-    }
-  };
-
-  /** Set blocker_note trên task — escalation NV ↔ Manager. */
-  const handleSetBlocker = (taskId: string, note: string) => {
-    const trimmed = note.trim();
-    setEmployeeTasks((prev) =>
-      prev.map((t) => (t.id === taskId ? { ...t, blockerNote: trimmed } : t))
-    );
-    if (!trimmed) return;
-    const numId = extractBackendId(taskId);
-    if (!Number.isFinite(numId)) return;
-    const found = tierItems.find((t) => String(t.id) === String(taskId));
-    const tier = found?.tier ?? 4;
-    fireAndForget(
-      api.setTaskBlocker(tier, numId, trimmed),
-      `setBlocker#${taskId}`,
-    );
-    showToast('Đã ghi nhận vướng mắc. Trưởng phòng sẽ xem khi mở task.');
-  };
-
-  /** Tạo việc cá nhân (không có trong tier tree). */
-  const handleAddPersonalTask = (title: string, deadline: string, notes: string) => {
-    // Ưu tiên directoryUsers (từ /api/users), fallback về onlineUsers rồi SEED_USERS (offline).
-    // Employee không gọi được /api/users (403), thường dùng onlineUsers từ AuthContext.
-    const sourceUsers = directoryUsers.length > 0 ? directoryUsers : onlineUsers;
-    const manager = findManagerOf(
-      user,
-      sourceUsers.length > 0 ? sourceUsers : SEED_USERS,
-    );
-    const newTask: EmployeeTask = {
-      id: `emp-task-${Date.now()}`,
-      // code để trống — backend tự generate (NEW-XXXXXX) trong response.
-      code: '',
-      bundleName: 'Việc cá nhân',
-      title,
-      description: notes || 'Nhiệm vụ cá nhân tự ghi chú.',
-      currentDeliverable: 'Đang chuẩn bị triển khai',
-      lastUpdated: 'Vừa tạo',
-      deadline,
-      isToday: deadline.includes('Hôm nay'),
-      status: 'doing',
-      // Fix #1: personal task mới tạo luôn bắt đầu từ 0%.
-      progress: 0,
-      ownerUsername: user.username,
-      department: user.departments[0],
-      manager: {
-        name: manager?.fullname ?? user.fullname, // fallback cho director/admin
-        role: manager
-          ? `${ROLE_HELLO[manager.role]} · ${manager.departments[0] ?? ''}`
-          : `${ROLE_HELLO[user.role]} · ${user.departments[0] ?? ''}`,
-        avatar: manager?.avatar ?? user.avatar ?? '',
-      },
-      // `notes` từ NewPersonalTaskModal lưu vào description + daily_log.
-    };
-
-    setEmployeeTasks((prev) => [newTask, ...prev]);
-    logHistory('task', newTask.id, `Tạo việc cá nhân: "${title}"`);
-    fireAndForget(
-      api.createTask({
-        tier: 4,
-        title,
-        description: notes || newTask.description,
-        end_date: deadline,
-        priority: 'normal',
-        status: 'pending',
+        if (!canAddDailyLog(user, item)) {
+          failures.push(`${item.code}: bạn không có quyền ghi nhật ký.`);
+          return;
+        }
+        const logRes = await api.addDailyLog({
+          taskId: ref.num,
+          description: e.desc,
+          result: e.result,
+          obstacle: e.obstacle,
+          progress: e.progress,
+        });
+        if (!logRes.ok) {
+          failures.push(`${item.code}: ${describeApiError(logRes)}`);
+          return;
+        }
+        const currentBlocker = data.tasks.find((t) => t.tier === 4 && t.id === ref.num)?.blocker_note ?? '';
+        if (e.obstacle && e.obstacle !== currentBlocker) {
+          const blockerRes = await api.setTaskBlocker(ref.tier, ref.num, e.obstacle);
+          if (!blockerRes.ok) {
+            failures.push(`${item.code}: đã lưu nhật ký nhưng chưa gửi được vướng mắc — ${describeApiError(blockerRes)}`);
+          }
+        }
+        saved.push(e.taskId);
       }),
-      `createTask#${newTask.code}`,
     );
-    showToast(`Đã thêm việc cá nhân: "${title}"`);
+
+    if (saved.length > 0) {
+      const refreshed = await reload();
+      showToast(saved.length === 1 ? 'Đã lưu nhật ký.' : `Đã lưu ${saved.length} nhật ký.`);
+      if (!refreshed) showToast('Chưa tải lại được dữ liệu mới nhất. Hãy tải lại trang.', 'warning');
+    }
+    if (failures.length > 0) {
+      const more = failures.length > 1 ? ` (và ${failures.length - 1} lỗi khác — nháp vẫn được giữ)` : ' — nháp vẫn được giữ';
+      showToast(`${failures[0]}${more}`, 'error');
+    }
+    return saved;
   };
 
-  return (
-    <div className="min-h-screen bg-[#f8f9ff] text-[#0b1c30] flex flex-col font-sans selection:bg-blue-100 selection:text-blue-900">
-      <Header
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        unreadCount={teamTasks.filter((t) => t.status === 'need_help').length}
-      />
+  const handleAddDrawerLog = async (
+    taskId: string,
+    desc: string,
+    result: string | undefined,
+    obstacle: string | undefined,
+    progress: number,
+  ): Promise<boolean> => {
+    const saved = await handleSaveLogs([
+      { taskId, desc, result: result ?? '', obstacle: obstacle ?? '', progress },
+    ]);
+    return saved.length > 0;
+  };
 
-      <main className="w-full pt-14 flex-1">
-        {activeTab === 'cay-gantt-4-tang' && (
+  const renderTab = () => {
+    if (loadStatus === 'loading') return <LoadingState />;
+    if (loadStatus === 'error') return <LoadErrorState message={loadError} onRetry={retry} />;
+
+    switch (activeTab) {
+      case 'cay-gantt-4-tang':
+        return (
           <Gantt4TangView
             tierItems={visibleTierItems}
             currentUser={user}
-            onSelectItem={(item) => {
-              setSelectedItemForDrawer(item);
-              setIsDrawerOpen(true);
-            }}
+            onSelectItem={(item) => setDrawerItemId(item.id)}
             onOpenNewModal={() => setIsNewItemModalOpen(true)}
           />
-        )}
-
-        {activeTab === 'giao-viec-nhom' &&
-          (user.role === 'employee' || user.role === 'director' ? (
-            <ForbiddenView role={user.role} />
-          ) : (
-            <GiaoViecNhomView
-              teamMembers={visibleTeamMembers}
-              tasks={visibleTeamTasks}
-              onApproveTask={handleApproveTeamTask}
-              onOpenNewTaskModal={() => setIsNewItemModalOpen(true)}
-              onOpenNewBundleModal={() => setIsNewItemModalOpen(true)}
-            />
-          ))}
-
-        {activeTab === 'viec-cua-toi' &&
-          (user.role === 'director' ? (
-            <ForbiddenView role={user.role} />
-          ) : (
-            <ViecCuaToiView
-              currentUser={user}
-              tasks={visibleEmployeeTasks}
-              dailyLogs={dailyLogs}
-              onToggleDone={handleToggleEmployeeTask}
-              onStartTask={handleStartEmployeeTask}
-              onAddDailyLog={(taskId, desc, result, obstacle, progress) => {
-                const finalProgress = progress ?? 0;
-                const task = tierItems.find((t) => t.id === taskId);
-                if (!task) return;
-                if (!canAddDailyLog(user, task)) {
-                  showToast('Bạn không có quyền ghi nhật ký cho task này.');
-                  return;
-                }
-                // Cập nhật local state trước (optimistic). NV sẽ thấy ngay
-                // task.currentDeliverable = result mà không cần reload.
-                // Sync blockerNote từ obstacle để status "Có vướng mắc" phản
-                // ánh đúng ý NV sau khi ghi nhật ký inline.
-                setEmployeeTasks((prev) =>
-                  prev.map((t) =>
-                    t.id === taskId
-                      ? {
-                          ...t,
-                          currentDeliverable: result || '',
-                          blockerNote: obstacle ? obstacle.trim() : t.blockerNote,
-                          lastUpdated: 'Vừa ghi nhật ký',
-                        }
-                      : t,
-                  )
-                );
-                setDailyLogs((prev) => [
-                  {
-                    id: uid('log'),
-                    taskId,
-                    logDate: new Date().toISOString().slice(0, 10),
-                    description: desc,
-                    result,
-                    obstacle,
-                    progress: finalProgress,
-                    username: user.username,
-                    userName: user.fullname,
-                    userRole: `${ROLE_LABEL[user.role]} · ${user.departments[0] ?? ''}`,
-                  },
-                  ...prev,
-                ]);
-                logHistory('daily_log', taskId, `Ghi nhật ký thi công (+${finalProgress}%)`);
-                const taskNumId = extractBackendId(taskId);
-                if (Number.isFinite(taskNumId)) {
-                  fireAndForget(
-                    api.addDailyLog({
-                      taskId: taskNumId,
-                      description: desc,
-                      result,
-                      obstacle,
-                      progress: finalProgress,
-                    }),
-                    `addDailyLog#${taskId}`,
-                  );
-                }
-                showToast('Đã ghi nhật ký thi công mới.');
-              }}
-              onSaveAllLogs={(entries) => {
-                // Batch save — 1 cú click lưu N task. Tối ưu N+1 network call.
-                // Mỗi entry qua cùng pipeline (canAddDailyLog guard + optimistic
-                // update + audit + fireAndForget API) nhưng gom toast thành summary.
-                let saved = 0;
-                let skipped = 0;
-                for (const e of entries) {
-                  const finalProgress = e.progress ?? 0;
-                  const task = tierItems.find((t) => t.id === e.taskId);
-                  if (!task) {
-                    skipped++;
-                    continue;
-                  }
-                  if (!canAddDailyLog(user, task)) {
-                    skipped++;
-                    continue;
-                  }
-                  setEmployeeTasks((prev) =>
-                    prev.map((t) =>
-                      t.id === e.taskId
-                        ? {
-                            ...t,
-                            currentDeliverable: e.result || '',
-                            blockerNote: e.obstacle ? e.obstacle.trim() : t.blockerNote,
-                            lastUpdated: 'Vừa ghi nhật ký',
-                          }
-                        : t,
-                    ),
-                  );
-                  setDailyLogs((prev) => [
-                    {
-                      id: uid('log'),
-                      taskId: e.taskId,
-                      logDate: new Date().toISOString().slice(0, 10),
-                      description: e.desc,
-                      result: e.result,
-                      obstacle: e.obstacle,
-                      progress: finalProgress,
-                      username: user.username,
-                      userName: user.fullname,
-                      userRole: `${ROLE_LABEL[user.role]} · ${user.departments[0] ?? ''}`,
-                    },
-                    ...prev,
-                  ]);
-                  logHistory(
-                    'daily_log',
-                    e.taskId,
-                    `Ghi nhật ký thi công (+${finalProgress}%)`,
-                  );
-                  const taskNumId = extractBackendId(e.taskId);
-                  if (Number.isFinite(taskNumId)) {
-                    fireAndForget(
-                      api.addDailyLog({
-                        taskId: taskNumId,
-                        description: e.desc,
-                        result: e.result,
-                        obstacle: e.obstacle,
-                        progress: finalProgress,
-                      }),
-                      `addDailyLog#${e.taskId}`,
-                    );
-                  }
-                  saved++;
-                }
-                if (saved > 0) {
-                  const msg =
-                    skipped > 0
-                      ? `Đã lưu ${saved} nhật ký (bỏ qua ${skipped} task không có quyền).`
-                      : `Đã lưu ${saved} nhật ký.`;
-                  showToast(msg);
-                } else if (skipped > 0) {
-                  showToast('Không có task nào được lưu (thiếu quyền).', 'warning');
-                }
-              }}
-              onOpenNewPersonalTaskModal={() => setIsNewPersonalTaskOpen(true)}
-            />
-          ))}
-
-        {activeTab === 'bao-cao' &&
-          (user.role === 'employee' ? (
-            <WeeklyReportView currentUser={user} mode="edit" onToast={showToast} />
-          ) : (
-            <>
-              {/* Sub-view: Quản lý chuyển giữa "Tổng quan" (cũ) và "Báo cáo tuần phòng ban" (mới). */}
-              <div className="pt-14 px-6 print:hidden">
-                <div className="max-w-[1100px] mx-auto flex items-center gap-1 border-b border-[#e5eeff]">
-                  {(['tong-quan', 'tuan-phong-ban'] as const).map((k) => (
-                    <button
-                      key={k}
-                      onClick={() => setBaoCaoSubTab(k)}
-                      className={`px-3 py-2 text-[13px] font-medium -mb-px border-b-2 transition-colors ${
-                        baoCaoSubTab === k
-                          ? 'border-[#004ac6] text-[#004ac6]'
-                          : 'border-transparent text-[#434655] hover:text-[#0b1c30]'
-                      }`}
-                    >
-                      {k === 'tong-quan' ? 'Tổng quan' : 'Báo cáo tuần phòng ban'}
-                    </button>
-                  ))}
-                </div>
+        );
+      case 'giao-viec-nhom':
+        return user.role === 'employee' || user.role === 'director' ? (
+          <ForbiddenView role={user.role} />
+        ) : (
+          <GiaoViecNhomView
+            teamMembers={visibleTeamMembers}
+            tasks={visibleTeamTasks}
+            onApproveTask={handleApproveTeamTask}
+            onOpenNewTaskModal={() => setIsNewItemModalOpen(true)}
+            onOpenNewBundleModal={() => setIsNewItemModalOpen(true)}
+          />
+        );
+      case 'viec-cua-toi':
+        return user.role === 'director' ? (
+          <ForbiddenView role={user.role} />
+        ) : (
+          <ViecCuaToiView
+            currentUser={user}
+            tasks={visibleEmployeeTasks}
+            dailyLogs={dailyLogs}
+            onAdvanceTask={handleAdvanceEmployeeTask}
+            onSaveLogs={handleSaveLogs}
+            onOpenNewPersonalTaskModal={() => setIsNewPersonalTaskOpen(true)}
+          />
+        );
+      case 'bao-cao':
+        if (user.role === 'employee') {
+          return <WeeklyReportView currentUser={user} mode="edit" onToast={showToast} />;
+        }
+        return (
+          <>
+            <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 pt-6 print:hidden">
+              <div
+                role="tablist"
+                aria-label="Loại báo cáo"
+                className="flex items-center gap-1 border-b border-surface-container"
+              >
+                {(['tong-quan', 'tuan-phong-ban'] as const).map((k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    role="tab"
+                    aria-selected={baoCaoSubTab === k}
+                    onClick={() => setBaoCaoSubTab(k)}
+                    className={`px-3 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
+                      baoCaoSubTab === k
+                        ? 'border-primary text-primary'
+                        : 'border-transparent text-on-surface-variant hover:text-on-surface'
+                    }`}
+                  >
+                    {k === 'tong-quan' ? 'Tổng quan' : 'Báo cáo tuần phòng ban'}
+                  </button>
+                ))}
               </div>
-              {baoCaoSubTab === 'tuan-phong-ban' ? (
-                <WeeklyReportTeamView currentUser={user} onToast={showToast} />
-              ) : (
-                <BaoCaoTongQuanView
-                  tierItems={visibleTierItems}
-                  teamMembers={visibleTeamMembers}
-                  teamTasks={visibleTeamTasks}
-                  dailyLogs={dailyLogs}
-                  currentUser={user}
-                />
-              )}
-            </>
-          ))}
-      </main>
+            </div>
+            {baoCaoSubTab === 'tuan-phong-ban' ? (
+              <WeeklyReportTeamView currentUser={user} onToast={showToast} />
+            ) : (
+              <BaoCaoTongQuanView
+                tierItems={visibleTierItems}
+                teamMembers={visibleTeamMembers}
+                teamTasks={visibleTeamTasks}
+                dailyLogs={dailyLogs}
+                currentUser={user}
+              />
+            )}
+          </>
+        );
+    }
+  };
 
-      {/* Footer */}
-      <footer className="w-full bg-white border-t border-[#e5eeff] py-4">
-        <div className="max-w-[1720px] mx-auto px-4 sm:px-6 flex items-center justify-center gap-2 text-[#565e74] text-[12px]">
+  return (
+    <div className="min-h-screen bg-surface text-on-surface flex flex-col font-sans selection:bg-primary-fixed selection:text-on-primary-fixed">
+      <Header
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        unreadCount={visibleTeamTasks.filter((t) => t.status === 'need_help').length}
+      />
+
+      <main className="w-full pt-[6.5rem] md:pt-14 flex-1">{renderTab()}</main>
+
+      <footer className="w-full bg-white border-t border-surface-container py-4">
+        <div className="max-w-[1720px] mx-auto px-4 sm:px-6 flex items-center justify-center gap-2 text-secondary text-xs">
           <span>© 2026 Hệ thống công việc và báo cáo TAG</span>
         </div>
       </footer>
 
-      {/* 8 Core Fields Slide-over Inspector Drawer */}
       <DetailsDrawer
-        item={selectedItemForDrawer}
-        isOpen={isDrawerOpen}
-        onClose={() => setIsDrawerOpen(false)}
+        item={drawerItem}
+        isOpen={drawerItem !== null}
+        onClose={() => setDrawerItemId(null)}
         onUpdateItem={handleUpdateTierItem}
         dailyLogs={dailyLogs}
-        history={history}
-        allTierItems={tierItems}
         currentUser={user}
-        onAddDailyLog={(taskId, desc, result, obstacle, progress) => {
-          const finalProgress = progress ?? 0;
-          // A7 guard: chỉ owner task hoặc manager trong phòng ban được ghi nhật ký.
-          const task = tierItems.find((t) => t.id === taskId);
-          if (!task) return;
-          if (!canAddDailyLog(user, task)) {
-            showToast('Bạn không có quyền ghi nhật ký cho task này.');
-            return;
-          }
-          const newLog: DailyLog = {
-            id: uid('log'),
-            taskId,
-            logDate: new Date().toISOString().slice(0, 10),
-            description: desc,
-            result,
-            obstacle,
-            progress: finalProgress,
-            username: user.username,
-            userName: user.fullname,
-            userRole: `${ROLE_LABEL[user.role]} · ${user.departments[0] ?? ''}`,
-          };
-          setDailyLogs((prev) => [newLog, ...prev]);
-          logHistory('daily_log', taskId, `Ghi nhật ký thi công (+${finalProgress}%)`);
-          // Dual-write: sync daily log mới lên backend. taskId là composite '<tier>-<num>'.
-          const taskNumId = extractBackendId(taskId);
-          if (Number.isFinite(taskNumId)) {
-            fireAndForget(
-              api.addDailyLog({
-                taskId: taskNumId,
-                description: desc,
-                result,
-                obstacle,
-                progress: finalProgress,
-              }),
-              `addDailyLog#${taskId}`,
-            );
-          }
-          showToast('Đã ghi nhật ký thi công mới.');
-        }}
+        onAddDailyLog={handleAddDrawerLog}
       />
 
-      {/* Add New Item Modal */}
       <NewItemModal
         isOpen={isNewItemModalOpen}
         onClose={() => setIsNewItemModalOpen(false)}
         onAddItem={handleAddTierItem}
         parents={tierItems.map((i) => ({ id: i.id, title: i.title, tier: i.tier }))}
         currentUser={user}
-        // Filter theo phòng ban của user; admin (departments=[]) thấy hết.
+        // Lọc theo phòng ban của user; admin (departments=[]) thấy hết.
         deptUsers={directoryUsers
-          .filter((u) => {
-            if (user.departments.length === 0) return true;
-            return u.departments?.some((d) => user.departments.includes(d));
-          })
+          .filter((u) => user.departments.length === 0 || u.departments?.some((d) => user.departments.includes(d)))
           .map((u) => ({ username: u.username, fullname: u.fullname }))}
       />
 
-      {/* New Personal Task Modal */}
       <NewPersonalTaskModal
         isOpen={isNewPersonalTaskOpen}
         onClose={() => setIsNewPersonalTaskOpen(false)}
@@ -953,38 +477,68 @@ function AuthenticatedApp({ user, onlineUsers }: AuthenticatedAppProps) {
         currentUser={user}
       />
 
-      {/* Toast Notification */}
-      <Toast message={toastMessage} type={toastType} />
+      <ToastStack toasts={toast.toasts} onDismiss={toast.dismiss} />
     </div>
   );
 }
 
-/**
- * Inline forbidden screen for tabs the current role shouldn't see.
- * Kept tiny so it doesn't pull another component file.
- */
-const ForbiddenView: React.FC<{ role: User['role'] }> = ({ role }) => {
-  const isDirector = role === 'director';
-  return (
-    <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-12 flex flex-col items-center text-center gap-3">
-      <div className="w-14 h-14 rounded-full bg-[#ffdad6]/40 text-[#93000a] flex items-center justify-center">
-        <span className="material-symbols-outlined text-[28px]">lock</span>
-      </div>
-      <h2 className="text-[20px] font-bold text-[#0b1c30]">Bạn không có quyền truy cập</h2>
-      {isDirector ? (
-        <p className="text-[13px] text-[#565e74] max-w-md leading-relaxed">
-          Vai trò BGĐ chỉ truy cập <span className="font-semibold text-[#004ac6]">Cây công việc</span> và
-          <span className="font-semibold text-[#004ac6]"> Báo cáo</span>.
-        </p>
-      ) : (
-        <p className="text-[13px] text-[#565e74] max-w-md">
-          Vai trò <span className="font-semibold">{ROLE_LABEL[role]}</span> chỉ được phép truy cập
-          mục <span className="font-semibold text-[#004ac6]">Việc của tôi</span>.
-        </p>
-      )}
+const LoadingState: React.FC = () => (
+  <div
+    role="status"
+    aria-live="polite"
+    className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 flex flex-col gap-4"
+  >
+    <span className="sr-only">Đang tải dữ liệu…</span>
+    <div className="h-24 rounded-xl bg-surface-container-low animate-pulse" />
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {[0, 1, 2, 3].map((i) => (
+        <div key={i} className="h-28 rounded-xl bg-surface-container-low animate-pulse" />
+      ))}
     </div>
-  );
-};
+    <div className="h-80 rounded-xl bg-surface-container-low animate-pulse" />
+  </div>
+);
+
+const LoadErrorState: React.FC<{ message: string | null; onRetry: () => void }> = ({ message, onRetry }) => (
+  <div role="alert" className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-16 flex flex-col items-center text-center gap-3">
+    <div className="w-14 h-14 rounded-full bg-error-container text-on-error-container flex items-center justify-center">
+      <span aria-hidden="true" className="material-symbols-outlined [--icon-size:28px]">cloud_off</span>
+    </div>
+    <h2 className="text-xl font-bold text-on-surface">Chưa tải được dữ liệu</h2>
+    <p className="text-sm text-secondary max-w-md">
+      {message ?? 'Máy chủ không phản hồi.'} Dữ liệu hiển thị sẽ không chính xác cho tới khi tải lại thành công.
+    </p>
+    <button
+      type="button"
+      onClick={onRetry}
+      className="mt-2 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary hover:bg-primary-container text-on-primary text-sm font-semibold"
+    >
+      <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px]">refresh</span>
+      Thử lại
+    </button>
+  </div>
+);
+
+/** Màn hình chặn cho tab mà vai trò hiện tại không được xem. */
+const ForbiddenView: React.FC<{ role: User['role'] }> = ({ role }) => (
+  <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-12 flex flex-col items-center text-center gap-3">
+    <div className="w-14 h-14 rounded-full bg-error-container/40 text-on-error-container flex items-center justify-center">
+      <span aria-hidden="true" className="material-symbols-outlined [--icon-size:28px]">lock</span>
+    </div>
+    <h2 className="text-xl font-bold text-on-surface">Bạn không có quyền truy cập</h2>
+    {role === 'director' ? (
+      <p className="text-sm text-secondary max-w-md leading-relaxed">
+        Vai trò BGĐ chỉ truy cập <span className="font-semibold text-primary">Cây công việc</span> và
+        <span className="font-semibold text-primary"> Báo cáo</span>.
+      </p>
+    ) : (
+      <p className="text-sm text-secondary max-w-md">
+        Vai trò <span className="font-semibold">{ROLE_LABEL[role]}</span> chỉ được phép truy cập
+        mục <span className="font-semibold text-primary">Việc của tôi</span>.
+      </p>
+    )}
+  </div>
+);
 
 export default function App() {
   return (

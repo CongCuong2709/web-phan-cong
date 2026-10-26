@@ -1,10 +1,13 @@
 ﻿import React, { useState } from 'react';
+import { Avatar } from './ui/Brand';
 import { TeamMember, TeamLeadTask } from '../types';
+import { todayIso } from '../lib/transforms';
 
 interface GiaoViecNhomViewProps {
   teamMembers: TeamMember[];
   tasks: TeamLeadTask[];
-  onApproveTask: (taskId: string) => void;
+  /** Resolve sau khi server trả lời — nút bị khoá trong lúc chờ để không gửi trùng. */
+  onApproveTask: (taskId: string) => Promise<boolean>;
   onOpenNewTaskModal: () => void;
   onOpenNewBundleModal: () => void;
 }
@@ -19,6 +22,17 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
   // Escalation qua tasks.blocker_note (manager xem khi mở task — DetailsDrawer).
   const [filter, setFilter] = useState<'all' | 'pending' | 'need_help' | 'done'>('pending');
   const [memberFilter, setMemberFilter] = useState<string | null>(null);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+
+  const approve = async (taskId: string) => {
+    if (approvingId) return;
+    setApprovingId(taskId);
+    try {
+      await onApproveTask(taskId);
+    } finally {
+      setApprovingId(null);
+    }
+  };
 
   // Filtered task list
   const filteredTasks = tasks.filter((t) => {
@@ -42,11 +56,22 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
   const helpCount = tasks.filter((t) => t.status === 'need_help').length;
   const doneCount = tasks.filter((t) => t.status === 'done').length;
 
-  // --- Dynamic summary cards (replacing all hardcoded values) ---
-  // "Đang làm tốt": tasks that are in_progress (not blocked, not done, not need_help)
-  const inProgressCount = tasks.filter(
-    (t) => t.status !== 'need_help' && t.status !== 'done' && t.status !== 'pending_approval'
-  ).length;
+  const today = todayIso();
+  const isOverdue = (t: TeamLeadTask) =>
+    (t.status === 'in_progress' || t.status === 'need_help') && !!t.deadline && t.deadline < today;
+  const inProgressCount = tasks.filter((t) => t.status === 'in_progress').length;
+  const overdueCount = tasks.filter(isOverdue).length;
+
+  /** Số liệu từng thành viên tính từ chính danh sách việc — không dùng câu chữ dựng sẵn ở backend. */
+  const statsFor = (username?: string) => {
+    const mine = tasks.filter((t) => t.ownerUsername === username);
+    return {
+      open: mine.filter((t) => t.status === 'in_progress' || t.status === 'need_help').length,
+      blocked: mine.filter((t) => t.status === 'need_help').length,
+      overdue: mine.filter(isOverdue).length,
+      awaiting: mine.filter((t) => t.status === 'pending_approval').length,
+    };
+  };
   // First member who needs help
   const helpMember = teamMembers.find((m) => m.needHelp);
   const helpMemberNote = helpMember?.urgentNote
@@ -59,9 +84,9 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
     <div className="flex flex-col w-full">
       <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 flex flex-col gap-6">
         {/* Header Section */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 sm:p-6 rounded-xl border border-[#e5eeff] shadow-sm">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 sm:p-6 rounded-xl border border-surface-container shadow-sm">
           <div className="flex flex-col gap-1">
-            <h1 className="text-[22px] sm:text-[26px] font-bold text-[#0b1c30] tracking-tight">
+            <h1 className="text-2xl sm:text-3xl font-bold text-on-surface tracking-tight">
               Giao việc & Theo dõi nhóm
             </h1>
           </div>
@@ -69,23 +94,23 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
           <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap shrink-0">
             <button
               onClick={onOpenNewBundleModal}
-              className="px-3.5 py-2 bg-[#eff4ff] hover:bg-[#dce9ff] text-[#0b1c30] text-[13px] font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-sm"
+              className="px-3.5 py-2 bg-surface-container-low hover:bg-surface-container-high text-on-surface text-sm font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-sm"
               type="button"
             >
-              <span className="material-symbols-outlined text-[18px] text-[#004ac6]">
+              <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px] text-primary">
                 folder_copy
               </span>
-              <span>+ Tạo nhóm việc / Đợt việc</span>
+              <span>Tạo nhóm việc / Đợt việc</span>
             </button>
             <button
               onClick={onOpenNewTaskModal}
-              className="px-4 py-2 bg-[#004ac6] hover:bg-[#2563eb] text-white text-[13px] font-semibold rounded-lg flex items-center gap-1.5 shadow-sm transition-all active:scale-[0.98]"
+              className="px-4 py-2 bg-primary hover:bg-primary-container text-white text-sm font-semibold rounded-lg flex items-center gap-1.5 shadow-sm transition-all active:scale-[0.98]"
               type="button"
             >
-              <span className="material-symbols-outlined text-[18px]">
+              <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px]">
                 add_task
               </span>
-              <span>+ Giao việc mới cho nhân viên</span>
+              <span>Giao việc mới cho nhân viên</span>
             </button>
           </div>
         </div>
@@ -93,66 +118,66 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
         {/* 4 Summary Metric Cards — tính động từ props */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Card 1 */}
-          <div className="bg-white p-4 sm:p-5 rounded-xl border border-[#e5eeff] shadow-sm flex flex-col justify-between">
+          <div className="bg-white p-4 sm:p-5 rounded-xl border border-surface-container shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-[12px] font-semibold text-[#565e74]">
+              <span className="text-xs font-semibold text-secondary">
                 Tổng việc nhóm quản lý
               </span>
-              <div className="w-8 h-8 rounded-lg bg-[#eff4ff] flex items-center justify-center text-[#004ac6]">
-                <span className="material-symbols-outlined text-[19px]">
+              <div className="w-8 h-8 rounded-lg bg-surface-container-low flex items-center justify-center text-primary">
+                <span aria-hidden="true" className="material-symbols-outlined [--icon-size:19px]">
                   fact_check
                 </span>
               </div>
             </div>
             <div className="mt-3">
-              <div className="text-[32px] font-bold text-[#0b1c30] leading-none tabular-nums">
+              <div className="text-display font-bold text-on-surface leading-none tabular-nums">
                 {tasks.length}
               </div>
-              <p className="text-[11px] text-[#565e74] mt-1.5">
+              <p className="text-xs text-secondary mt-1.5">
                 Chia cho {teamMembers.length} thành viên
               </p>
             </div>
           </div>
 
           {/* Card 2 */}
-          <div className="bg-white p-4 sm:p-5 rounded-xl border border-[#e5eeff] shadow-sm flex flex-col justify-between">
+          <div className="bg-white p-4 sm:p-5 rounded-xl border border-surface-container shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-[12px] font-semibold text-[#006243]">
-                Đang làm tốt
+              <span className={`text-xs font-semibold ${overdueCount > 0 ? 'text-error' : 'text-tertiary'}`}>
+                Đang thực hiện
               </span>
-              <div className="w-8 h-8 rounded-lg bg-[#85f8c4]/40 text-[#006243] flex items-center justify-center">
-                <span className="material-symbols-outlined text-[19px]">
-                  thumb_up
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${overdueCount > 0 ? 'bg-error-container text-error' : 'bg-tertiary-fixed/40 text-tertiary'}`}>
+                <span aria-hidden="true" className="material-symbols-outlined [--icon-size:19px]">
+                  {overdueCount > 0 ? 'schedule' : 'play_circle'}
                 </span>
               </div>
             </div>
             <div className="mt-3">
-              <div className="text-[32px] font-bold text-[#006243] leading-none tabular-nums">
+              <div className="text-display font-bold text-on-surface leading-none tabular-nums">
                 {inProgressCount}
               </div>
-              <p className="text-[11px] text-[#565e74] mt-1.5">
-                Tiến độ đều đặn, đúng kế hoạch
+              <p className={`text-xs mt-1.5 ${overdueCount > 0 ? 'text-error font-semibold' : 'text-secondary'}`}>
+                {overdueCount > 0 ? `${overdueCount} việc đã quá hạn chót` : 'Không có việc nào quá hạn'}
               </p>
             </div>
           </div>
 
           {/* Card 3 */}
-          <div className="bg-white p-4 sm:p-5 rounded-xl border border-[#e5eeff] shadow-sm flex flex-col justify-between">
+          <div className="bg-white p-4 sm:p-5 rounded-xl border border-surface-container shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-[12px] font-semibold text-[#565e74]">
-                Đã xong tuần này
+              <span className="text-xs font-semibold text-secondary">
+                Đã nghiệm thu
               </span>
-              <div className="w-8 h-8 rounded-lg bg-[#eff4ff] text-[#004ac6] flex items-center justify-center">
-                <span className="material-symbols-outlined text-[19px]">
+              <div className="w-8 h-8 rounded-lg bg-surface-container-low text-primary flex items-center justify-center">
+                <span aria-hidden="true" className="material-symbols-outlined [--icon-size:19px]">
                   task_alt
                 </span>
               </div>
             </div>
             <div className="mt-3">
-              <div className="text-[32px] font-bold text-[#0b1c30] leading-none tabular-nums">
+              <div className="text-display font-bold text-on-surface leading-none tabular-nums">
                 {doneCount}
               </div>
-              <p className="text-[11px] text-[#565e74] mt-1.5">
+              <p className="text-xs text-secondary mt-1.5">
                 Đã duyệt nghiệm thu hoàn tất
               </p>
             </div>
@@ -162,42 +187,42 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
           <div
             className={`p-4 sm:p-5 rounded-xl border shadow-sm flex flex-col justify-between ${
               helpCount > 0
-                ? 'bg-[#ffdad6]/40 border-[#ffdad6]'
-                : 'bg-emerald-50/50 border-emerald-200'
+                ? 'bg-error-container/40 border-error-container'
+                : 'bg-tertiary-fixed/20 border-tertiary-fixed-dim'
             }`}
           >
             <div className="flex items-center justify-between">
               <span
-                className={`text-[12px] font-bold flex items-center gap-1.5 ${
-                  helpCount > 0 ? 'text-[#ba1a1a]' : 'text-[#006243]'
+                className={`text-xs font-bold flex items-center gap-1.5 ${
+                  helpCount > 0 ? 'text-error' : 'text-tertiary'
                 }`}
               >
                 {helpCount > 0 && (
-                  <span className="w-2 h-2 rounded-full bg-[#ba1a1a] animate-pulse"></span>
+                  <span className="w-2 h-2 rounded-full bg-error animate-pulse"></span>
                 )}
                 {helpCount > 0 ? 'Cần Trưởng phòng hỗ trợ' : 'Nhóm ổn định'}
               </span>
               <div
                 className={`w-8 h-8 rounded-lg text-white flex items-center justify-center ${
-                  helpCount > 0 ? 'bg-[#ba1a1a]' : 'bg-[#006243]'
+                  helpCount > 0 ? 'bg-error' : 'bg-tertiary'
                 }`}
               >
-                <span className="material-symbols-outlined text-[19px]">
+                <span aria-hidden="true" className="material-symbols-outlined [--icon-size:19px]">
                   {helpCount > 0 ? 'support' : 'check_circle'}
                 </span>
               </div>
             </div>
             <div className="mt-3">
               <div
-                className={`text-[32px] font-bold leading-none tabular-nums ${
-                  helpCount > 0 ? 'text-[#ba1a1a]' : 'text-[#006243]'
+                className={`text-display font-bold leading-none tabular-nums ${
+                  helpCount > 0 ? 'text-error' : 'text-tertiary'
                 }`}
               >
                 {helpCount}
               </div>
               <p
-                className={`text-[11px] mt-1.5 font-semibold ${
-                  helpCount > 0 ? 'text-[#93000a]' : 'text-[#006243]'
+                className={`text-xs mt-1.5 font-semibold ${
+                  helpCount > 0 ? 'text-on-error-container' : 'text-tertiary'
                 }`}
               >
                 {helpMemberNote}
@@ -207,27 +232,27 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
         </div>
 
         {/* Section 1: Team Member Workload Allocation */}
-        <div className="bg-white p-5 sm:p-6 rounded-xl border border-[#e5eeff] shadow-sm flex flex-col gap-4">
+        <div className="bg-white p-5 sm:p-6 rounded-xl border border-surface-container shadow-sm flex flex-col gap-4">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2.5">
-              <div className="w-7 h-7 rounded-lg bg-[#eff4ff] text-[#004ac6] flex items-center justify-center">
-                <span className="material-symbols-outlined text-[18px]">
+              <div className="w-7 h-7 rounded-lg bg-surface-container-low text-primary flex items-center justify-center">
+                <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px]">
                   badge
                 </span>
               </div>
               <div>
-                <h2 className="text-[18px] font-bold text-[#0b1c30]">
+                <h2 className="text-lg font-bold text-on-surface">
                   Tình hình công việc của từng thành viên
                 </h2>
-                <p className="text-[12px] text-[#565e74]">
+                <p className="text-xs text-secondary">
                   Xem ngay ai đang thong thả, ai đang quá tải để điều phối việc chuẩn xác
                 </p>
               </div>
             </div>
             {memberFilter ? (
-              <button
+              <button type="button"
                 onClick={() => setMemberFilter(null)}
-                className="px-2.5 py-1 bg-[#eff4ff] text-[#004ac6] text-[11px] font-semibold rounded hover:bg-[#dce9ff]"
+                className="px-2.5 py-1 bg-surface-container-low text-primary text-xs font-semibold rounded hover:bg-surface-container-high"
               >
                 {/* Hiển thị TÊN thay vì raw value. memberFilter có thể là username ("nv_an"). */}
                 Đang lọc:{' '}
@@ -236,7 +261,7 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                   memberFilter}
               </button>
             ) : (
-              <span className="px-2.5 py-1 bg-[#eff4ff] text-[#434655] text-[11px] font-medium rounded-lg">
+              <span className="px-2.5 py-1 bg-surface-container-low text-on-surface-variant text-xs font-medium rounded-lg">
                 {teamMembers.length} thành viên sẵn sàng
               </span>
             )}
@@ -246,72 +271,73 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3.5">
             {teamMembers.map((member) => {
               const isSelected = memberFilter === (member.username ?? member.name);
-              const isWarning = member.needHelp;
+              const stats = statsFor(member.username);
+              const isWarning = stats.blocked > 0;
 
               return (
                 <div
                   key={member.id}
                   className={`p-4 rounded-xl flex flex-col justify-between gap-3 transition-all border ${
                     isSelected
-                      ? 'ring-2 ring-[#004ac6] border-transparent'
+                      ? 'ring-2 ring-primary border-transparent'
                       : isWarning
-                      ? 'bg-[#ffdad6]/25 border-red-200'
-                      : 'bg-[#eff4ff]/60 border-[#e5eeff] hover:bg-[#eff4ff]'
+                      ? 'bg-error-container/25 border-error-fixed'
+                      : 'bg-surface-container-low/60 border-surface-container hover:bg-surface-container-low'
                   }`}
                 >
                   <div className="flex items-center gap-3">
                     <div className="relative">
-                      <img
-                        className="w-10 h-10 rounded-full object-cover shadow-sm ring-1 ring-white"
-                        src={member.avatar}
-                        alt={member.name}
-                      />
+                      <Avatar name={member.name} src={member.avatar} className="w-10 h-10 text-sm shadow-sm" />
                       {isWarning && (
-                        <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-[#ba1a1a] rounded-full ring-2 ring-white flex items-center justify-center">
+                        <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-error rounded-full ring-2 ring-white flex items-center justify-center">
                           <span className="w-1.5 h-1.5 bg-white rounded-full"></span>
                         </span>
                       )}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="font-semibold text-[14px] text-[#0b1c30] truncate">
+                      <div className="font-semibold text-sm text-on-surface truncate">
                         {member.name}
                       </div>
-                      <div className="text-[11px] text-[#565e74] truncate">
+                      <div className="text-xs text-secondary truncate">
                         {member.role}
                       </div>
                     </div>
                   </div>
 
                   <div className="flex flex-col gap-1.5">
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-[#0b1c30] font-medium">
-                        {member.activeTasks} việc đang làm
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-on-surface font-medium">
+                        {stats.open} việc chưa xong
                       </span>
                       {isWarning ? (
-                        <span className="text-[#ba1a1a] font-bold flex items-center gap-1">
-                          <span className="material-symbols-outlined text-[13px]">
+                        <span className="text-error font-bold flex items-center gap-1">
+                          <span aria-hidden="true" className="material-symbols-outlined [--icon-size:13px]">
                             help
                           </span>
-                          1 việc cần hỗ trợ
+                          {stats.blocked} việc cần hỗ trợ
                         </span>
                       ) : (
-                        <span className="text-[#006243] font-semibold flex items-center gap-1">
-                          <span className="material-symbols-outlined text-[13px]">
-                            check_circle
+                        <span className={`font-semibold flex items-center gap-1 ${stats.overdue > 0 ? 'text-error' : 'text-tertiary'}`}>
+                          <span aria-hidden="true" className="material-symbols-outlined [--icon-size:13px]">
+                            {stats.overdue > 0 ? 'schedule' : 'check_circle'}
                           </span>
-                          {member.onTimeRate}
+                          {stats.overdue > 0
+                            ? `${stats.overdue} quá hạn`
+                            : stats.awaiting > 0
+                              ? `${stats.awaiting} chờ duyệt`
+                              : 'Không quá hạn'}
                         </span>
                       )}
                     </div>
 
                     {isWarning && member.urgentNote ? (
-                      <div className="text-[11px] leading-tight text-[#93000a] bg-red-100/80 p-1.5 rounded font-medium">
+                      <div className="text-xs leading-tight text-on-error-container bg-error-container/80 p-1.5 rounded font-medium">
                         {member.urgentNote}
                       </div>
                     ) : (
-                      <div className="w-full bg-[#d3e4fe] rounded-full h-1.5 overflow-hidden">
+                      <div className="w-full bg-surface-container-highest rounded-full h-1.5 overflow-hidden">
                         <div
-                          className="bg-[#006243] h-1.5 rounded-full"
+                          className="bg-tertiary h-1.5 rounded-full"
                           style={{ width: `${member.workloadPercent}%` }}
                         ></div>
                       </div>
@@ -324,10 +350,10 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                         setFilter('need_help');
                         setMemberFilter(member.username ?? member.name);
                       }}
-                      className="w-full py-1.5 px-3 bg-[#ba1a1a] hover:bg-red-700 text-white rounded-lg text-[12px] font-bold text-center transition-all shadow-sm flex items-center justify-center gap-1"
+                      className="w-full py-1.5 px-3 bg-error hover:bg-on-error-container text-white rounded-lg text-xs font-bold text-center transition-all shadow-sm flex items-center justify-center gap-1"
                       type="button"
                     >
-                      <span className="material-symbols-outlined text-[16px]">
+                      <span aria-hidden="true" className="material-symbols-outlined [--icon-size:16px]">
                         support
                       </span>
                       <span>Giúp ngay</span>
@@ -337,7 +363,7 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                       onClick={() =>
                         setMemberFilter(isSelected ? null : (member.username ?? member.name))
                       }
-                      className="w-full py-1.5 px-3 bg-white text-[#0b1c30] hover:bg-[#dce9ff] rounded-lg text-[12px] font-semibold text-center transition-all shadow-sm border border-[#e5eeff]"
+                      className="w-full py-1.5 px-3 bg-white text-on-surface hover:bg-surface-container-high rounded-lg text-xs font-semibold text-center transition-all shadow-sm border border-surface-container"
                       type="button"
                     >
                       {isSelected ? 'Đang xem việc' : `Xem việc ${member.name.split(' ').pop()} (${member.activeTasks})`}
@@ -350,26 +376,26 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
         </div>
 
         {/* Section 2: Actionable Task Coordination Table for Team Leader */}
-        <div className="bg-white p-5 sm:p-6 rounded-xl border border-[#e5eeff] shadow-sm flex flex-col gap-5">
+        <div className="bg-white p-5 sm:p-6 rounded-xl border border-surface-container shadow-sm flex flex-col gap-5">
           {/* Table Header & Filter Tabs */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
             <div>
-              <h2 className="text-[18px] font-bold text-[#0b1c30]">
+              <h2 className="text-lg font-bold text-on-surface">
                 Việc cần Trưởng phòng duyệt & Điều phối
               </h2>
-              <p className="text-[12px] text-[#565e74]">
+              <p className="text-xs text-secondary">
                 Các đầu việc cần bạn bấm nút kiểm tra, tháo gỡ vướng mắc hoặc nghiệm thu
               </p>
             </div>
 
             {/* Filter Segmented Tabs */}
-            <div className="inline-flex p-1 bg-[#eff4ff] rounded-xl gap-1 self-start md:self-auto overflow-x-auto no-scrollbar max-w-full">
+            <div className="inline-flex p-1 bg-surface-container-low rounded-xl gap-1 self-start md:self-auto overflow-x-auto no-scrollbar max-w-full">
               <button
                 onClick={() => setFilter('all')}
-                className={`px-3.5 py-1.5 rounded-lg text-[12px] font-semibold whitespace-nowrap transition-colors ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
                   filter === 'all'
-                    ? 'bg-white text-[#004ac6] shadow-sm'
-                    : 'text-[#565e74] hover:text-[#0b1c30]'
+                    ? 'bg-white text-primary shadow-sm'
+                    : 'text-secondary hover:text-on-surface'
                 }`}
                 type="button"
               >
@@ -377,38 +403,38 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
               </button>
               <button
                 onClick={() => setFilter('pending')}
-                className={`px-3.5 py-1.5 rounded-lg text-[12px] font-semibold whitespace-nowrap transition-colors flex items-center gap-1.5 ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors flex items-center gap-1.5 ${
                   filter === 'pending'
-                    ? 'bg-white text-[#004ac6] shadow-sm'
-                    : 'text-[#565e74] hover:text-[#0b1c30]'
+                    ? 'bg-white text-primary shadow-sm'
+                    : 'text-secondary hover:text-on-surface'
                 }`}
                 type="button"
               >
                 <span>Chờ tôi duyệt kết quả</span>
-                <span className="w-4 h-4 rounded-full bg-[#004ac6] text-white text-[10px] flex items-center justify-center font-bold">
+                <span className="w-4 h-4 rounded-full bg-primary text-white text-xs flex items-center justify-center font-bold">
                   {pendingCount}
                 </span>
               </button>
               <button
                 onClick={() => setFilter('need_help')}
-                className={`px-3.5 py-1.5 rounded-lg text-[12px] font-semibold whitespace-nowrap transition-colors flex items-center gap-1.5 ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors flex items-center gap-1.5 ${
                   filter === 'need_help'
-                    ? 'bg-white text-[#ba1a1a] shadow-sm'
-                    : 'text-[#ba1a1a] hover:bg-red-50'
+                    ? 'bg-white text-error shadow-sm'
+                    : 'text-error hover:bg-error-container/40'
                 }`}
                 type="button"
               >
                 <span>Cần tôi hỗ trợ</span>
-                <span className="w-4 h-4 rounded-full bg-[#ba1a1a] text-white text-[10px] flex items-center justify-center font-bold">
+                <span className="w-4 h-4 rounded-full bg-error text-white text-xs flex items-center justify-center font-bold">
                   {helpCount}
                 </span>
               </button>
               <button
                 onClick={() => setFilter('done')}
-                className={`px-3.5 py-1.5 rounded-lg text-[12px] font-semibold whitespace-nowrap transition-colors ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
                   filter === 'done'
-                    ? 'bg-white text-[#006243] shadow-sm'
-                    : 'text-[#565e74] hover:text-[#0b1c30]'
+                    ? 'bg-white text-tertiary shadow-sm'
+                    : 'text-secondary hover:text-on-surface'
                 }`}
                 type="button"
               >
@@ -420,7 +446,7 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
           {/* High Clarity Task Cards List */}
           <div className="flex flex-col gap-3">
             {filteredTasks.length === 0 ? (
-              <div className="p-8 text-center text-[#565e74] bg-[#eff4ff]/40 rounded-xl">
+              <div className="p-8 text-center text-secondary bg-surface-container-low/40 rounded-xl">
                 Không có việc nào trong mục này.
               </div>
             ) : (
@@ -434,53 +460,53 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                     key={task.id}
                     className={`p-4 sm:p-5 rounded-xl border flex flex-col lg:flex-row lg:items-center justify-between gap-4 transition-all ${
                       isNeedHelp
-                        ? 'bg-[#ffdad6]/25 border-red-200 hover:bg-[#ffdad6]/40'
+                        ? 'bg-error-container/25 border-error-fixed hover:bg-error-container/40'
                         : isDone
-                        ? 'bg-emerald-50/40 border-emerald-200'
-                        : 'bg-[#eff4ff]/50 border-[#e5eeff] hover:bg-[#eff4ff]'
+                        ? 'bg-tertiary-fixed/20 border-tertiary-fixed-dim'
+                        : 'bg-surface-container-low/50 border-surface-container hover:bg-surface-container-low'
                     }`}
                   >
                     <div className="flex items-start gap-3.5 min-w-0 flex-1">
                       {/* Status Tag */}
                       {isPending && (
-                        <span className="px-2 py-0.5 bg-[#004ac6] text-white text-[10px] font-bold rounded uppercase whitespace-nowrap mt-0.5">
+                        <span className="px-2 py-0.5 bg-primary text-white text-xs font-bold rounded uppercase whitespace-nowrap mt-0.5">
                           Chờ duyệt kết quả
                         </span>
                       )}
                       {isNeedHelp && (
-                        <span className="px-2 py-0.5 bg-[#ba1a1a] text-white text-[10px] font-bold rounded uppercase whitespace-nowrap mt-0.5 flex items-center gap-1">
-                          <span className="material-symbols-outlined text-[12px]">
+                        <span className="px-2 py-0.5 bg-error text-white text-xs font-bold rounded uppercase whitespace-nowrap mt-0.5 flex items-center gap-1">
+                          <span aria-hidden="true" className="material-symbols-outlined [--icon-size:12px]">
                             warning
                           </span>
                           Cần hỗ trợ gấp
                         </span>
                       )}
                       {isDone && (
-                        <span className="px-2 py-0.5 bg-[#006243] text-white text-[10px] font-bold rounded uppercase whitespace-nowrap mt-0.5 flex items-center gap-1">
-                          <span className="material-symbols-outlined text-[12px]">
+                        <span className="px-2 py-0.5 bg-tertiary text-white text-xs font-bold rounded uppercase whitespace-nowrap mt-0.5 flex items-center gap-1">
+                          <span aria-hidden="true" className="material-symbols-outlined [--icon-size:12px]">
                             check
                           </span>
                           Đã nghiệm thu
                         </span>
                       )}
                       {!isPending && !isNeedHelp && !isDone && (
-                        <span className="px-2 py-0.5 bg-[#e5eeff] text-[#434655] text-[10px] font-bold rounded uppercase whitespace-nowrap mt-0.5">
+                        <span className="px-2 py-0.5 bg-surface-container text-on-surface-variant text-xs font-bold rounded uppercase whitespace-nowrap mt-0.5">
                           Đang làm
                         </span>
                       )}
 
                       <div className="flex flex-col gap-1.5 min-w-0 flex-1">
-                        <div className="text-[15px] font-bold text-[#0b1c30] flex items-center gap-2 flex-wrap">
+                        <div className="text-base font-bold text-on-surface flex items-center gap-2 flex-wrap">
                           <span>{task.title}</span>
-                          <span className="text-[11px] font-semibold text-[#565e74] bg-[#e5eeff] px-2 py-0.5 rounded">
+                          <span className="text-xs font-semibold text-secondary bg-surface-container px-2 py-0.5 rounded">
                             {task.category}
                           </span>
                         </div>
 
                         {/* Blocker Note — Manager đọc "Vướng mắc" tại đây mà không cần mở task. */}
                         {task.blockerNote ? (
-                          <div className="p-2.5 bg-white rounded-lg border border-red-200 text-[13px] text-[#0b1c30] flex items-start gap-2 shadow-sm">
-                            <span className="material-symbols-outlined text-[18px] text-[#ba1a1a] shrink-0 mt-0.5">
+                          <div className="p-2.5 bg-white rounded-lg border border-error-fixed text-sm text-on-surface flex items-start gap-2 shadow-sm">
+                            <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px] text-error shrink-0 mt-0.5">
                               priority_high
                             </span>
                             <span>
@@ -491,19 +517,9 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                         ) : null}
 
                         {/* Metadata row */}
-                        <div className="flex items-center gap-3 text-[11px] text-[#565e74] mt-0.5 flex-wrap">
+                        <div className="flex items-center gap-3 text-xs text-secondary mt-0.5 flex-wrap">
                           <div className="flex items-center gap-1.5">
-                            {task.ownerAvatar ? (
-                              <img
-                                src={task.ownerAvatar}
-                                alt={task.ownerName}
-                                className="w-4 h-4 rounded-full object-cover"
-                              />
-                            ) : (
-                              <span className="material-symbols-outlined text-[14px]">
-                                person
-                              </span>
-                            )}
+                            <Avatar name={task.ownerName} src={task.ownerAvatar} className="w-5 h-5 text-xs" />
                             <span>
                               Người làm: <strong>{task.ownerName}</strong>
                             </span>
@@ -511,7 +527,7 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                           <span>•</span>
                           <span
                             className={
-                              isNeedHelp ? 'text-[#ba1a1a] font-semibold' : ''
+                              isNeedHelp ? 'text-error font-semibold' : ''
                             }
                           >
                             {task.submittedAt}
@@ -530,14 +546,15 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                     <div className="flex items-center gap-2 self-end lg:self-center shrink-0">
                       {isPending && (
                         <button
-                          onClick={() => onApproveTask(task.id)}
-                          className="px-3.5 py-1.5 bg-[#006243] text-white hover:bg-[#007d57] rounded-lg text-[12px] font-bold shadow-sm flex items-center gap-1.5 transition-all"
+                          onClick={() => approve(task.id)}
+                          disabled={approvingId !== null}
+                          className="px-3.5 py-1.5 bg-tertiary text-on-tertiary hover:bg-tertiary-container rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                           type="button"
                         >
-                          <span className="material-symbols-outlined text-[16px]">
-                            check
+                          <span aria-hidden="true" className="material-symbols-outlined [--icon-size:16px]">
+                            {approvingId === task.id ? 'progress_activity' : 'check'}
                           </span>
-                          <span>Duyệt đạt</span>
+                          <span>{approvingId === task.id ? 'Đang duyệt…' : 'Duyệt đạt'}</span>
                         </button>
                       )}
                     </div>

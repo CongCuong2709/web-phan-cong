@@ -120,8 +120,7 @@ export function apiToTierItem(api: TaskApiRowDto): TierItem {
     endDate,
     daysRemaining,
     progress: api.progress_rollup ?? api.progress ?? 0,
-    // Map status từ enum DB sang tiếng Việt (UI Gantt đang dùng tiếng Việt).
-    status: statusEnumToVi(api.status) as TierItem['status'],
+    status: statusEnumToVi(api.status),
     // Map priority từ enum sang tiếng Việt. Chỉ T4 có cột priority.
     priority: priorityEnumToVi(api.priority) as TierItem['priority'],
     description: api.description,
@@ -137,15 +136,39 @@ export function apiToTierItem(api: TaskApiRowDto): TierItem {
   };
 }
 
-/** Convert status enum DB → Tiếng Việt (cho Gantt view). */
-function statusEnumToVi(s: string | null | undefined): string {
-  switch (String(s)) {
-    case 'done': return 'Đã xong';
-    case 'doing': return 'Đang chạy';
-    case 'pending': return 'Chuẩn bị';
-    case 'pending_approval': return 'Sắp xong';
-    case 'blocked': return 'Điểm nghẽn';
-    default: return String(s || 'Chuẩn bị');
+/**
+ * Nhãn tiếng Việt ↔ enum status DB — 1:1, đúng 5 trạng thái của
+ * backend/lib/stateMachine.js. Không thêm nhãn đồng nghĩa: mỗi trạng thái
+ * chỉ có một tên trên toàn bộ UI.
+ */
+const STATUS_VI: Record<string, TierItem['status']> = {
+  pending: 'Chuẩn bị',
+  doing: 'Đang chạy',
+  pending_approval: 'Chờ duyệt',
+  blocked: 'Điểm nghẽn',
+  done: 'Đã xong',
+};
+
+export const TIER_STATUS_OPTIONS = Object.values(STATUS_VI);
+
+function statusEnumToVi(s: string | null | undefined): TierItem['status'] {
+  return STATUS_VI[String(s)] ?? 'Chuẩn bị';
+}
+
+/** Quá hạn = đã qua end_date mà chưa xong. Mục chưa đặt hạn không tính là quá hạn. */
+export function isTierItemOverdue(i: Pick<TierItem, 'daysRemaining' | 'status'>): boolean {
+  return i.daysRemaining !== undefined && i.daysRemaining < 0 && i.status !== 'Đã xong';
+}
+
+export function viStatusToEnum(s: TierItem['status']): string {
+  return Object.keys(STATUS_VI).find((k) => STATUS_VI[k] === s) ?? 'pending';
+}
+
+export function viPriorityToEnum(p: TierItem['priority'] | undefined): string {
+  switch (p) {
+    case 'Cao (Critical Path)': return 'critical';
+    case 'Thấp': return 'low';
+    default: return 'normal';
   }
 }
 
@@ -214,20 +237,18 @@ export function apiToTeamLeadTask(api: TaskApiRowDto): TeamLeadTask {
 // Employee task
 // ─────────────────────────────────────────────────────────────────────
 
+const EMPLOYEE_STATUSES: ReadonlyArray<EmployeeTask['status']> = [
+  'pending', 'doing', 'pending_approval', 'blocked', 'done',
+];
+
+/**
+ * Task T4 cho view "Việc của tôi". Status giữ nguyên enum DB — nhân viên
+ * phải thấy đúng "Chờ duyệt" / "Đang vướng", không gộp về trạng thái khác.
+ * currentDeliverable / progress hôm nay được gộp ở `buildEmployeeTasks`.
+ */
 export function apiToEmployeeTask(api: TaskApiRowDto): EmployeeTask {
-  // Map status enum từ unified Task sang EmployeeTask enum.
-  // currentDeliverable là trường DERIVED — không có sẵn trên /api/tasks; App.tsx sẽ merge từ
-  // daily_log.result của HÔM NAY sau khi fetch xong Promise.all ở useEffect login.
-  // Hàm này chỉ trả về baseline (''). Đừng tự fill ở đây — sẽ tạo duplicate logic.
-  const statusMap: Record<string, EmployeeTask['status']> = {
-    'pending': 'pending',
-    'doing': 'doing',
-    'done': 'done',
-    'pending_approval': 'doing',   // pending_approval vẫn đang làm
-    'blocked': 'pending',           // blocked → pending cho personal view
-  };
-  // Composite id để tránh nhầm với tier items ở các tier khác.
   const tier: TierLevel = api.tier;
+  const status = EMPLOYEE_STATUSES.find((s) => s === api.status) ?? 'pending';
   return {
     id: toCompositeId(tier, api.id),
     code: api.code,
@@ -239,7 +260,7 @@ export function apiToEmployeeTask(api: TaskApiRowDto): EmployeeTask {
     lastUpdated: api.updated_at,
     deadline: api.end_date ?? '',
     isToday: Boolean(api.is_today),
-    status: statusMap[api.status] ?? 'doing',
+    status,
     // Manager = assigned_by (người giao task).
     manager: {
       name: api.assigned_by_fullname ?? api.owner_fullname ?? '—',
@@ -250,10 +271,40 @@ export function apiToEmployeeTask(api: TaskApiRowDto): EmployeeTask {
     department: (api.department_code ?? undefined) as EmployeeTask['department'],
     // blocker_note (NV viết, Manager xem khi mở task).
     blockerNote: api.blocker_note ?? '',
-    // Tiến độ từ API (tasks.progress). App.tsx sẽ override bằng
-    // daily_log.progress của HÔM NAY nếu có, để slider hiển thị giá trị mới nhất.
     progress: api.progress ?? 0,
   };
+}
+
+/** Ngày hôm nay theo giờ máy (YYYY-MM-DD) — khớp cách backend ghi log_date. */
+export function todayIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * Task T4 + nhật ký hôm nay (nếu có) → baseline cho bảng nhập liệu:
+ * mô tả / kết quả / tiến độ hiển thị đúng những gì đã lưu trong ngày.
+ */
+export function buildEmployeeTasks(rows: TaskApiRowDto[], logs: DailyLogRowDto[]): EmployeeTask[] {
+  const today = todayIso();
+  const todayLog = new Map<number, DailyLogRowDto>();
+  for (const log of logs) {
+    if (log.log_date === today && !todayLog.has(log.task_id)) todayLog.set(log.task_id, log);
+  }
+  return rows
+    .filter((r) => r.tier === 4)
+    .map((row) => {
+      const base = apiToEmployeeTask(row);
+      const log = todayLog.get(row.id);
+      if (!log) return base;
+      return {
+        ...base,
+        currentDeliverable: log.result ?? '',
+        description: log.description?.trim() ? log.description : base.description,
+        lastUpdated: 'Hôm nay',
+        progress: log.progress ?? base.progress,
+      };
+    });
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -303,15 +354,59 @@ export function apiToDailyLog(api: DailyLogRowDto): DailyLog {
 // HistoryEntry (audit log)
 // ─────────────────────────────────────────────────────────────────────
 
+const ENTITY_TIER: Partial<Record<HistoryEntryDto['entity_type'], TierLevel>> = {
+  project: 1, phase: 2, bundle: 3, task: 4,
+};
+
+function parseJson(s: string | null): Record<string, unknown> {
+  if (!s) return {};
+  try {
+    const v = JSON.parse(s);
+    return v && typeof v === 'object' ? v : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Câu mô tả tiếng Việt cho 1 dòng audit — không hiện mã enum thô ra UI. */
+function describeAudit(api: HistoryEntryDto, oldV: Record<string, unknown>, newV: Record<string, unknown>): string {
+  if (api.entity_type === 'daily_log') {
+    return `Ghi nhật ký thi công${newV.progress != null ? ` (${newV.progress}%)` : ''}`;
+  }
+  if (api.entity_type === 'task_help_message') {
+    return api.action === 'resolve' ? 'Đã xử lý vướng mắc' : `Báo vướng mắc: ${newV.body ?? ''}`;
+  }
+  if (api.action === 'status_change' || (newV.status && oldV.status && newV.status !== oldV.status)) {
+    return `Đổi trạng thái: ${statusEnumToVi(String(oldV.status))} → ${statusEnumToVi(String(newV.status))}`;
+  }
+  if (newV.blocker_note !== undefined) return `Cập nhật vướng mắc: ${newV.blocker_note}`;
+  switch (api.action) {
+    case 'create': return 'Tạo mới';
+    case 'delete': return 'Xoá';
+    case 'approve': return 'Nghiệm thu & duyệt hoàn thành';
+    case 'update': return 'Cập nhật thông tin';
+    default: return api.action;
+  }
+}
+
+/**
+ * Audit row → HistoryEntry. `entityId` dùng cùng composite id với TierItem
+ * ("4-12") để Drawer lọc được; nhật ký / vướng mắc gắn về task cha qua task_id.
+ */
 export function apiToHistoryEntry(api: HistoryEntryDto): HistoryEntry {
-  // Ưu tiên tên join từ bảng users; fallback sang snapshot actor_username
-  // trong audit_log (vẫn còn khi user đã bị xoá).
   const username = api.author_username_str ?? api.actor_username ?? '';
+  const oldV = parseJson(api.old_values);
+  const newV = parseJson(api.new_values);
+  const tier = ENTITY_TIER[api.entity_type];
+  const parentTaskId = Number(newV.task_id);
+  const entityId = tier
+    ? toCompositeId(tier, api.entity_id)
+    : Number.isFinite(parentTaskId) ? toCompositeId(4, parentTaskId) : String(api.entity_id);
   return {
     id: String(api.id),
     entityType: api.entity_type,
-    entityId: String(api.entity_id),
-    action: api.action,
+    entityId,
+    action: describeAudit(api, oldV, newV),
     username,
     userName: api.author_fullname_str ?? username,
     createdAt: api.created_at,

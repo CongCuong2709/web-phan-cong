@@ -42,7 +42,7 @@ function initialOf(name: string): string {
 }
 /** "2026-10-22 07:35:00" (UTC) → "22/10 14:35" (giờ VN). */
 function fmtAck(sqlStamp: string): string {
-  return fmtStamp(sqlStamp).replace(/^\d{2}\/\d{2}\//, '');
+  return fmtStamp(sqlStamp).replace(/^(\d{2}\/\d{2})\/\d{4}/, '$1');
 }
 
 export const WeeklyReportTeamView: React.FC<Props> = ({ currentUser, onToast }) => {
@@ -96,66 +96,66 @@ if (openUser) {
   }
 
   return (
-    <div className="max-w-[1100px] mx-auto px-6 py-6">
+    <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-6">
       {/* ===== Toolbar ===== */}
       <div className="flex items-center justify-between gap-3 mb-3 print:hidden">
         <div className="flex items-center gap-3 min-w-0">
-          <h1 className="text-[18px] font-semibold tracking-tight whitespace-nowrap">
+          <h1 className="text-lg font-semibold tracking-tight whitespace-nowrap">
             Báo cáo tuần phòng ban
-            <span className="text-[#5b6371] font-normal"> ({fmtDateVI(weekStart)} – {fmtDateVI(weekEnd)})</span>
+            <span className="text-secondary font-normal"> ({fmtDateVI(weekStart)} – {fmtDateVI(weekEnd)})</span>
           </h1>
           <div className="flex items-center">
-            <button
-              className="px-2 py-1 rounded-md hover:bg-[#eef2f8] text-[12px] text-[#5b6371]"
+            <button type="button"
+              className="px-2 py-1 rounded-md hover:bg-surface-container text-xs text-secondary"
               onClick={() => setWeekStart(addDays(weekStart, -7))}
             >Tuần trước</button>
-            <button
-              className="px-2 py-1 rounded-md hover:bg-[#eef2f8] disabled:opacity-40 text-[12px] text-[#5b6371]"
+            <button type="button"
+              className="px-2 py-1 rounded-md hover:bg-surface-container disabled:opacity-40 text-xs text-secondary"
               onClick={() => setWeekStart(addDays(weekStart, 7))}
               disabled={!canGoNext}
             >Tuần sau</button>
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0 print:hidden">
-          <button
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-[#dfe3ec] text-[13px] font-medium text-[#4b5462] hover:bg-[#f6f8fc]"
+          <button type="button"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-surface-container text-sm font-medium text-secondary hover:bg-surface"
             onClick={() => window.print()}
           >In / PDF</button>
         </div>
       </div>
 
       {/* ===== Header bản in ===== */}
-      <div className="hidden print:block mb-4 pb-3 border-b-2 border-[#1f2330]">
+      <div className="hidden print:block mb-4 pb-3 border-b-2 border-on-surface">
         <div className="flex items-start justify-between">
           <div>
-            <div className="text-[13px] font-bold uppercase">Báo cáo công việc tuần — {currentUser.fullname}</div>
-            <div className="text-[11px] text-[#5b6371] mt-0.5">
+            <div className="text-sm font-bold uppercase">Báo cáo công việc tuần — {currentUser.fullname}</div>
+            <div className="text-xs text-secondary mt-0.5">
               {fmtDateVI(weekStart)} – {fmtDateVI(weekEnd)} · {submitted}/{items.length} nhân viên đã lập
             </div>
           </div>
-          <div className="text-right text-[11px] text-[#5b6371]">In ngày {fmtDateVI(weekStartOf())}</div>
+          <div className="text-right text-xs text-secondary">In ngày {fmtDateVI(weekStartOf())}</div>
         </div>
       </div>
 
       {/* ===== Tổng kết 1 dòng (chỉ khi có data — không phải stat card) ===== */}
       {!loading && items.length > 0 && (
-        <div className="flex items-center gap-4 mb-2 text-[12px] text-[#5b6371]">
+        <div className="flex items-center gap-4 mb-2 text-xs text-secondary">
           <span>{submitted}/{items.length} đã lập</span>
-          {pending > 0 && <span className="text-[#a16207]">{pending} chưa lập</span>}
+          {pending > 0 && <span className="text-warning">{pending} chưa lập</span>}
           {totalBlocked > 0 && (
-            <span className="inline-flex items-center gap-1.5 text-[#b91c1c]">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#dc2626]" />
+            <span className="inline-flex items-center gap-1.5 text-error">
+              <span className="w-1.5 h-1.5 rounded-full bg-error" />
               {totalBlocked} vướng mắc
             </span>
           )}
-          <span className="text-[#0f7a3a]">{ackedCount}/{submitted} đã xác nhận</span>
+          <span className="text-tertiary">{ackedCount}/{submitted} đã xác nhận</span>
         </div>
       )}
 
       {/* ===== Bảng ===== */}
-      <div className="border border-[#e4e8f0] rounded-lg overflow-hidden bg-white">
+      <div className="border border-surface-container rounded-lg overflow-hidden bg-white">
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse table-fixed text-[13px]">
+          <table className="w-full border-collapse table-fixed text-sm">
             <colgroup>
               <col style={{ width: 40 }} />
               <col />
@@ -166,69 +166,69 @@ if (openUser) {
               <col style={{ width: 120 }} />
             </colgroup>
             <thead>
-              <tr className="bg-[#f8f9fc] text-left">
-                <th className="text-center font-semibold text-[12px] text-[#5b6371] py-2 px-3 border-b border-r border-[#e4e8f0]">#</th>
-                <th className="font-semibold text-[12px] text-[#5b6371] py-2 px-3 border-b border-r border-[#e4e8f0]">Nhân viên</th>
-                <th className="font-semibold text-[12px] text-[#5b6371] py-2 px-3 border-b border-r border-[#e4e8f0]">Phòng ban</th>
-                <th className="text-center font-semibold text-[12px] text-[#5b6371] py-2 px-3 border-b border-r border-[#e4e8f0]">Số đầu việc</th>
-                <th className="text-center font-semibold text-[12px] text-[#5b6371] py-2 px-3 border-b border-r border-[#e4e8f0]">Vướng mắc</th>
-                <th className="font-semibold text-[12px] text-[#5b6371] py-2 px-3 border-b border-r border-[#e4e8f0]">Báo cáo</th>
-                <th className="font-semibold text-[12px] text-[#5b6371] py-2 px-3 border-b border-[#e4e8f0]">QL đã xem</th>
+              <tr className="bg-surface text-left">
+                <th className="text-center font-semibold text-xs text-secondary py-2 px-3 border-b border-r border-surface-container">#</th>
+                <th className="font-semibold text-xs text-secondary py-2 px-3 border-b border-r border-surface-container">Nhân viên</th>
+                <th className="font-semibold text-xs text-secondary py-2 px-3 border-b border-r border-surface-container">Phòng ban</th>
+                <th className="text-center font-semibold text-xs text-secondary py-2 px-3 border-b border-r border-surface-container">Số đầu việc</th>
+                <th className="text-center font-semibold text-xs text-secondary py-2 px-3 border-b border-r border-surface-container">Vướng mắc</th>
+                <th className="font-semibold text-xs text-secondary py-2 px-3 border-b border-r border-surface-container">Báo cáo</th>
+                <th className="font-semibold text-xs text-secondary py-2 px-3 border-b border-surface-container">QL đã xem</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={7} className="text-center text-[12px] text-[#9aa0b4] py-8">Đang tải…</td></tr>
+                <tr><td colSpan={7} className="text-center text-xs text-outline py-8">Đang tải…</td></tr>
               ) : items.length === 0 ? (
-                <tr><td colSpan={7} className="text-center text-[12px] text-[#9aa0b4] py-8">Phòng ban chưa có nhân viên</td></tr>
+                <tr><td colSpan={7} className="text-center text-xs text-outline py-8">Phòng ban chưa có nhân viên</td></tr>
               ) : (
                 items.map((m, idx) => (
                   <tr
                     key={m.user_id}
-                    className="hover:bg-[#fafbfd] border-b border-[#eef0f6] last:border-b-0"
+                    className="hover:bg-surface border-b border-surface-container last:border-b-0"
                     onClick={() => setOpenUser(m)}
                     style={{ cursor: 'pointer', opacity: m.submitted ? 1 : 0.65 }}
                   >
-                    <td className="text-center text-[12px] text-[#97a0b0] py-2 px-3 bg-[#fafbfd] tabular-nums border-r border-[#eef0f6]">{idx + 1}</td>
-                    <td className="px-3 py-2 border-r border-[#eef0f6]">
+                    <td className="text-center text-xs text-outline py-2 px-3 bg-surface tabular-nums border-r border-surface-container">{idx + 1}</td>
+                    <td className="px-3 py-2 border-r border-surface-container">
                       <div className="flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-full bg-[#dce9ff] text-[#004ac6] flex items-center justify-center text-[11px] font-bold shrink-0">
+                        <div className="w-6 h-6 rounded-full bg-surface-container-high text-primary flex items-center justify-center text-xs font-bold shrink-0">
                           {initialOf(m.fullname)}
                         </div>
-                        <span className={m.submitted ? 'font-medium' : 'text-[#5b6371]'}>{m.fullname}</span>
+                        <span className={m.submitted ? 'font-medium' : 'text-secondary'}>{m.fullname}</span>
                       </div>
                     </td>
-                    <td className="px-3 py-2 text-[#5b6371] text-[12px] border-r border-[#eef0f6]">{m.departments.join(', ') || '—'}</td>
-                    <td className="text-center py-2 px-3 tabular-nums border-r border-[#eef0f6]">
-                      {m.submitted ? m.row_count : <span className="text-[#b0b6c3]">—</span>}
+                    <td className="px-3 py-2 text-secondary text-xs border-r border-surface-container">{m.departments.join(', ') || '—'}</td>
+                    <td className="text-center py-2 px-3 tabular-nums border-r border-surface-container">
+                      {m.submitted ? m.row_count : <span className="text-outline-variant">—</span>}
                     </td>
-                    <td className="text-center py-2 px-3 tabular-nums border-r border-[#eef0f6]">
+                    <td className="text-center py-2 px-3 tabular-nums border-r border-surface-container">
                       {m.submitted ? (
                         m.blocked_count > 0 ? (
-                          <span className="inline-flex items-center gap-1.5 text-[#b91c1c]">
-                            <span className="w-1.5 h-1.5 rounded-full bg-[#dc2626]" />
+                          <span className="inline-flex items-center gap-1.5 text-error">
+                            <span className="w-1.5 h-1.5 rounded-full bg-error" />
                             {m.blocked_count}
                           </span>
-                        ) : <span className="text-[#b0b6c3]">0</span>
-                      ) : <span className="text-[#b0b6c3]">—</span>}
+                        ) : <span className="text-outline-variant">0</span>
+                      ) : <span className="text-outline-variant">—</span>}
                     </td>
-                    <td className="px-3 py-2 border-r border-[#eef0f6]">
+                    <td className="px-3 py-2 border-r border-surface-container">
                       {m.submitted ? (
-                        <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#0f7a3a]">
-                          <span className="w-1.5 h-1.5 rounded-full bg-[#16a34a]" />
+                        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-tertiary">
+                          <span className="w-1.5 h-1.5 rounded-full bg-tertiary" />
                           Đã lập
                         </span>
                       ) : (
-                        <span className="text-[12px] text-[#97a0b0]">Chưa lập</span>
+                        <span className="text-xs text-outline">Chưa lập</span>
                       )}
                     </td>
                     <td className="px-3 py-2">
                       {m.ack_at ? (
-                        <span className="text-[12px] text-[#0f7a3a]">{fmtAck(m.ack_at)}</span>
+                        <span className="text-xs text-tertiary">{fmtAck(m.ack_at)}</span>
                       ) : m.submitted ? (
-                        <span className="text-[12px] text-[#a16207]">Chưa xem</span>
+                        <span className="text-xs text-warning">Chưa xem</span>
                       ) : (
-                        <span className="text-[12px] text-[#c3c6d7]">—</span>
+                        <span className="text-xs text-outline-variant">—</span>
                       )}
                     </td>
                   </tr>

@@ -139,7 +139,8 @@ export interface TierItem extends Omit<Task, 'status' | 'priority' | 'ownerUserI
     avatar?: string;
   };
   // Status / Priority giữ lại dạng Tiếng Việt để UI không phải refactor.
-  status: 'Đang chạy' | 'Sắp xong' | 'Đã xong' | 'Điểm nghẽn' | 'Đang làm' | 'Đang nghẽn' | 'Lên lịch' | 'Chuẩn bị';
+  /** 1:1 với 5 trạng thái của state machine — xem STATUS_VI trong lib/transforms.ts. */
+  status: 'Chuẩn bị' | 'Đang chạy' | 'Chờ duyệt' | 'Điểm nghẽn' | 'Đã xong';
   priority: 'Cao (Critical Path)' | 'Trung bình' | 'Thấp';
   statusBadgeColor?: string;
   ownerUsername?: string;
@@ -188,12 +189,11 @@ export interface EmployeeTask {
   lastUpdated: string;
   deadline: string;
   isToday?: boolean;
-  status: 'doing' | 'done' | 'pending';
+  /** Enum DB nguyên bản — không gộp trạng thái. */
+  status: 'pending' | 'doing' | 'pending_approval' | 'blocked' | 'done';
   /**
-   * Tiến độ task (%) lấy từ daily_log.progress mới nhất.
-   * Fix #1: cần có baseline để `getDraft()` không luôn default = 0 → bug reset progress.
-   * Backend rollup đã có ở `tasks.progress` (transforms.ts) — App.tsx merge
-   * từ daily_log.progress của HÔM NAY để slider hiển thị đúng giá trị.
+   * Tiến độ (%) — baseline cho slider: daily_log.progress hôm nay nếu có,
+   * ngược lại tasks.progress (xem buildEmployeeTasks).
    */
   progress: number;
   manager: {

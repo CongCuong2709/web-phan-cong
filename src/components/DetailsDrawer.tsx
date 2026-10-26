@@ -1,39 +1,61 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import {
-  TierItem,
-  DailyLog,
-  HistoryEntry,
-  User,
-} from '../types';
-import {
-  canEditTierItem,
-  canAddDailyLog,
-} from '../auth/permissions';
+import { TierItem, DailyLog, HistoryEntry, User } from '../types';
+import { canEditTierItem, canAddDailyLog } from '../auth/permissions';
+import { api } from '../lib/apiClient';
+import { apiToHistoryEntry, extractBackendId, TIER_STATUS_OPTIONS, viStatusToEnum } from '../lib/transforms';
+import { Dialog, ghostButtonCls, inputCls, primaryButtonCls, textareaCls } from './ui/Dialog';
 
 interface DetailsDrawerProps {
   item: TierItem | null;
   isOpen: boolean;
   onClose: () => void;
-  onUpdateItem: (updated: TierItem) => void;
+  /** Resolve true khi server đã lưu — Drawer chỉ thoát chế độ sửa khi đó. */
+  onUpdateItem: (updated: TierItem) => Promise<boolean>;
   dailyLogs?: DailyLog[];
-  history?: HistoryEntry[];
-  /** Cần truyền allTierItems để compute descendants khi filter history. */
-  allTierItems?: TierItem[];
-  /**
-   * Gọi khi user ghi nhật ký thi công cho task (T4). Tham số đầu tiên là
-   * taskId (composite '<tier>-<num>').
-   */
+  /** Ghi nhật ký cho task T4 (taskId là composite '<tier>-<num>'). Resolve true khi đã lưu. */
   onAddDailyLog?: (
     taskId: string,
     description: string,
-    result?: string,
-    obstacle?: string,
-    progress?: number
-  ) => void;
-  /** Người đang đăng nhập — dùng để kiểm tra quyền edit */
+    result: string | undefined,
+    obstacle: string | undefined,
+    progress: number,
+  ) => Promise<boolean>;
   currentUser?: User;
 }
 
+/** Bản sao client của TRANSITIONS trong backend/lib/stateMachine.js — chỉ để ẩn lựa chọn chắc chắn bị từ chối. */
+const NEXT_STATUS: Record<string, string[]> = {
+  pending: ['doing', 'blocked'],
+  doing: ['pending_approval', 'blocked', 'pending'],
+  pending_approval: ['done', 'doing'],
+  blocked: ['doing', 'pending'],
+  done: [],
+};
+
+const ENTITY_BY_TIER = { 1: 'project', 2: 'phase', 3: 'bundle', 4: 'task' } as const;
+
+const PRIORITY_TONE: Record<TierItem['priority'], string> = {
+  'Cao (Critical Path)': 'text-error',
+  'Trung bình': 'text-on-surface',
+  'Thấp': 'text-secondary',
+};
+
+interface LogDraft {
+  description: string;
+  result: string;
+  obstacle: string;
+  progress: number;
+}
+
+const Section: React.FC<{ title: string; aside?: React.ReactNode; children: React.ReactNode }> = ({ title, aside, children }) => (
+  <section className="bg-white p-3.5 rounded-lg border border-surface-container">
+    <div className="flex items-center justify-between mb-1.5">
+      <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider">{title}</h3>
+      {aside}
+    </div>
+    {children}
+  </section>
+);
 
 export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
   item,
@@ -41,39 +63,48 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
   onClose,
   onUpdateItem,
   dailyLogs = [],
-  history = [],
-  allTierItems = [],
   onAddDailyLog,
   currentUser,
 }) => {
   const [formData, setFormData] = useState<TierItem | null>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [newLogDraft, setNewLogDraft] = useState<LogDraft | null>(null);
+  const [savingLog, setSavingLog] = useState(false);
+  const [history, setHistory] = useState<HistoryEntry[] | null>(null);
 
-  // Determine if this user can edit this item.
-  // Logic đã được centralize trong auth/permissions.ts (A4 fix gốc).
-  const canEdit = useMemo(
-    () => canEditTierItem(currentUser, formData),
-    [currentUser, formData]
-  );
-
-  const [newLogDraft, setNewLogDraft] = useState<{
-    description: string;
-    result: string;
-    obstacle: string;
-    progress: number;
-  } | null>(null);
-
+  // Đổi sang item khác: bỏ chế độ sửa + nháp nhật ký.
   useEffect(() => {
-    setFormData(item ? JSON.parse(JSON.stringify(item)) : null);
     setIsEditing(false);
     setNewLogDraft(null);
+  }, [item?.id]);
+
+  // Khi không sửa, form luôn phản ánh dữ liệu mới nhất từ server (kể cả sau khi lưu).
+  useEffect(() => {
+    if (!isEditing) setFormData(item ? { ...item, owner: { ...item.owner }, gantt: { ...item.gantt } } : null);
+  }, [item, isEditing]);
+
+  // Lịch sử lấy từ audit log của chính đối tượng này; tải lại mỗi khi dữ liệu item đổi.
+  useEffect(() => {
+    if (!item) return;
+    let cancelled = false;
+    setHistory(null);
+    api.listEntityHistory(ENTITY_BY_TIER[item.tier], extractBackendId(item.id)).then((r) => {
+      if (!cancelled) setHistory(r.ok ? r.data.items.map(apiToHistoryEntry) : []);
+    });
+    return () => { cancelled = true; };
   }, [item]);
 
-  // 2026-10: re-compute daysRemaining khi endDate thay đổi (transforms.ts chỉ tính
-  // lúc load; user thủ công đổi date trong form cần update real-time).
-  const liveDaysRemaining = useMemo(() => {
-    if (!formData?.endDate) return undefined;
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(formData.endDate);
+  const canEdit = useMemo(() => canEditTierItem(currentUser, item), [currentUser, item]);
+
+  const itemLogs = useMemo(
+    () => (item?.tier === 4 ? dailyLogs.filter((l) => l.taskId === String(extractBackendId(item.id))) : [])
+      .sort((a, b) => (a.logDate < b.logDate ? 1 : -1)),
+    [dailyLogs, item],
+  );
+
+  const daysRemaining = useMemo(() => {
+    const m = formData?.endDate ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(formData.endDate) : null;
     if (!m) return undefined;
     const end = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
     const now = new Date();
@@ -81,523 +112,392 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
     return Math.round((end.getTime() - now.getTime()) / 86400000);
   }, [formData?.endDate]);
 
-  const itemLogs = useMemo(() => {
-    if (!formData || formData.tier !== 4) return [];
-    return dailyLogs
-      .filter((l) => l.taskId === formData.id)
-      .sort((a, b) => (a.logDate < b.logDate ? 1 : -1));
-  }, [dailyLogs, formData]);
+  const busy = saving || savingLog;
 
-  // History filter bao gồm:
-//  1. History của chính item hiện tại
-//  2. History của tất cả descendants (cây con) — bubbled-down
-  //   - Không bao giờ có descendant history vì comment `false` cố ý
-  //   - Hệ quả: T2/T3 chỉ thấy history của chính nó, bỏ sót audit log của các T3/T4 con
-  const itemHistory = useMemo(() => {
-    if (!formData) return [];
-    // Build descendants set 1 lần
-    const descendantIds = new Set<string>();
-    const stack = [formData.id];
-    while (stack.length > 0) {
-      const cur = stack.pop()!;
-      for (const t of allTierItems) {
-        if (t.parentId === cur && !descendantIds.has(t.id)) {
-          descendantIds.add(t.id);
-          stack.push(t.id);
-        }
-      }
-    }
-    return history.filter((h) => h.entityId === formData.id || descendantIds.has(h.entityId));
-  }, [history, formData, allTierItems]);
+  if (!isOpen || !formData || !item) return null;
 
-  if (!isOpen || !formData) return null;
+  const currentEnum = viStatusToEnum(item.status);
+  const statusChoices = TIER_STATUS_OPTIONS.filter(
+    (s) => s === item.status || NEXT_STATUS[currentEnum]?.includes(viStatusToEnum(s)),
+  );
+  const isLeaf = formData.tier === 4;
 
-  // Tiến độ task update qua daily_log.progress (xem routes/dailyLogs.js).
-
-  const handleSave = () => {
-    if (formData) {
-      onUpdateItem(formData);
-      setIsEditing(false);
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      if (await onUpdateItem(formData)) setIsEditing(false);
+    } finally {
+      setSaving(false);
     }
   };
 
+  const handleCancelEdit = () => setIsEditing(false);
+
+  const handleSaveLog = async () => {
+    if (!newLogDraft?.description.trim() || !onAddDailyLog) return;
+    setSavingLog(true);
+    try {
+      const ok = await onAddDailyLog(
+        formData.id,
+        newLogDraft.description.trim(),
+        newLogDraft.result.trim() || undefined,
+        newLogDraft.obstacle.trim() || undefined,
+        newLogDraft.progress,
+      );
+      if (ok) setNewLogDraft(null);
+    } finally {
+      setSavingLog(false);
+    }
+  };
+
+  const requestClose = () => {
+    const dirty = isEditing || (newLogDraft && newLogDraft.description.trim());
+    if (dirty && !window.confirm('Bạn có thay đổi chưa lưu. Đóng và bỏ thay đổi?')) return;
+    onClose();
+  };
+
   return (
-    <>
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 bg-[#0b1c30]/30 backdrop-blur-[2px] z-40 transition-opacity"
-        onClick={onClose}
-      />
-
-      {/* Slide-over panel */}
-      <aside
-        className="fixed right-0 top-14 bottom-0 w-full sm:w-[460px] bg-white shadow-2xl z-50 transform transition-transform duration-300 ease-out flex flex-col border-l border-[#e5eeff]"
-        aria-label="Chi tiết hạng mục"
-      >
-        {/* Drawer Header */}
-        <div className="p-4 bg-[#eff4ff] flex items-start justify-between border-b border-[#dce9ff]">
-          <div className="pr-3">
-            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-              <span className="font-mono text-[12px] px-2 py-0.5 bg-[#e5eeff] text-[#004ac6] font-bold rounded">
-                {formData.code}
+    <Dialog isOpen variant="drawer" onClose={requestClose} title={formData.title} dismissible={!busy}>
+      <div className="flex flex-col min-h-full">
+        <div className="flex-1 p-4 space-y-3 bg-surface">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-mono text-xs px-2 py-0.5 bg-surface-container text-primary font-bold rounded">
+              {formData.code}
+            </span>
+            <span className="text-xs font-bold px-2 py-0.5 bg-primary text-on-primary rounded">{formData.tierName}</span>
+            {formData.department && (
+              <span className="text-xs font-bold px-2 py-0.5 bg-white text-on-surface rounded border border-surface-container-high">
+                {formData.department}
               </span>
-              <span className="text-[10px] font-bold px-2 py-0.5 bg-[#004ac6] text-white rounded uppercase tracking-wider">
-                {formData.tierName}
-              </span>
-              {formData.department && (
-                <span className="text-[10px] font-bold px-2 py-0.5 bg-white text-[#0b1c30] rounded border border-[#dce9ff]">
-                  {formData.department}
-                </span>
-              )}
-            </div>
-            <h3 className="font-semibold text-[17px] text-[#0b1c30] leading-snug">
-              {formData.title}
-            </h3>
+            )}
           </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded flex items-center justify-center text-[#434655] hover:text-[#0b1c30] hover:bg-[#dce9ff] transition-colors shrink-0"
-            title="Đóng (Esc)"
-          >
-            <span className="material-symbols-outlined text-[20px]">close</span>
-          </button>
-        </div>
 
-        {/* Drawer Body */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#f8f9ff]">
-          {/* 1. Responsibility */}
-          <div className="bg-white p-3.5 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
-            <label className="text-[11px] font-semibold text-[#565e74] uppercase tracking-wider block mb-1.5">
-              1. Người phụ trách chính
-            </label>
+          <Section title="Người phụ trách chính">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full bg-[#dae2fd] text-[#131b2e] font-bold flex items-center justify-center text-[13px]">
+              <div className="w-9 h-9 rounded-full bg-secondary-container text-on-secondary-fixed font-bold flex items-center justify-center text-sm">
                 {formData.owner.initial}
               </div>
               <div>
-                <div className="text-[14px] font-semibold text-[#0b1c30]">
-                  {formData.owner.name}
-                </div>
-                <div className="text-[12px] text-[#565e74]">
+                <div className="text-sm font-semibold text-on-surface">{formData.owner.name}</div>
+                <div className="text-xs text-secondary">
                   {formData.owner.role}
-                  {formData.ownerUsername && (
-                    <span className="ml-2 font-mono text-[#004ac6]">
-                      @{formData.ownerUsername}
-                    </span>
-                  )}
+                  {formData.ownerUsername && <span className="ml-2 font-mono text-primary">@{formData.ownerUsername}</span>}
                 </div>
               </div>
             </div>
-          </div>
+          </Section>
 
-          {/* 2. Lịch trình (start → end) */}
-          <div className="bg-white p-3.5 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
-            <label className="text-[11px] font-semibold text-[#565e74] uppercase tracking-wider block mb-1.5">
-              2. Lịch trình
-            </label>
-            <div className="flex items-center justify-between mb-1.5">
-              <div className="flex items-center gap-2 text-[12px] text-[#434655]">
-                <span className="text-[10px] font-semibold text-[#737686] uppercase">Từ</span>
-                <span className="font-mono font-semibold text-[#0b1c30]">
-                  {formData.startDate || '—'}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 text-[12px] text-[#434655]">
-                <span className="text-[10px] font-semibold text-[#737686] uppercase">Đến</span>
-                <span className="font-mono font-bold text-[14px] text-[#0b1c30]">
-                  {formData.endDate || '—'}
-                </span>
-              </div>
-            </div>
-            <div className="flex items-center justify-end">
+          <Section
+            title="Lịch trình"
+            aside={
               <span
-                className={`text-[11px] font-semibold px-2 py-0.5 rounded border ${
-                  liveDaysRemaining !== undefined && liveDaysRemaining < 0
-                    ? 'bg-red-50 text-[#ba1a1a] border-red-200'
-                    : 'bg-emerald-50 text-[#006243] border-emerald-200'
+                className={`text-xs font-semibold px-2 py-0.5 rounded border ${
+                  daysRemaining === undefined
+                    ? 'bg-surface-container-low text-secondary border-surface-container-high'
+                    : daysRemaining < 0 && formData.status !== 'Đã xong'
+                      ? 'bg-error-container text-on-error-container border-error-fixed'
+                      : 'bg-tertiary-fixed/40 text-tertiary border-tertiary/30'
                 }`}
               >
-                {liveDaysRemaining === undefined
-                  ? 'Đúng hạn'
-                  : liveDaysRemaining === 0
-                  ? 'Đến hạn hôm nay'
-                  : liveDaysRemaining < 0
-                  ? `Quá hạn ${Math.abs(liveDaysRemaining)} ngày`
-                  : `Còn ${liveDaysRemaining} ngày`}
+                {daysRemaining === undefined
+                  ? 'Chưa đặt hạn'
+                  : formData.status === 'Đã xong'
+                    ? 'Đã hoàn thành'
+                    : daysRemaining === 0
+                      ? 'Đến hạn hôm nay'
+                      : daysRemaining < 0
+                        ? `Quá hạn ${Math.abs(daysRemaining)} ngày`
+                        : `Còn ${daysRemaining} ngày`}
               </span>
-            </div>
-          </div>
-
-          {/* 3. Progress */}
-          <div className="bg-white p-3.5 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="text-[11px] font-semibold text-[#565e74] uppercase tracking-wider">
-                3. Tiến độ thực tế
-              </label>
-              <span className="font-mono font-bold text-[15px] text-[#004ac6]">
-                {formData.progress}%
-              </span>
-            </div>
-            <div className="w-full h-2.5 bg-[#eff4ff] rounded-full overflow-hidden mb-2">
-              <div
-                className="h-full bg-[#004ac6] rounded-full transition-all duration-300"
-                style={{ width: `${formData.progress}%` }}
-              ></div>
-            </div>
-            <div className="flex items-center gap-2 mt-2">
-              <span className="text-[11px] text-[#737686]">Chỉnh tiến độ:</span>
-              {canEdit ? (
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={formData.progress}
-                  onChange={(e) =>
-                    setFormData({ ...formData, progress: Number(e.target.value) })
-                  }
-                  className="flex-1 accent-[#004ac6] cursor-pointer"
-                />
-              ) : (
-                <div className="flex-1 h-2 bg-[#eff4ff] rounded-full overflow-hidden">
-                  <div className="h-full bg-[#004ac6]/40 rounded-full" style={{ width: `${formData.progress}%` }} />
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* 4. Status */}
-          <div className="bg-white p-3.5 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
-            <label className="text-[11px] font-semibold text-[#565e74] uppercase tracking-wider block mb-1.5">
-              4. Trạng thái điều hành
-            </label>
-            {/* Fix UI-04: select chỉ interactive khi canEdit=true. Khi !canEdit, hiển thị
-                read-only badge tránh user đổi status rồi save description → ghi nhầm. */}
-            {canEdit ? (
-              <select
-                value={formData.status}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    status: e.target.value as TierItem['status'],
-                  })
-                }
-                className="w-full text-[13px] font-medium bg-[#f8f9ff] text-[#0b1c30] border border-[#c3c6d7] rounded px-3 py-1.5 focus:outline-none focus:border-[#004ac6]"
-              >
-                <option value="Đang chạy">Đang chạy</option>
-                <option value="Sắp xong">Sắp xong</option>
-                <option value="Đã xong">Đã xong</option>
-                <option value="Điểm nghẽn">Điểm nghẽn</option>
-                <option value="Đang làm">Đang làm</option>
-                <option value="Đang nghẽn">Đang nghẽn</option>
-                <option value="Lên lịch">Lên lịch</option>
-                <option value="Chuẩn bị">Chuẩn bị</option>
-              </select>
+            }
+          >
+            {isEditing ? (
+              <div className="grid grid-cols-2 gap-2">
+                <label className="text-xs text-secondary flex flex-col gap-1">
+                  Từ ngày
+                  <input
+                    type="date"
+                    value={formData.startDate}
+                    onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
+                    className={inputCls}
+                  />
+                </label>
+                <label className="text-xs text-secondary flex flex-col gap-1">
+                  Đến ngày
+                  <input
+                    type="date"
+                    value={formData.endDate}
+                    onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
+                    className={inputCls}
+                  />
+                </label>
+              </div>
             ) : (
-              <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#eff4ff] text-[#004ac6] rounded border border-[#dce9ff] text-[13px] font-semibold">
-                <span className="material-symbols-outlined text-[15px]">
-                  lock
+              <div className="flex items-center justify-between text-xs text-on-surface-variant">
+                <span>
+                  Từ <span className="font-mono font-semibold text-on-surface">{formData.startDate || '—'}</span>
                 </span>
-                <span>{formData.status}</span>
-                <span className="text-[10px] font-medium text-[#737686] ml-1">
-                  · Chỉ đọc
+                <span>
+                  Đến <span className="font-mono font-bold text-sm text-on-surface">{formData.endDate || '—'}</span>
                 </span>
               </div>
             )}
-          </div>
+          </Section>
 
-          {/* 5. Priority */}
-          <div className="bg-white p-3.5 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
-            <label className="text-[11px] font-semibold text-[#565e74] uppercase tracking-wider block mb-1.5">
-              5. Mức độ ưu tiên
-            </label>
-            <div className="flex items-center gap-1.5 text-[#ba1a1a] text-[13px] font-semibold">
-              <span className="material-symbols-outlined text-[18px]">
-                priority_high
-              </span>
-              <span>{formData.priority}</span>
+          <Section title="Tiến độ thực tế" aside={<span className="font-mono font-bold text-base text-primary">{formData.progress}%</span>}>
+            <div
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={formData.progress}
+              aria-label="Tiến độ"
+              className="w-full h-2.5 bg-surface-container-low rounded-full overflow-hidden"
+            >
+              <div className="h-full bg-primary rounded-full transition-all duration-300" style={{ width: `${formData.progress}%` }} />
             </div>
-          </div>
+            {isEditing && isLeaf ? (
+              <label className="mt-2 flex items-center gap-2 text-xs text-secondary">
+                Chỉnh tiến độ
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={formData.progress}
+                  onChange={(e) => setFormData({ ...formData, progress: Number(e.target.value) })}
+                  className="flex-1 accent-primary cursor-pointer"
+                />
+              </label>
+            ) : !isLeaf ? (
+              <p className="mt-2 text-xs text-secondary">Tính tự động từ tiến độ các mục con.</p>
+            ) : null}
+          </Section>
 
-          {/* 6. Description */}
-          <div className="bg-white p-3.5 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
-            <label className="text-[11px] font-semibold text-[#565e74] uppercase tracking-wider block mb-1.5">
-              6. Mô tả & Phạm vi
-            </label>
+          <Section title="Trạng thái điều hành">
+            {isEditing ? (
+              <>
+                <select
+                  value={formData.status}
+                  onChange={(e) => setFormData({ ...formData, status: e.target.value as TierItem['status'] })}
+                  disabled={statusChoices.length <= 1}
+                  aria-label="Trạng thái"
+                  className={inputCls}
+                >
+                  {statusChoices.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-secondary">
+                  {statusChoices.length <= 1
+                    ? 'Trạng thái này là cuối cùng, không thể đổi.'
+                    : 'Chỉ hiện các bước chuyển hợp lệ từ trạng thái hiện tại.'}
+                </p>
+              </>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-surface-container-low text-primary rounded border border-surface-container-high text-sm font-semibold">
+                {formData.status}
+              </span>
+            )}
+          </Section>
+
+          <Section title="Mức độ ưu tiên">
+            {isEditing && isLeaf ? (
+              <select
+                value={formData.priority}
+                onChange={(e) => setFormData({ ...formData, priority: e.target.value as TierItem['priority'] })}
+                aria-label="Mức độ ưu tiên"
+                className={inputCls}
+              >
+                <option value="Cao (Critical Path)">Cao (đường găng)</option>
+                <option value="Trung bình">Trung bình</option>
+                <option value="Thấp">Thấp</option>
+              </select>
+            ) : (
+              <span className={`text-sm font-semibold ${PRIORITY_TONE[formData.priority]}`}>{formData.priority}</span>
+            )}
+          </Section>
+
+          <Section title="Mô tả & Phạm vi">
             {isEditing ? (
               <textarea
                 value={formData.description}
-                onChange={(e) =>
-                  setFormData({ ...formData, description: e.target.value })
-                }
-                className="w-full text-[13px] bg-[#f8f9ff] border border-[#c3c6d7] rounded p-2 focus:outline-none focus:border-[#004ac6]"
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                aria-label="Mô tả & Phạm vi"
+                className={textareaCls}
                 rows={3}
               />
             ) : (
-              <p className="text-[13px] text-[#434655] leading-relaxed whitespace-pre-line">
-                {formData.description}
+              <p className="text-sm text-on-surface-variant leading-relaxed whitespace-pre-line">
+                {formData.description || <span className="italic text-outline">Chưa có mô tả.</span>}
               </p>
             )}
-          </div>
+          </Section>
 
-          {/* 7. Blocker Note (chỉ T4) — NV viết, Manager xem */}
-          {formData.tier === 4 && (
-            <div className="bg-white p-3.5 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
-              <label className="text-[11px] font-semibold text-[#565e74] uppercase tracking-wider block mb-1.5">
-                7. Vướng mắc (NV báo cáo)
-              </label>
-              {isEditing ? (
-                <textarea
-                  value={formData.blockerNote || ''}
-                  onChange={(e) =>
-                    setFormData({ ...formData, blockerNote: e.target.value })
-                  }
-                  className="w-full text-[13px] bg-[#f8f9ff] border border-[#c3c6d7] rounded p-2 focus:outline-none focus:border-[#004ac6]"
-                  rows={2}
-                  placeholder="NV sẽ viết vướng mắc ở đây qua nút Báo cáo vướng mắc trong Việc của tôi"
-                />
-              ) : (
-                <p className="text-[13px] text-[#434655] leading-relaxed">
-                  {formData.blockerNote || (
-                    <span className="italic text-[#737686]">Chưa có báo cáo vướng mắc nào.</span>
-                  )}
-                </p>
-              )}
-            </div>
+          {isLeaf && (
+            <Section title="Vướng mắc (nhân viên báo)">
+              <p className="text-sm text-on-surface-variant leading-relaxed">
+                {formData.blockerNote || <span className="italic text-outline">Chưa có báo cáo vướng mắc nào.</span>}
+              </p>
+            </Section>
           )}
 
-          {/* 8. Management Notes */}
-          <div className="bg-white p-3.5 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
-            <label className="text-[11px] font-semibold text-[#565e74] uppercase tracking-wider block mb-1.5">
-              8. Ghi chú điều hành
-            </label>
+          <Section title="Ghi chú điều hành">
             {isEditing ? (
               <textarea
                 value={formData.managementNotes}
-                onChange={(e) =>
-                  setFormData({ ...formData, managementNotes: e.target.value })
-                }
-                className="w-full text-[13px] bg-[#f8f9ff] border border-[#c3c6d7] rounded p-2 focus:outline-none focus:border-[#004ac6]"
+                onChange={(e) => setFormData({ ...formData, managementNotes: e.target.value })}
+                aria-label="Ghi chú điều hành"
+                className={textareaCls}
                 rows={2}
               />
             ) : (
-              <p className="text-[13px] text-[#434655] italic leading-relaxed">
-                {formData.managementNotes}
+              <p className="text-sm text-on-surface-variant leading-relaxed whitespace-pre-line">
+                {formData.managementNotes || <span className="italic text-outline">Chưa có ghi chú.</span>}
               </p>
             )}
-          </div>
+          </Section>
 
-          {/* 9. NHẬT KÝ THI CÔNG (chỉ T4) — gắn trực tiếp vào task */}
-          {formData.tier === 4 && (
-            <div className="bg-white p-3.5 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-[11px] font-semibold text-[#565e74] uppercase tracking-wider">
-                  9. Nhật ký thi công
-                </label>
-                <span className="text-[11px] font-mono text-[#004ac6] font-semibold">
-                  {itemLogs.length} mục
-                </span>
-              </div>
-
+          {isLeaf && (
+            <Section title="Nhật ký thi công" aside={<span className="text-xs font-mono text-primary font-semibold">{itemLogs.length} mục</span>}>
               {itemLogs.length === 0 ? (
-                <p className="text-[12px] text-[#737686] italic">
-                  Đầu việc này chưa có nhật ký thi công nào.
-                </p>
+                <p className="text-xs text-outline italic">Đầu việc này chưa có nhật ký thi công nào.</p>
               ) : (
                 <ul className="space-y-2">
                   {itemLogs.map((log) => (
-                    <li
-                      key={log.id}
-                      className="bg-[#f8f9ff] border border-[#e5eeff] rounded p-2.5"
-                    >
+                    <li key={log.id} className="bg-surface border border-surface-container rounded p-2.5">
                       <div className="flex items-center justify-between mb-1">
-                        <span className="font-mono text-[11px] font-bold text-[#004ac6]">
-                          {log.logDate}
-                        </span>
-                        <span className="text-[10px] font-bold text-[#006243]">
-                          +{log.progress}%
-                        </span>
+                        <span className="font-mono text-xs font-bold text-primary">{log.logDate}</span>
+                        <span className="text-xs font-bold text-tertiary">Tiến độ {log.progress}%</span>
                       </div>
-                      <div className="text-[12px] text-[#0b1c30] leading-relaxed">
-                        {log.description}
-                      </div>
+                      <div className="text-xs text-on-surface leading-relaxed">{log.description}</div>
                       {log.result && (
-                        <div className="text-[11px] text-[#006243] mt-1 font-medium">
-                          ✅ {log.result}
+                        <div className="text-xs text-tertiary mt-1 font-medium">
+                          <span className="font-bold">Kết quả:</span> {log.result}
                         </div>
                       )}
-                      {log.obstacle && log.obstacle !== 'Không' && (
-                        <div className="text-[11px] text-[#ba1a1a] mt-1 font-medium">
-                          ⚠ {log.obstacle}
+                      {log.obstacle && (
+                        <div className="text-xs text-error mt-1 font-medium">
+                          <span className="font-bold">Vướng mắc:</span> {log.obstacle}
                         </div>
                       )}
-                      <div className="text-[10px] text-[#737686] mt-1.5">
-                        — {log.userName}
-                        {log.userRole && ` · ${log.userRole}`}
-                      </div>
+                      <div className="text-xs text-outline mt-1.5">— {log.userName}</div>
                     </li>
                   ))}
                 </ul>
               )}
 
-              {/* Form thêm nhật ký (inline) */}
-              {onAddDailyLog && canAddDailyLog(currentUser, formData) && (
-                newLogDraft ? (
-                  <div className="bg-[#eff4ff] border border-[#dce9ff] rounded p-2.5 space-y-2 mt-2">
+              {onAddDailyLog && canAddDailyLog(currentUser, formData) &&
+                (newLogDraft ? (
+                  <div className="bg-surface-container-low border border-surface-container-high rounded p-2.5 space-y-2 mt-2">
                     <textarea
                       value={newLogDraft.description}
-                      onChange={(e) =>
-                        setNewLogDraft({ ...newLogDraft, description: e.target.value })
-                      }
+                      onChange={(e) => setNewLogDraft({ ...newLogDraft, description: e.target.value })}
                       rows={2}
-                      placeholder="Mô tả công việc hôm nay…"
-                      className="w-full text-[12px] p-2 rounded border border-[#dce9ff] bg-white"
+                      aria-label="Mô tả công việc hôm nay"
+                      placeholder="Mô tả công việc hôm nay (bắt buộc)…"
+                      className={textareaCls}
                     />
                     <input
                       type="text"
                       value={newLogDraft.result}
-                      onChange={(e) =>
-                        setNewLogDraft({ ...newLogDraft, result: e.target.value })
-                      }
+                      onChange={(e) => setNewLogDraft({ ...newLogDraft, result: e.target.value })}
+                      aria-label="Kết quả đạt được"
                       placeholder="Kết quả đạt được (tuỳ chọn)"
-                      className="w-full text-[12px] p-2 rounded border border-[#dce9ff] bg-white"
+                      className={inputCls}
                     />
                     <input
                       type="text"
                       value={newLogDraft.obstacle}
-                      onChange={(e) =>
-                        setNewLogDraft({ ...newLogDraft, obstacle: e.target.value })
-                      }
-                      placeholder="Vướng mắc (tuỳ chọn)"
-                      className="w-full text-[12px] p-2 rounded border border-[#dce9ff] bg-white"
+                      onChange={(e) => setNewLogDraft({ ...newLogDraft, obstacle: e.target.value })}
+                      aria-label="Vướng mắc"
+                      placeholder="Vướng mắc (tuỳ chọn — sẽ gửi Trưởng phòng)"
+                      className={inputCls}
                     />
-                    <div className="flex items-center gap-2">
-                      <label className="text-[11px] font-semibold text-[#0b1c30] shrink-0">
-                        Tiến độ:
-                      </label>
+                    <label className="flex items-center gap-2 text-xs font-semibold text-on-surface">
+                      Tiến độ
                       <input
                         type="range"
-                        min="0"
-                        max="100"
+                        min={0}
+                        max={100}
+                        step={5}
                         value={newLogDraft.progress}
-                        onChange={(e) =>
-                          setNewLogDraft({ ...newLogDraft, progress: Number(e.target.value) })
-                        }
-                        className="flex-1 accent-[#004ac6]"
+                        onChange={(e) => setNewLogDraft({ ...newLogDraft, progress: Number(e.target.value) })}
+                        className="flex-1 accent-primary"
                       />
-                      <span className="text-[12px] font-bold text-[#004ac6] w-12 text-right">
-                        {newLogDraft.progress}%
-                      </span>
-                    </div>
+                      <span className="font-bold text-primary w-10 text-right">{newLogDraft.progress}%</span>
+                    </label>
                     <div className="flex justify-end gap-2 pt-1">
-                      <button
-                        onClick={() => setNewLogDraft(null)}
-                        type="button"
-                        className="px-2.5 py-1 text-[11px] font-semibold text-[#565e74] hover:bg-white rounded"
-                      >
+                      <button onClick={() => setNewLogDraft(null)} type="button" disabled={savingLog} className={ghostButtonCls}>
                         Hủy
                       </button>
                       <button
-                        onClick={() => {
-                          if (!newLogDraft.description.trim() || !onAddDailyLog) return;
-                          onAddDailyLog(
-                            formData.id,
-                            newLogDraft.description,
-                            newLogDraft.result || undefined,
-                            newLogDraft.obstacle || undefined,
-                            newLogDraft.progress,
-                          );
-                          setNewLogDraft(null);
-                        }}
+                        onClick={handleSaveLog}
                         type="button"
-                        className="px-3 py-1 bg-[#006243] hover:bg-[#007d57] text-white text-[11px] font-bold rounded"
+                        disabled={savingLog || !newLogDraft.description.trim()}
+                        className={primaryButtonCls}
                       >
-                        Lưu nhật ký
+                        {savingLog ? 'Đang lưu…' : 'Lưu nhật ký'}
                       </button>
                     </div>
                   </div>
                 ) : (
                   <button
-                    onClick={() =>
-                      setNewLogDraft({
-                        description: '',
-                        result: '',
-                        obstacle: '',
-                        progress: formData.progress ?? 0,
-                      })
-                    }
-                    className="mt-2 text-[11px] font-bold text-[#004ac6] hover:text-[#2563eb] flex items-center gap-1"
+                    onClick={() => setNewLogDraft({ description: '', result: '', obstacle: '', progress: formData.progress ?? 0 })}
+                    className="mt-2 text-xs font-bold text-primary hover:text-primary-container flex items-center gap-1"
                     type="button"
                   >
-                    <span className="material-symbols-outlined text-[14px]">add</span>
+                    <span aria-hidden="true" className="material-symbols-outlined [--icon-size:14px]">add</span>
                     Thêm nhật ký
                   </button>
-                )
-              )}
-            </div>
+                ))}
+            </Section>
           )}
 
-          {/* 10. History */}
-          {itemHistory.length > 0 && (
-            <div className="bg-white p-3.5 rounded-lg border border-[#e5eeff] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
-              <label className="text-[11px] font-semibold text-[#565e74] uppercase tracking-wider block mb-1.5">
-                10. Lịch sử thao tác
-              </label>
+          <Section title="Lịch sử thao tác">
+            {history === null ? (
+              <p className="text-xs text-outline" role="status">Đang tải lịch sử…</p>
+            ) : history.length === 0 ? (
+              <p className="text-xs text-outline italic">Chưa có thao tác nào được ghi lại.</p>
+            ) : (
               <ul className="space-y-1.5">
-                {itemHistory.map((h) => (
-                  <li
-                    key={h.id}
-                    className="text-[12px] text-[#434655] flex items-start gap-2"
-                  >
-                    <span className="material-symbols-outlined text-[14px] text-[#004ac6] mt-0.5">
-                      history
-                    </span>
-                    <div>
-                      <div>{h.action}</div>
-                      <div className="text-[10px] text-[#737686]">
-                        — {h.userName} · {h.createdAt}
-                      </div>
+                {history.map((h) => (
+                  <li key={h.id} className="text-xs text-on-surface-variant">
+                    <div>{h.action}</div>
+                    <div className="text-outline">
+                      — {h.userName || 'Hệ thống'} · {h.createdAt}
                     </div>
                   </li>
                 ))}
               </ul>
-            </div>
-          )}
+            )}
+          </Section>
         </div>
 
-        {/* Drawer Footer */}
-        <div className="p-3.5 bg-[#eff4ff] border-t border-[#dce9ff] flex items-center justify-between">
-          <button
-            onClick={onClose}
-            type="button"
-            className="px-4 py-1.5 bg-white border border-[#c3c6d7] hover:bg-[#f8f9ff] text-[13px] font-medium text-[#0b1c30] rounded transition-colors shadow-sm"
-          >
-            Đóng lại
-          </button>
-          <div className="flex items-center gap-2">
-            {!canEdit ? (
-              <span className="text-[11px] text-[#737686] italic px-3">
-                {currentUser?.role === 'director' ? 'Đang xem (Chế độ read-only)' : 'Không có quyền chỉnh sửa'}
-              </span>
-            ) : isEditing ? (
-              <button
-                onClick={handleSave}
-                type="button"
-                className="px-4 py-1.5 bg-[#006243] hover:bg-[#007d57] text-white text-[13px] font-semibold rounded shadow-sm transition-colors"
-              >
-                Lưu thay đổi
-              </button>
-            ) : (
-              <button
-                onClick={() => setIsEditing(true)}
-                type="button"
-                className="px-4 py-1.5 bg-[#004ac6] hover:bg-[#2563eb] text-white text-[13px] font-semibold rounded shadow-sm transition-colors"
-              >
-                Chỉnh sửa nhanh
-              </button>
-            )}
-          </div>
+        <div className="sticky bottom-0 p-3.5 bg-surface-container-low border-t border-surface-container-high flex items-center justify-between gap-2">
+          {isEditing ? (
+            <button onClick={handleCancelEdit} type="button" disabled={saving} className={ghostButtonCls}>
+              Huỷ sửa
+            </button>
+          ) : (
+            <button onClick={requestClose} type="button" className={ghostButtonCls}>
+              Đóng lại
+            </button>
+          )}
+          {!canEdit ? (
+            <span className="text-xs text-secondary italic px-3">
+              {currentUser?.role === 'director' ? 'Chế độ chỉ đọc' : 'Bạn không có quyền chỉnh sửa mục này'}
+            </span>
+          ) : isEditing ? (
+            <button onClick={handleSave} type="button" disabled={saving} className={primaryButtonCls}>
+              {saving ? 'Đang lưu…' : 'Lưu thay đổi'}
+            </button>
+          ) : (
+            <button onClick={() => setIsEditing(true)} type="button" className={primaryButtonCls}>
+              Chỉnh sửa
+            </button>
+          )}
         </div>
-      </aside>
-    </>
+      </div>
+    </Dialog>
   );
 };

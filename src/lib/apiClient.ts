@@ -4,14 +4,11 @@
  * localStorage chỉ được dùng cho JWT token (`mvp_token`).
  * Mọi data nghiệp vụ đến từ API — không có localStorage cache.
  *
- * Usage:
- *   import { api } from './lib/apiClient';
- *   await api.login('admin', 'admin123');
- *   api.createTierItem({ ... });  // fire-and-forget
+ * Mọi hàm trả `ApiResponse` (không throw). Nơi gọi PHẢI xử lý nhánh `ok: false`
+ * — dùng `describeApiError()` để báo cho người dùng; không nuốt lỗi.
  */
 
-// Fix C3: port backend mặc định là 3000 (xem backend/.env PORT=3000),
-// không phải 3001. Sai port này làm frontend không gọi được API mặc định.
+// Backend mặc định chạy ở :3001 (backend/.env.example PORT=3001).
 const API_BASE = (import.meta.env.VITE_API_URL as string) || 'http://localhost:3001';
 const TOKEN_KEY = 'mvp_token';
 
@@ -426,7 +423,7 @@ export const api = {
     });
   },
 
-  // --- Users (BUG-04 fix: NewItemModal cần danh sách user thật cho dropdown) ---
+  // --- Users (dropdown người phụ trách trong NewItemModal) ---
   /**
    * GET /api/users — admin thấy tất cả, manager thấy users trong cùng department.
    * (xem routes/users.js:19-43). Employee bị 403, không dùng được từ client.
@@ -463,6 +460,11 @@ export const api = {
   // --- History ---
   async listHistory(limit = 50) {
     return request<{ items: HistoryEntryDto[] }>('GET', `/api/history?limit=${limit}`);
+  },
+  /** GET /api/history?entity_type=&entity_id= — lịch sử của 1 đối tượng (mọi role đã đăng nhập). */
+  async listEntityHistory(entityType: HistoryEntryDto['entity_type'], entityId: number) {
+    const qs = new URLSearchParams({ entity_type: entityType, entity_id: String(entityId) });
+    return request<{ items: HistoryEntryDto[] }>('GET', `/api/history?${qs}`);
   },
 
   // --- Weekly reports (Ponytail: 4 endpoints) ---
@@ -562,23 +564,26 @@ export interface WeeklyReportDto {
   updated_at: string;
 }
 
+const ERROR_TEXT: Record<string, string> = {
+  forbidden: 'Bạn không có quyền thực hiện thao tác này.',
+  not_found: 'Dữ liệu không còn tồn tại — có thể đã bị xoá.',
+  invalid_transition: 'Không thể chuyển sang trạng thái này.',
+  invalid_date: 'Ngày không hợp lệ.',
+  missing_description: 'Cần nhập mô tả công việc.',
+  note_required: 'Cần nhập nội dung vướng mắc.',
+  timeout: 'Máy chủ phản hồi quá lâu.',
+  network: 'Không kết nối được máy chủ.',
+};
+
 /**
- * Helper: fire-and-forget helper. Log lỗi nhẹ ra console nhưng không throw.
- * Dùng cho dual-write — UI không bao giờ bị block vì API lỗi.
+ * Câu báo lỗi tiếng Việt cho người dùng từ một response thất bại.
+ * Ưu tiên `message` do backend trả (đã là tiếng Việt), rồi tới bảng mã lỗi.
  */
-export function fireAndForget<T>(
-  promise: Promise<ApiResponse<T>>,
-  context: string
-): void {
-  promise.then((r) => {
-    if (!r.ok) {
-      if (r.networkError) {
-        console.debug(`[api/${context}] skipped (backend offline)`);
-      } else {
-        console.debug(`[api/${context}] failed:`, r.error);
-      }
-    }
-  });
+export function describeApiError(r: { ok: false; error: ApiError; networkError: boolean }): string {
+  if (r.networkError) {
+    return `${ERROR_TEXT[r.error.error] ?? ERROR_TEXT.network} Thay đổi chưa được lưu.`;
+  }
+  return r.error.message || ERROR_TEXT[r.error.error] || `Lỗi máy chủ (${r.error.error}).`;
 }
 
 export const apiBaseUrl = API_BASE;

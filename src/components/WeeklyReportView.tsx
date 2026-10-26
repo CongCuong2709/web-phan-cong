@@ -27,10 +27,10 @@ type Row = {
 };
 
 const STATUS_META: Record<Row['status'], { dot: string; color: string }> = {
-  'Hoàn thành': { dot: 'dot-green', color: '#0f7a3a' },
-  'Đang làm': { dot: 'dot-amber', color: '#a16207' },
-  'Chưa bắt đầu': { dot: 'dot-gray', color: '#5b6371' },
-  'Vướng mắc': { dot: 'dot-red', color: '#b91c1c' },
+  'Hoàn thành': { dot: 'dot-green', color: 'var(--color-tertiary)' },
+  'Đang làm': { dot: 'dot-amber', color: 'var(--color-warning)' },
+  'Chưa bắt đầu': { dot: 'dot-gray', color: 'var(--color-secondary)' },
+  'Vướng mắc': { dot: 'dot-red', color: 'var(--color-error)' },
 };
 
 const NEW_ROW = (): Row => ({
@@ -250,7 +250,7 @@ export const WeeklyReportView: React.FC<Props> = ({
   const empCell = (idx: number, field: 'name' | 'result' | 'blocker', ph: string) => {
     const value = rows[idx][field];
     if (isReview) {
-      return <td>{value ? value : <span className="text-[#b0b6c3]">—</span>}</td>;
+      return <td>{value ? value : <span className="text-outline-variant">—</span>}</td>;
     }
     return (
       <td
@@ -258,7 +258,7 @@ export const WeeklyReportView: React.FC<Props> = ({
         suppressContentEditableWarning
         onBlur={(e) => updateRow(idx, { [field]: (e.currentTarget.textContent ?? '').trim() } as Partial<Row>)}
         data-ph={ph}
-        className="border-r border-[#eef0f6] align-middle empty:before:content-[attr(data-ph)] empty:before:text-[#b0b6c3] empty:before:italic focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#1a73e8] focus:ring-inset hover:bg-[#f6f8fc] hover:outline hover:outline-1 hover:outline-[#c7d2e3]"
+        className="border-r border-surface-container align-middle empty:before:content-[attr(data-ph)] empty:before:text-outline-variant empty:before:italic focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary focus:ring-inset hover:bg-surface hover:outline hover:outline-1 hover:outline-outline-variant"
       >{value}</td>
     );
   };
@@ -276,12 +276,12 @@ export const WeeklyReportView: React.FC<Props> = ({
       );
     }
     return (
-      <td className="border-r border-[#eef0f6] relative align-middle">
+      <td className="border-r border-surface-container relative align-middle">
         <span className={`dot ${meta.dot}`} />
         <select
           value={rows[idx].status}
           onChange={(e) => updateRow(idx, { status: e.target.value as Row['status'] })}
-          className="appearance-none bg-transparent border border-transparent hover:border-[#dfe3ec] focus:border-[#1a73e8] focus:bg-white rounded px-2 py-1 pl-5 font-medium text-[13px] cursor-pointer w-full focus:outline-none"
+          className="appearance-none bg-transparent border border-transparent hover:border-surface-container focus:border-primary focus:bg-white rounded px-2 py-1 pl-5 font-medium text-sm cursor-pointer w-full focus:outline-none"
           style={{ color: meta.color }}
         >
           <option>Hoàn thành</option>
@@ -298,41 +298,41 @@ export const WeeklyReportView: React.FC<Props> = ({
     const r = rows[idx];
     if (isReview) {
       return (
-        <td className="bg-[#fcfdff]">
+        <td className="bg-surface">
           <div
             contentEditable
             suppressContentEditableWarning
             onBlur={(e) => updateMgr(idx, { mgr_comment: (e.currentTarget.textContent ?? '').trim() })}
             data-ph="Ghi chỉ đạo cho dòng này…"
-            className="empty:before:content-[attr(data-ph)] empty:before:text-[#b0b6c3] empty:before:italic focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#1a73e8] focus:ring-inset hover:bg-white hover:outline hover:outline-1 hover:outline-[#c7d2e3] rounded px-1 py-0.5 mb-1"
+            className="empty:before:content-[attr(data-ph)] empty:before:text-outline-variant empty:before:italic focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary focus:ring-inset hover:bg-white hover:outline hover:outline-1 hover:outline-outline-variant rounded px-1 py-0.5 mb-1"
           >{r.mgr_comment}</div>
         </td>
       );
     }
     // NV: chỉ đọc chỉ đạo của QL
     if (!r.mgr_comment) {
-      return <td className="bg-[#fcfdff]"><span className="text-[#b0b6c3]">—</span></td>;
+      return <td className="bg-surface"><span className="text-outline-variant">—</span></td>;
     }
     return (
-      <td className="bg-[#fcfdff]">{r.mgr_comment}</td>
+      <td className="bg-surface">{r.mgr_comment}</td>
     );
   };
 
   const hasAnyContent = rows.some((r) => r.name || r.result || r.blocker);
 
   return (
-    <div className="max-w-[1240px] mx-auto px-6 py-6">
+    <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-6">
       {/* ===== Header bản in ===== */}
-      <div className="hidden print:block mb-4 pb-3 border-b-2 border-[#1f2330]">
+      <div className="hidden print:block mb-4 pb-3 border-b-2 border-on-surface">
         <div className="flex items-start justify-between">
           <div>
-            <div className="text-[13px] font-bold uppercase">Báo cáo công việc tuần</div>
-            <div className="text-[11px] text-[#5b6371] mt-0.5">
+            <div className="text-sm font-bold uppercase">Báo cáo công việc tuần</div>
+            <div className="text-xs text-secondary mt-0.5">
               {targetUser ? targetUser.fullname : currentUser.fullname}
               {targetUser?.departments?.length ? ` · ${targetUser.departments.join(', ')}` : ''}
             </div>
           </div>
-          <div className="text-right text-[11px] text-[#5b6371] leading-relaxed">
+          <div className="text-right text-xs text-secondary leading-relaxed">
             <div>Tuần {isoWeek(new Date(weekStart))} · {fmtDateVI(weekStart)} – {fmtDateVI(weekEnd)}</div>
             <div>{isReview ? 'Trưởng phòng' : 'Nhân viên'} nộp {fmtStamp(savedAt)}</div>
           </div>
@@ -343,22 +343,22 @@ export const WeeklyReportView: React.FC<Props> = ({
       <div className="flex items-start justify-between gap-3 mb-3 print:hidden">
         <div className="min-w-0">
           {isReview && onBack && (
-            <button
+            <button type="button"
               onClick={onBack}
-              className="text-[13px] text-[#4b5462] hover:text-[#1a73e8] mb-1"
+              className="text-sm text-secondary hover:text-primary mb-1"
             >← Báo cáo tuần phòng ban</button>
           )}
           <div className="flex items-center gap-2">
             {isReview && targetUser && (
-              <div className="w-8 h-8 rounded-full bg-[#dce9ff] text-[#004ac6] flex items-center justify-center text-[13px] font-bold shrink-0">
+              <div className="w-8 h-8 rounded-full bg-surface-container-high text-primary flex items-center justify-center text-sm font-bold shrink-0">
                 {targetUser.fullname.trim().charAt(0).toUpperCase()}
               </div>
             )}
-            <h1 className="text-[18px] font-semibold tracking-tight">
+            <h1 className="text-lg font-semibold tracking-tight">
               {isReview && targetUser ? (
                 <>
                   {targetUser.fullname}
-                  <span className="text-[#5b6371] font-normal">
+                  <span className="text-secondary font-normal">
                     {targetUser.departments?.length ? ` · NV.${targetUser.departments.join('.')}` : ''}
                   </span>
                 </>
@@ -367,22 +367,22 @@ export const WeeklyReportView: React.FC<Props> = ({
               )}
             </h1>
             <div className="flex items-center">
-              <button
-                className="px-2 py-1 rounded-md hover:bg-[#eef2f8] text-[12px] text-[#5b6371]"
+              <button type="button"
+                className="px-2 py-1 rounded-md hover:bg-surface-container text-xs text-secondary"
                 onClick={() => trySwitchWeek(addDays(weekStart, -7))}
               >Tuần trước</button>
-              <button
-                className="px-2 py-1 rounded-md hover:bg-[#eef2f8] disabled:opacity-40 text-[12px] text-[#5b6371]"
+              <button type="button"
+                className="px-2 py-1 rounded-md hover:bg-surface-container disabled:opacity-40 text-xs text-secondary"
                 onClick={() => trySwitchWeek(addDays(weekStart, 7))}
                 disabled={!canGoNext}
               >Tuần sau</button>
             </div>
           </div>
-          <div className="flex items-center gap-2 mt-1 text-[12px] text-[#5b6371]">
+          <div className="flex items-center gap-2 mt-1 text-xs text-secondary">
             <span>Tuần {isoWeek(new Date(weekStart))} ({fmtDateVI(weekStart)} – {fmtDateVI(weekEnd)})</span>
             {savedAt && (
               <>
-                <span className="text-[#c3c6d7]">|</span>
+                <span className="text-outline-variant">|</span>
                 <span>Nộp lúc {fmtStamp(savedAt)}</span>
               </>
             )}
@@ -391,55 +391,55 @@ export const WeeklyReportView: React.FC<Props> = ({
 
         <div className="flex items-center gap-2 shrink-0">
           {!isReview && (
-            <span className="text-[12px] font-medium">
+            <span className="text-xs font-medium">
               {dirty ? (
-                <span className="text-[#a16207]">● Có thay đổi chưa lưu</span>
+                <span className="text-warning">● Có thay đổi chưa lưu</span>
               ) : savedAt ? (
-                <span className="text-[#5b6371]">Đã lưu · {fmtStamp(savedAt)}</span>
+                <span className="text-secondary">Đã lưu · {fmtStamp(savedAt)}</span>
               ) : null}
             </span>
           )}
           {isReview && reviewDirty && (
-            <span className="text-[12px] text-[#a16207] font-medium">● Phản hồi chưa lưu</span>
+            <span className="text-xs text-warning font-medium">● Phản hồi chưa lưu</span>
           )}
 
           {/* Lịch sử tuần — chỉ NV (bỏ qua ở mode review) */}
           {!isReview && (
             <div className="relative">
-              <button
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-[#dfe3ec] text-[13px] font-medium text-[#4b5462] hover:bg-[#f6f8fc]"
+              <button type="button"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-surface-container text-sm font-medium text-secondary hover:bg-surface"
                 onClick={() => setShowHistory((v) => !v)}
               >Lịch sử tuần</button>
               {showHistory && (
                 <>
                   <div className="fixed inset-0 z-30" onClick={() => setShowHistory(false)} />
-                  <div className="absolute right-0 top-full mt-1.5 w-[300px] bg-white border border-[#e4e8f0] rounded-[10px] shadow-[0_8px_24px_rgba(15,23,42,0.10)] z-40 overflow-hidden">
-                    <div className="px-3 py-2 border-b border-[#eef0f6] text-[11px] font-semibold uppercase tracking-wider text-[#97a0b0]">
+                  <div className="absolute right-0 top-full mt-1.5 w-[300px] bg-white border border-surface-container rounded-[10px] shadow-[0_8px_24px_rgba(15,23,42,0.10)] z-40 overflow-hidden">
+                    <div className="px-3 py-2 border-b border-surface-container text-xs font-semibold uppercase tracking-wider text-outline">
                       Tuần đã lập
                     </div>
                     <div className="max-h-[280px] overflow-y-auto py-1">
                       {history.length === 0 ? (
-                        <div className="px-3 py-3 text-[12px] text-[#b0b6c3] text-center">
+                        <div className="px-3 py-3 text-xs text-outline-variant text-center">
                           Chưa có tuần nào đã lưu
                         </div>
                       ) : history.map((h) => (
                         <div
                           key={h.week_start}
-                          className={`flex items-center justify-between gap-2 px-3 py-2 text-[13px] cursor-pointer ${
-                            h.week_start === weekStart ? 'bg-[#eff6ff] font-medium' : 'hover:bg-[#f6f8fc]'
+                          className={`flex items-center justify-between gap-2 px-3 py-2 text-sm cursor-pointer ${
+                            h.week_start === weekStart ? 'bg-surface-container-low font-medium' : 'hover:bg-surface'
                           }`}
                           onClick={() => { if (trySwitchWeek(h.week_start)) setShowHistory(false); }}
                         >
                           <span className="flex items-center gap-2">
                             Tuần {isoWeek(new Date(h.week_start))}
-                            <span className="text-[#97a0b0] text-[12px]">
+                            <span className="text-outline text-xs">
                               {fmtDateVI(h.week_start)} – {fmtDateVI(h.week_end)}
                             </span>
                           </span>
-                          <span className="flex items-center gap-1.5 text-[11px] text-[#5b6371] shrink-0">
+                          <span className="flex items-center gap-1.5 text-xs text-secondary shrink-0">
                             {h.blocked_count > 0 && (
-                              <span className="inline-flex items-center gap-1 text-[#b91c1c]">
-                                <span className="w-1.5 h-1.5 rounded-full bg-[#dc2626]" />{h.blocked_count}
+                              <span className="inline-flex items-center gap-1 text-error">
+                                <span className="w-1.5 h-1.5 rounded-full bg-error" />{h.blocked_count}
                               </span>
                             )}
                             {h.row_count} dòng
@@ -453,16 +453,16 @@ export const WeeklyReportView: React.FC<Props> = ({
             </div>
           )}
 
-          <button
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-[#dfe3ec] text-[13px] font-medium text-[#4b5462] hover:bg-[#f6f8fc]"
+          <button type="button"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-surface-container text-sm font-medium text-secondary hover:bg-surface"
             onClick={() => window.print()}
             title="In hoặc lưu PDF"
           >In / PDF</button>
 
           {/* NV: Lưu báo cáo (chỉ tuần hiện tại) */}
           {canEdit && isCurrentWeek && (
-            <button
-              className="px-3 py-1.5 rounded-md text-[13px] font-semibold bg-[#1a73e8] text-white shadow-sm hover:bg-[#1657b3] disabled:bg-[#c3d6ff] disabled:cursor-not-allowed"
+            <button type="button"
+              className="px-3 py-1.5 rounded-md text-sm font-semibold bg-primary text-white shadow-sm hover:bg-on-primary-fixed-variant disabled:bg-primary-fixed-dim disabled:cursor-not-allowed"
               disabled={!dirty || saving}
               onClick={saveReport}
             >{saving ? 'Đang lưu…' : 'Lưu báo cáo'}</button>
@@ -470,11 +470,11 @@ export const WeeklyReportView: React.FC<Props> = ({
 
           {/* QL: Xác nhận đã xem — KHÔNG phải duyệt (không có trạng thái từ chối) */}
           {isReview && (
-            <button
-              className={`px-3 py-1.5 rounded-md text-[13px] font-semibold ${
+            <button type="button"
+              className={`px-3 py-1.5 rounded-md text-sm font-semibold ${
                 acked
-                  ? 'bg-[#e8f5ec] text-[#0f7a3a] border border-[#b7e0c4]'
-                  : 'bg-[#0f7a3a] text-white hover:bg-[#0c5f2e]'
+                  ? 'bg-tertiary-fixed/30 text-tertiary border border-tertiary-fixed-dim'
+                  : 'bg-tertiary text-white hover:bg-on-tertiary-fixed-variant'
               }`}
               disabled={reviewSaving}
               onClick={() => saveReview(true)}
@@ -486,12 +486,12 @@ export const WeeklyReportView: React.FC<Props> = ({
       {/* ===== Nhận xét chung của QL ===== */}
       {!loading && (
         isReview ? (
-          <div className="border border-[#e4e8f0] rounded-lg p-3 mb-3">
+          <div className="border border-surface-container rounded-lg p-3 mb-3">
             <div className="flex items-center justify-between gap-3 mb-1.5">
-              <div className="text-[12px] font-semibold">
+              <div className="text-xs font-semibold">
                 Nhận xét chung cho tuần này
               </div>
-              <span className="text-[11px] text-[#97a0b0]">
+              <span className="text-xs text-outline">
                 Nhân viên sẽ thấy nhận xét này trong báo cáo tuần của họ
               </span>
             </div>
@@ -503,34 +503,34 @@ export const WeeklyReportView: React.FC<Props> = ({
                 setReviewDirty(true);
               }}
               data-ph="Nhận xét tổng quan về tuần làm việc…"
-              className="text-[13px] leading-relaxed outline-none rounded-md px-2 py-1.5 empty:before:content-[attr(data-ph)] empty:before:text-[#b0b6c3] empty:before:italic hover:bg-[#f6f8fc] focus:bg-white focus:ring-2 focus:ring-[#1a73e8]"
+              className="text-sm leading-relaxed outline-none rounded-md px-2 py-1.5 empty:before:content-[attr(data-ph)] empty:before:text-outline-variant empty:before:italic hover:bg-surface focus:bg-white focus:ring-2 focus:ring-primary"
             >{managerNote}</div>
             <div className="flex items-center justify-between gap-2 mt-2">
-              <span className="text-[11px] text-[#0f7a3a]">
-                {acked ? `Đã xác nhận lúc ${fmtStamp(ackAt)}` : <span className="text-[#97a0b0]">Chưa xác nhận</span>}
+              <span className="text-xs text-tertiary">
+                {acked ? `Đã xác nhận lúc ${fmtStamp(ackAt)}` : <span className="text-outline">Chưa xác nhận</span>}
               </span>
-              <button
-                className="px-3 py-1.5 rounded-md text-[13px] font-semibold bg-[#1a73e8] text-white hover:bg-[#1657b3] disabled:bg-[#c3d6ff] disabled:cursor-not-allowed"
+              <button type="button"
+                className="px-3 py-1.5 rounded-md text-sm font-semibold bg-primary text-white hover:bg-on-primary-fixed-variant disabled:bg-primary-fixed-dim disabled:cursor-not-allowed"
                 disabled={!reviewDirty || reviewSaving}
                 onClick={() => saveReview(false)}
               >{reviewSaving ? 'Đang lưu…' : 'Lưu nhận xét'}</button>
             </div>
           </div>
         ) : managerNote ? (
-          <div className="border border-[#dce9ff] bg-[#fbfdff] rounded-lg p-3 mb-3">
+          <div className="border border-surface-container-high bg-surface rounded-lg p-3 mb-3">
             <div className="flex items-center gap-2 mb-1.5">
-              <span className="text-[12px] font-semibold">Nhận xét của Trưởng phòng</span>
-              {ackAt && <span className="text-[11px] text-[#97a0b0] ml-auto">{fmtStamp(ackAt)}</span>}
+              <span className="text-xs font-semibold">Nhận xét của Trưởng phòng</span>
+              {ackAt && <span className="text-xs text-outline ml-auto">{fmtStamp(ackAt)}</span>}
             </div>
-            <div className="text-[13px] leading-relaxed">{managerNote}</div>
+            <div className="text-sm leading-relaxed">{managerNote}</div>
           </div>
         ) : null
       )}
 
       {/* ===== Bảng ===== */}
-      <div className="border border-[#e4e8f0] rounded-lg overflow-hidden bg-white">
+      <div className="border border-surface-container rounded-lg overflow-hidden bg-white">
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse table-fixed text-[13px]">
+          <table className="w-full border-collapse table-fixed text-sm">
             <colgroup>
               <col style={{ width: 36 }} />
               <col />
@@ -541,29 +541,29 @@ export const WeeklyReportView: React.FC<Props> = ({
               {canEdit && <col style={{ width: 32 }} />}
             </colgroup>
             <thead>
-              <tr className="bg-[#f8f9fc] text-left">
-                <th className="text-center font-semibold text-[12px] text-[#5b6371] py-2 px-3 border-b border-[#e4e8f0]">#</th>
-                <th className="font-semibold text-[12px] text-[#5b6371] py-2 px-3 border-b border-[#e4e8f0]">Tên công việc</th>
-                <th className="font-semibold text-[12px] text-[#5b6371] py-2 px-3 border-b border-[#e4e8f0]">Kết quả trong tuần</th>
-                <th className="font-semibold text-[12px] text-[#5b6371] py-2 px-3 border-b border-[#e4e8f0]">Trạng thái</th>
-                <th className="font-semibold text-[12px] text-[#5b6371] py-2 px-3 border-b border-[#e4e8f0]">Vướng mắc / Đề xuất</th>
-                <th className="font-semibold text-[12px] py-2 px-3 border-b border-[#e4e8f0] bg-[#f0f6ff] text-[#004ac6]">
+              <tr className="bg-surface text-left">
+                <th className="text-center font-semibold text-xs text-secondary py-2 px-3 border-b border-surface-container">#</th>
+                <th className="font-semibold text-xs text-secondary py-2 px-3 border-b border-surface-container">Tên công việc</th>
+                <th className="font-semibold text-xs text-secondary py-2 px-3 border-b border-surface-container">Kết quả trong tuần</th>
+                <th className="font-semibold text-xs text-secondary py-2 px-3 border-b border-surface-container">Trạng thái</th>
+                <th className="font-semibold text-xs text-secondary py-2 px-3 border-b border-surface-container">Vướng mắc / Đề xuất</th>
+                <th className="font-semibold text-xs py-2 px-3 border-b border-surface-container bg-surface-container-low text-primary">
                   {isReview ? 'Chỉ đạo của QL' : 'Phản hồi của QL'}
                 </th>
-                {canEdit && <th className="border-b border-[#e4e8f0]" />}
+                {canEdit && <th className="border-b border-surface-container" />}
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={7} className="text-center text-[12px] text-[#9aa0b4] py-8">Đang tải…</td></tr>
+                <tr><td colSpan={7} className="text-center text-xs text-outline py-8">Đang tải…</td></tr>
               ) : isReview && !hasAnyContent ? (
-                <tr><td colSpan={7} className="text-center text-[12px] text-[#9aa0b4] py-8">
+                <tr><td colSpan={7} className="text-center text-xs text-outline py-8">
                   Nhân viên chưa lập báo cáo cho tuần này
                 </td></tr>
               ) : (
                 rows.map((r, idx) => (
-                  <tr key={r.id} className="group hover:bg-[#fafbfd] border-b border-[#eef0f6]">
-                    <td className="text-center text-[12px] text-[#97a0b0] py-2 px-3 bg-[#fafbfd] select-none tabular-nums align-top pt-2.5">
+                  <tr key={r.id} className="group hover:bg-surface border-b border-surface-container">
+                    <td className="text-center text-xs text-outline py-2 px-3 bg-surface select-none tabular-nums align-top pt-2.5">
                       {idx + 1}
                     </td>
                     {empCell(idx, 'name', 'Nhập tên công việc…')}
@@ -573,10 +573,10 @@ export const WeeklyReportView: React.FC<Props> = ({
                     {mgrCell(idx)}
                     {canEdit && (
                       <td className="text-center align-top px-1 pt-1.5">
-                        <button
+                        <button type="button"
                           onClick={() => removeRow(idx)}
                           title="Xoá dòng"
-                          className="w-5 h-5 inline-flex items-center justify-center rounded text-[12px] leading-none text-[#97a0b0] opacity-0 group-hover:opacity-100 transition-opacity hover:bg-[#fde8e8] hover:text-[#c43a3a]"
+                          className="w-5 h-5 inline-flex items-center justify-center rounded text-xs leading-none text-outline opacity-0 group-hover:opacity-100 transition-opacity hover:bg-error-container hover:text-error"
                         >×</button>
                       </td>
                     )}
@@ -587,11 +587,11 @@ export const WeeklyReportView: React.FC<Props> = ({
               {/* Dòng "+ Thêm dòng mới" — chỉ NV, chỉ tuần hiện tại */}
               {!loading && canEdit && isCurrentWeek && (
                 <tr
-                  className="text-[#b0b6c3] hover:bg-[#f6f8fc] hover:text-[#1a73e8] cursor-pointer"
+                  className="text-outline-variant hover:bg-surface hover:text-primary cursor-pointer"
                   onClick={addRow}
                 >
-                  <td className="text-center text-[13px] py-2.5 bg-[#fafbfd]">+</td>
-                  <td colSpan={6} className="py-2.5 px-3 text-[13px] text-[#b0b6c3]">
+                  <td className="text-center text-sm py-2.5 bg-surface">+</td>
+                  <td colSpan={6} className="py-2.5 px-3 text-sm text-outline-variant">
                     + Thêm dòng mới
                   </td>
                 </tr>
@@ -602,7 +602,7 @@ export const WeeklyReportView: React.FC<Props> = ({
       </div>
 
       {/* ===== Footer trạng thái ===== */}
-      <div className="mt-3 text-[11px] text-[#9aa0b4] print:hidden">
+      <div className="mt-3 text-xs text-outline print:hidden">
         {isReview
           ? (acked
               ? `Trưởng phòng đã xác nhận báo cáo lúc ${fmtStamp(ackAt)}.`
