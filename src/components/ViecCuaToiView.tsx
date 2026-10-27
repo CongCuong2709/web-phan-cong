@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { EmployeeTask, DailyLog, ROLE_LABEL, User } from '../types';
 import { todayIso } from '../lib/transforms';
+import { canApproveTask } from '../auth/permissions';
 import { useSessionState, useUnsavedChangesWarning } from '../lib/useSessionState';
 
 /** Một entry để lưu nhật ký qua onSaveLogs. */
@@ -493,7 +494,13 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
                       </div>
 
                       <div>
-                        <TaskAction task={task} busy={busy} disabled={busyTaskId !== null} onAdvance={() => advance(task)} />
+                        <TaskAction
+                          task={task}
+                          selfClose={canApproveTask(currentUser, task)}
+                          busy={busy}
+                          disabled={busyTaskId !== null}
+                          onAdvance={() => advance(task)}
+                        />
                       </div>
                     </div>
 
@@ -641,8 +648,16 @@ const StatusBadge: React.FC<BadgeCfg> = ({ cls, icon, label }) => (
 );
 
 /** Nút hành động theo trạng thái — chỉ hiện bước mà nhân viên thực sự được phép làm. */
-const TaskAction: React.FC<{ task: EmployeeTask; busy: boolean; disabled: boolean; onAdvance: () => void }> = ({
+const TaskAction: React.FC<{
+  task: EmployeeTask;
+  /** Người làm cũng là người duyệt (TP phòng đó / admin) → bấm là Đã xong luôn. */
+  selfClose: boolean;
+  busy: boolean;
+  disabled: boolean;
+  onAdvance: () => void;
+}> = ({
   task,
+  selfClose,
   busy,
   disabled,
   onAdvance,
@@ -656,12 +671,14 @@ const TaskAction: React.FC<{ task: EmployeeTask; busy: boolean; disabled: boolea
         onClick={onAdvance}
         disabled={disabled}
         className={`${base} ${start ? 'bg-primary hover:bg-primary-container text-on-primary' : 'bg-tertiary hover:bg-tertiary-container text-on-tertiary'}`}
-        title={start ? 'Chuyển sang Đang làm' : 'Báo xong và gửi Trưởng phòng duyệt'}
+        title={
+          start ? 'Chuyển sang Đang làm' : selfClose ? 'Đánh dấu Đã xong (bạn là người duyệt)' : 'Báo xong và gửi Trưởng phòng duyệt'
+        }
       >
         <span aria-hidden="true" className="material-symbols-outlined [--icon-size:14px]">
           {busy ? 'progress_activity' : start ? 'play_arrow' : 'check_circle'}
         </span>
-        {busy ? 'Đang gửi…' : start ? 'Bắt đầu' : 'Báo xong'}
+        {busy ? 'Đang gửi…' : start ? 'Bắt đầu' : selfClose ? 'Hoàn thành' : 'Báo xong'}
       </button>
     );
   }

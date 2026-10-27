@@ -390,7 +390,9 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     const res = await commit(api.toggleTask(ref.tier, ref.num), (r) =>
       r.item.status === 'pending_approval'
         ? 'Đã báo xong — đang chờ Trưởng phòng duyệt.'
-        : 'Đã chuyển sang Đang làm.',
+        : r.item.status === 'done'
+          ? 'Đã hoàn thành công việc.'
+          : 'Đã chuyển sang Đang làm.',
     );
     return res !== null;
   };

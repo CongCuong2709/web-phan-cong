@@ -165,7 +165,7 @@ export function canAddDailyLog(
  */
 export function canApproveTask(
   user: User | null | undefined,
-  task?: TeamLeadTask
+  task?: Pick<TeamLeadTask, 'department'>
 ): boolean {
   if (!user) return false;
   if (user.role === 'admin') return true;

@@ -835,6 +835,7 @@ router.post('/:tier(\\d+)/:id(\\d+)/toggle', (req, res) => {
    * Toggle semantics — nhất quán với state machine (lib/stateMachine.js):
    *   pending          → doing            (bắt đầu)
    *   doing            → pending_approval (owner tick xong, chờ manager duyệt)
+   *                      → done              nếu chính owner có quyền duyệt (TP phòng đó / admin)
    *   pending_approval → doing            (manager/admin trả về)
    *   blocked          → doing            (gỡ nghẽn)
    *   done             → KHÔNG toggle (terminal)
@@ -850,7 +851,7 @@ router.post('/:tier(\\d+)/:id(\\d+)/toggle', (req, res) => {
     pending_approval: 'doing',
     blocked: 'doing',
   };
-  const next = TOGGLE_NEXT[task.status];
+  let next = TOGGLE_NEXT[task.status];
   if (!next) {
     return res.status(403).json({
       error: 'invalid_transition',
@@ -862,9 +863,13 @@ router.post('/:tier(\\d+)/:id(\\d+)/toggle', (req, res) => {
   if (!tr.ok) {
     return res.status(403).json({ error: 'invalid_transition', message: tr.reason });
   }
-  // Progress: đạt 100 khi báo xong (pending_approval); các bước khác giữ nguyên
+  // Người báo xong cũng là người duyệt → đóng luôn, không tự gửi duyệt cho chính mình.
+  if (next === 'pending_approval' && authorize('task:approve', req.user, { task: enriched }).ok) {
+    next = 'done';
+  }
+  // Progress: đạt 100 khi báo xong / hoàn thành; các bước khác giữ nguyên
   // tiến độ thật do nhân viên ghi qua nhật ký.
-  const nextProgress = next === 'pending_approval' ? 100 : task.progress;
+  const nextProgress = next === 'pending_approval' || next === 'done' ? 100 : task.progress;
 
   tx(() => {
     stmt.updateTask.run(
