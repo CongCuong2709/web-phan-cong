@@ -15,8 +15,8 @@
  * Quy tắc nghiệp vụ (đã thống nhất với BGĐ — nguồn: policies.js):
  *
  *   admin     : full quyền (đọc + sửa + tạo) trên mọi phòng ban.
- *   director  : chỉ đọc, KHÔNG sửa dữ liệu (executive mode).
- *               Tạo được T1 (Dự án) và T2 (Giai đoạn).
+ *   director  : làm chủ dự án — tạo / sửa / lưu trữ T1 (Dự án) và T2 (Giai đoạn),
+ *               nghiệm thu T1/T2. Chỉ đọc với T3/T4.
  *   manager   : chỉ trong phòng ban mình. Tạo T3 + T4.
  *   employee  : chỉ T4 của chính mình. Chỉ ghi nhật ký của task mình được giao.
  */
@@ -84,13 +84,26 @@ export function canEditTierItem(
   item: TierItem | null | undefined
 ): boolean {
   if (!user || !item) return false;
+  if (item.archived) return false; // nhánh lưu trữ là chỉ đọc (server trả 409)
   if (user.role === 'admin') return true;
-  if (user.role === 'director') return false; // read-only
+  if (user.role === 'director') return item.tier === 1 || item.tier === 2;
   if (user.role === 'manager') {
     return inDepartment(user, item.department);
   }
   // employee: chỉ T4 của chính mình
   return item.tier === 4 && item.ownerUsername === user.username;
+}
+
+/**
+ * Lưu trữ / khôi phục dự án (T1), giai đoạn (T2).
+ * Mirror: policies.js policy `task:archive` (admin, BGĐ).
+ */
+export function canArchiveTierItem(
+  user: User | null | undefined,
+  item: TierItem | null | undefined
+): boolean {
+  if (!user || !item || (item.tier !== 1 && item.tier !== 2)) return false;
+  return user.role === 'admin' || user.role === 'director';
 }
 
 /** Cho phép đổi trạng thái (status dropdown) — cùng guard với edit. */

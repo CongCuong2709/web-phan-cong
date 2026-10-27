@@ -146,6 +146,10 @@ export interface TierItem extends Omit<Task, 'status' | 'priority' | 'ownerUserI
   ownerUserId?: string;
   ownerFullname?: string;
   // Tiến độ task tính từ MAX(daily_logs.progress).
+  /** Thuộc nhánh đã lưu trữ (chính nó hoặc dự án / giai đoạn chứa nó). */
+  archived: boolean;
+  /** Chính mục này được lưu trữ (chỉ T1/T2) — mới có thể khôi phục tại đây. */
+  archivedAt?: string;
 }
 
 /**

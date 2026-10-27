@@ -10,7 +10,7 @@
  * re-export shim để các import cũ không vỡ.
  *
  * Naming convention: `<entity>:<verb>`
- *   - task:create / task:edit / task:delete / task:approve / task:toggle / task:read
+ *   - task:create / task:edit / task:delete / task:archive / task:close / task:approve / task:toggle / task:read
  *   - daily_log:create / daily_log:list
  *   - user:list / user:read
  *   - history:read_all
@@ -73,7 +73,8 @@ export function canCreateTiers(role) {
 export function canEditTask(user, item) {
   if (!user || !item) return false;
   if (user.role === 'admin') return true;
-  if (user.role === 'director') return false;
+  // BGĐ làm chủ dự án: sửa được mọi T1 (dự án) / T2 (giai đoạn), không đụng T3/T4.
+  if (user.role === 'director') return item.tier === 1 || item.tier === 2;
   if (user.role === 'manager') return inDepartment(user, item.department_code);
   // employee: only own T4
   return item.tier === 4 && item.owner_username_str === user.username;
@@ -167,6 +168,17 @@ const POLICIES = {
   'task:delete': (user) => {
     if (user.role !== 'admin') {
       return deny(403, 'forbidden', 'Chỉ admin mới được xoá task.');
+    }
+    return allow();
+  },
+
+  /** Lưu trữ / khôi phục dự án (T1) và giai đoạn (T2): admin hoặc BGĐ. */
+  'task:archive': (user, { task }) => {
+    if (task.tier !== 1 && task.tier !== 2) {
+      return deny(400, 'archive_tier', 'Chỉ lưu trữ được dự án hoặc giai đoạn.');
+    }
+    if (user.role !== 'admin' && user.role !== 'director') {
+      return deny(403, 'forbidden', 'Chỉ Ban giám đốc mới lưu trữ dự án / giai đoạn.');
     }
     return allow();
   },

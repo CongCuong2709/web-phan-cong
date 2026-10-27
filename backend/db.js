@@ -127,6 +127,10 @@ export const stmt = {
     WHERE id = ?
   `),
   deleteProject: db.prepare('DELETE FROM projects WHERE id = ?'),
+  // archived_at = datetime('now') khi lưu trữ, NULL khi khôi phục.
+  setProjectArchived: db.prepare(`
+    UPDATE projects SET archived_at = CASE WHEN ? THEN datetime('now') ELSE NULL END WHERE id = ?
+  `),
 
   // --- Phases (Tier 2) ---
   listPhases: db.prepare(`
@@ -158,6 +162,9 @@ export const stmt = {
     WHERE id = ?
   `),
   deletePhase: db.prepare('DELETE FROM phases WHERE id = ?'),
+  setPhaseArchived: db.prepare(`
+    UPDATE phases SET archived_at = CASE WHEN ? THEN datetime('now') ELSE NULL END WHERE id = ?
+  `),
 
   // --- Bundles (Tier 3) ---
   listBundles: db.prepare(`

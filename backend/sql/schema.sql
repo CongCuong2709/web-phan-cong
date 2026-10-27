@@ -92,6 +92,8 @@ CREATE TABLE IF NOT EXISTS projects (
     CHECK (status IN ('pending','doing','done','pending_approval','blocked')),
   progress_rollup INTEGER NOT NULL DEFAULT 0 CHECK (progress_rollup BETWEEN 0 AND 100),
   collapsed INTEGER NOT NULL DEFAULT 0 CHECK (collapsed IN (0,1)),
+  -- Lưu trữ (thay cho xoá): set → dự án + toàn bộ mục con ẩn khỏi app, khôi phục được.
+  archived_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -116,6 +118,8 @@ CREATE TABLE IF NOT EXISTS phases (
   management_notes TEXT NOT NULL DEFAULT '',
   blocker_alert TEXT,
   collapsed INTEGER NOT NULL DEFAULT 0 CHECK (collapsed IN (0,1)),
+  -- Lưu trữ (thay cho xoá): set → giai đoạn + toàn bộ mục con ẩn khỏi app, khôi phục được.
+  archived_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(project_id, code)

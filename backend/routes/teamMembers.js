@@ -28,9 +28,14 @@ router.get('/', (req, res) => {
 
   // Lấy tất cả T4 tasks (assignable to employees) + count theo owner
   // Status là enum `blocked`/`doing`/...; tier 4 có bundle_id optional.
+  // Bỏ việc thuộc dự án / giai đoạn đã lưu trữ.
   const allT4 = db.prepare(`
-    SELECT id, owner_user_id, department_code, status, progress, end_date, blocker_note
-    FROM tasks
+    SELECT t.id, t.owner_user_id, t.department_code, t.status, t.progress, t.end_date, t.blocker_note
+    FROM tasks t
+      LEFT JOIN bundles b ON b.id = t.bundle_id
+      LEFT JOIN phases ph ON ph.id = b.phase_id
+      LEFT JOIN projects p ON p.id = ph.project_id
+    WHERE ph.archived_at IS NULL AND p.archived_at IS NULL
   `).all();
   const todayStr = today();
 

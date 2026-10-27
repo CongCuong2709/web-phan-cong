@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { TierItem, DailyLog, HistoryEntry, User } from '../types';
-import { canEditTierItem, canAddDailyLog } from '../auth/permissions';
+import { canArchiveTierItem, canEditTierItem, canAddDailyLog } from '../auth/permissions';
 import { api } from '../lib/apiClient';
 import { apiToHistoryEntry, extractBackendId, isTierItemOverdue, TIER_STATUS_OPTIONS, viStatusToEnum } from '../lib/transforms';
 import { Dialog, ghostButtonCls, inputCls, primaryButtonCls, textareaCls } from './ui/Dialog';
@@ -24,6 +24,8 @@ interface DetailsDrawerProps {
   /** Nghiệm thu mục cha (T1–T3). `openChildren` = số mục con trực tiếp chưa xong. */
   acceptance?: { allowed: boolean; openChildren: number; childLabel: string; deniedReason: string };
   onAcceptItem?: (itemId: string) => Promise<boolean>;
+  /** Lưu trữ (true) / khôi phục (false) dự án, giai đoạn. Resolve true khi đã lưu. */
+  onSetArchived?: (itemId: string, archived: boolean) => Promise<boolean>;
 }
 
 /** Bản sao client của TRANSITIONS trong backend/lib/stateMachine.js — chỉ để ẩn lựa chọn chắc chắn bị từ chối. */
@@ -76,6 +78,7 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
   currentUser,
   acceptance,
   onAcceptItem,
+  onSetArchived,
 }) => {
   const [formData, setFormData] = useState<TierItem | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -84,6 +87,7 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
   const [savingLog, setSavingLog] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[] | null>(null);
   const [accepting, setAccepting] = useState(false);
+  const [archiving, setArchiving] = useState(false);
 
   // Đổi sang item khác: bỏ chế độ sửa + nháp nhật ký.
   useEffect(() => {
@@ -124,7 +128,8 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
     return Math.round((end.getTime() - now.getTime()) / 86400000);
   }, [formData?.endDate]);
 
-  const busy = saving || savingLog || accepting;
+  const busy = saving || savingLog || accepting || archiving;
+  const canArchive = !!onSetArchived && canArchiveTierItem(currentUser, item);
 
   if (!isOpen || !formData || !item) return null;
 
@@ -144,6 +149,23 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
       await onAcceptItem(formData.id);
     } finally {
       setAccepting(false);
+    }
+  };
+
+  const handleSetArchived = async (archived: boolean) => {
+    if (!onSetArchived || !item) return;
+    const what = item.tier === 1 ? 'dự án' : 'giai đoạn';
+    const question = archived
+      ? `Lưu trữ ${what} "${item.title}"?
+
+${what[0].toUpperCase()}${what.slice(1)} và toàn bộ mục con sẽ ẩn khỏi cây công việc, giao việc và báo cáo. Dữ liệu vẫn được giữ, có thể khôi phục.`
+      : `Khôi phục ${what} "${item.title}" từ lưu trữ?`;
+    if (!window.confirm(question)) return;
+    setArchiving(true);
+    try {
+      await onSetArchived(item.id, archived);
+    } finally {
+      setArchiving(false);
     }
   };
 
@@ -196,6 +218,17 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
               </span>
             )}
           </div>
+
+          {item.archived && (
+            <div role="status" className="flex items-start gap-2 p-3 rounded-lg bg-surface-container-high text-on-surface text-sm">
+              <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px] text-secondary">inventory_2</span>
+              <span>
+                {item.archivedAt
+                  ? 'Mục này đã được lưu trữ — chỉ đọc, không hiện trong cây công việc và báo cáo.'
+                  : 'Mục này thuộc dự án / giai đoạn đã lưu trữ — chỉ đọc. Khôi phục mục cha để chỉnh sửa.'}
+              </span>
+            </div>
+          )}
 
           <Section title="Người phụ trách chính">
             <div className="flex items-center gap-3">
@@ -325,7 +358,7 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
                 {formData.status}
               </span>
             )}
-            {!isLeaf && acceptance && item.status !== 'Đã xong' && !isEditing && (
+            {!isLeaf && acceptance && item.status !== 'Đã xong' && !item.archived && !isEditing && (
               <div className="mt-3 pt-3 border-t border-surface-container flex items-center justify-between gap-3">
                 <p className="text-xs text-secondary">
                   {!acceptance.allowed
@@ -435,7 +468,7 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
                 </ul>
               )}
 
-              {onAddDailyLog && canAddDailyLog(currentUser, formData) &&
+              {onAddDailyLog && !item.archived && canAddDailyLog(currentUser, formData) &&
                 (newLogDraft ? (
                   <div className="bg-surface-container-low border border-surface-container-high rounded p-2.5 space-y-2 mt-2">
                     <textarea
@@ -532,10 +565,29 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
               Đóng lại
             </button>
           )}
+          {canArchive && !isEditing && (item.archivedAt || !item.archived) && (
+            <button
+              onClick={() => handleSetArchived(!item.archivedAt)}
+              type="button"
+              disabled={busy}
+              className={`${ghostButtonCls} ml-auto`}
+            >
+              <span aria-hidden="true" className="material-symbols-outlined [--icon-size:16px]">
+                {item.archivedAt ? 'unarchive' : 'inventory_2'}
+              </span>
+              {archiving ? 'Đang xử lý…' : item.archivedAt ? 'Khôi phục' : 'Lưu trữ'}
+            </button>
+          )}
           {!canEdit ? (
-            <span className="text-xs text-secondary italic px-3">
-              {currentUser?.role === 'director' ? 'Chế độ chỉ đọc' : 'Bạn không có quyền chỉnh sửa mục này'}
-            </span>
+            item.archivedAt && canArchive ? null : (
+              <span className="text-xs text-secondary italic px-3">
+                {item.archived
+                  ? 'Đã lưu trữ — chỉ đọc'
+                  : currentUser?.role === 'director'
+                    ? 'Chế độ chỉ đọc'
+                    : 'Bạn không có quyền chỉnh sửa mục này'}
+              </span>
+            )
           ) : isEditing ? (
             <button onClick={handleSave} type="button" disabled={saving} className={primaryButtonCls}>
               {saving ? 'Đang lưu…' : 'Lưu thay đổi'}

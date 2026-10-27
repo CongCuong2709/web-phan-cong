@@ -202,6 +202,12 @@ export interface TaskApiRowDto {
   // ── T1/T2/T3 rollup ──
   progress_rollup?: number;
 
+  // ── Lưu trữ ──
+  /** Chỉ T1/T2: thời điểm lưu trữ (null = đang hoạt động). */
+  archived_at?: string | null;
+  /** Do `GET /api/tasks` gắn: 1 nếu chính mục hoặc dự án / giai đoạn chứa nó đã lưu trữ. */
+  archived?: number;
+
   // ── T2 only ──
   management_notes?: string;
   blocker_alert?: string | null;
@@ -406,6 +412,12 @@ export const api = {
   /** POST /api/tasks/4/:id/unblock — TP gỡ vướng mắc (xoá blocker_note, đóng help message). */
   async unblockTask(id: number, note: string) {
     return request<{ item: TaskApiRowDto }>('POST', `/api/tasks/4/${id}/unblock`, { note });
+  },
+  /** POST /api/tasks/:tier/:id/archive|unarchive — lưu trữ / khôi phục dự án, giai đoạn. */
+  async setArchived(tier: number, id: number, archived: boolean) {
+    return request<{ item: TaskApiRowDto }>(
+      'POST', `/api/tasks/${tier}/${id}/${archived ? 'archive' : 'unarchive'}`
+    );
   },
   async toggleTask(tier: number, id: number) {
     return request<{ item: TaskApiRowDto }>('POST', `/api/tasks/${tier}/${id}/toggle`);

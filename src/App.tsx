@@ -82,16 +82,25 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   const showToast = toast.show;
 
   // Mọi view đọc từ một danh sách gốc (GET /api/tasks) — không có state song song.
-  const tierItems = useMemo<TierItem[]>(() => data.tasks.map(apiToTierItem), [data.tasks]);
-  const teamTasks = useMemo<TeamLeadTask[]>(
-    () => data.tasks.filter((t) => t.tier === 4).map(apiToTeamLeadTask),
+  // Nhánh đã lưu trữ (dự án / giai đoạn + mọi mục con) ẩn khỏi mọi view; chỉ hiện trên
+  // Cây công việc khi bật "Mục lưu trữ" (?luutru=1) để xem / khôi phục.
+  const liveRows = useMemo(() => data.tasks.filter((t) => !t.archived), [data.tasks]);
+  const liveTaskIds = useMemo(() => new Set(liveRows.filter((t) => t.tier === 4).map((t) => t.id)), [liveRows]);
+  const liveLogs = useMemo(() => data.logs.filter((l) => liveTaskIds.has(l.task_id)), [data.logs, liveTaskIds]);
+  const tierItems = useMemo<TierItem[]>(() => liveRows.map(apiToTierItem), [liveRows]);
+  const archivedTierItems = useMemo<TierItem[]>(
+    () => data.tasks.filter((t) => t.archived).map(apiToTierItem),
     [data.tasks],
   );
-  const employeeTasks = useMemo<EmployeeTask[]>(
-    () => buildEmployeeTasks(data.tasks, data.logs),
-    [data.tasks, data.logs],
+  const teamTasks = useMemo<TeamLeadTask[]>(
+    () => liveRows.filter((t) => t.tier === 4).map(apiToTeamLeadTask),
+    [liveRows],
   );
-  const dailyLogs = useMemo<DailyLog[]>(() => data.logs.map(apiToDailyLog), [data.logs]);
+  const employeeTasks = useMemo<EmployeeTask[]>(
+    () => buildEmployeeTasks(liveRows, liveLogs),
+    [liveRows, liveLogs],
+  );
+  const dailyLogs = useMemo<DailyLog[]>(() => liveLogs.map(apiToDailyLog), [liveLogs]);
   const teamMembers = useMemo<TeamMember[]>(() => data.members.map(apiToTeamMember), [data.members]);
 
   // Danh sách user từ backend (dropdown "Người phụ trách" trong NewItemModal).
@@ -178,9 +187,15 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   // ---------------- Modals & Drawer ----------------
   // Mục đang mở trong Drawer nằm trên URL (?muc=4-12) → chia sẻ được link tới đúng 1 mục.
   const drawerItemId = route.params.muc ?? null;
+  // Xem mục lưu trữ trên Cây công việc: chỉ admin / BGĐ (người lưu trữ được).
+  const canViewArchive = user.role === 'admin' || user.role === 'director';
+  const showArchived = canViewArchive && route.params.luutru === '1';
   const drawerItem = useMemo(
-    () => (drawerItemId ? tierItems.find((t) => t.id === drawerItemId) ?? null : null),
-    [drawerItemId, tierItems],
+    () =>
+      drawerItemId
+        ? tierItems.find((t) => t.id === drawerItemId) ?? archivedTierItems.find((t) => t.id === drawerItemId) ?? null
+        : null,
+    [drawerItemId, tierItems, archivedTierItems],
   );
   const [drawerPushed, setDrawerPushed] = useState(false);
   const openDrawer = (id: string) => {
@@ -298,6 +313,18 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       (res) => `Đã tạo ${res.item.code}: ${res.item.title}`,
     );
     return created !== null;
+  };
+
+  const handleSetArchived = async (itemId: string, archived: boolean): Promise<boolean> => {
+    const ref = parseTaskId(itemId);
+    if (!ref) {
+      showToast(STALE_ITEM_MESSAGE, 'error');
+      return false;
+    }
+    const message = archived
+      ? 'Đã lưu trữ — mục này và các mục con không còn hiện trong cây công việc và báo cáo.'
+      : 'Đã khôi phục từ lưu trữ.';
+    return (await commit(api.setArchived(ref.tier, ref.num, archived), message)) !== null;
   };
 
   const handleApproveTeamTask = async (taskId: string): Promise<boolean> => {
@@ -462,7 +489,9 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       case 'cay-gantt-4-tang':
         return (
           <Gantt4TangView
-            tierItems={visibleTierItems}
+            tierItems={showArchived ? [...visibleTierItems, ...archivedTierItems] : visibleTierItems}
+            showArchived={showArchived}
+            onToggleArchived={canViewArchive ? () => setParam('luutru', showArchived ? null : '1') : undefined}
             currentUser={user}
             onSelectItem={(item) => openDrawer(item.id)}
             onOpenNewModal={() => setNewItemMode('plan')}
@@ -576,6 +605,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
         isOpen={drawerItem !== null}
         onClose={closeDrawer}
         onUpdateItem={handleUpdateTierItem}
+        onSetArchived={handleSetArchived}
         dailyLogs={dailyLogs}
         currentUser={user}
         onAddDailyLog={handleAddDrawerLog}

@@ -14,7 +14,8 @@ import { db } from '../db.js';
 const LEVELS = [
   { table: 'bundles', childTable: 'tasks', childFk: 'bundle_id', childProgress: 'progress', parentFk: 'phase_id' },
   { table: 'phases', childTable: 'bundles', childFk: 'phase_id', childProgress: 'progress_rollup', parentFk: 'project_id' },
-  { table: 'projects', childTable: 'phases', childFk: 'project_id', childProgress: 'progress_rollup', parentFk: null },
+  // Giai đoạn đã lưu trữ không tính vào dự án.
+  { table: 'projects', childTable: 'phases', childFk: 'project_id', childProgress: 'progress_rollup', parentFk: null, childWhere: 'AND archived_at IS NULL' },
 ];
 
 /** Tầng bắt đầu cộng dồn theo tier của mục CHA: 3 → bundles, 2 → phases, 1 → projects. */
@@ -31,14 +32,14 @@ export function rollupFrom(parentTier, parentId) {
     db.prepare(`
       UPDATE ${L.table}
       SET progress_rollup = COALESCE(
-        (SELECT ROUND(AVG(${L.childProgress})) FROM ${L.childTable} WHERE ${L.childFk} = ?), 0)
+        (SELECT ROUND(AVG(${L.childProgress})) FROM ${L.childTable} WHERE ${L.childFk} = ? ${L.childWhere ?? ''}), 0)
       WHERE id = ?
     `).run(id, id);
     db.prepare(`
       UPDATE ${L.table} SET status = 'doing'
       WHERE id = ? AND status = 'pending'
         AND (progress_rollup > 0
-             OR EXISTS (SELECT 1 FROM ${L.childTable} WHERE ${L.childFk} = ? AND status <> 'pending'))
+             OR EXISTS (SELECT 1 FROM ${L.childTable} WHERE ${L.childFk} = ? AND status <> 'pending' ${L.childWhere ?? ''}))
     `).run(id, id);
     id = L.parentFk ? db.prepare(`SELECT ${L.parentFk} AS p FROM ${L.table} WHERE id = ?`).get(id)?.p : null;
   }

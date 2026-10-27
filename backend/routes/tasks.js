@@ -22,6 +22,7 @@
  *   POST   /api/tasks/:tier/:id/toggle   — Đổi status
  *   POST   /api/tasks/4/:id/return   — TP trả việc chờ duyệt về làm lại ({ reason? })
  *   POST   /api/tasks/4/:id/unblock  — TP gỡ vướng mắc ({ note? })
+ *   POST   /api/tasks/:tier/:id/archive|unarchive — Lưu trữ / khôi phục dự án (T1), giai đoạn (T2)
  *
  * Lưu ý:
  *   - recomputeRollup dùng subquery UPDATE single-statement (atomic).
@@ -94,7 +95,7 @@ function canSee(user, item) {
 
 /** Bảng con trực tiếp của mục cha (T1–T3) — dùng khi nghiệm thu. */
 const CHILDREN_OF = {
-  1: { table: 'phases', fk: 'project_id', label: 'giai đoạn' },
+  1: { table: 'phases', fk: 'project_id', label: 'giai đoạn', where: 'AND archived_at IS NULL' },
   2: { table: 'bundles', fk: 'phase_id', label: 'hạng mục' },
   3: { table: 'tasks', fk: 'bundle_id', label: 'đầu việc' },
 };
@@ -116,6 +117,31 @@ function loadItem(tier, id) {
     default: return null;
   }
 }
+
+/**
+ * Mục nằm trong nhánh đã lưu trữ? (chính nó, hoặc giai đoạn / dự án chứa nó có `archived_at`).
+ * Nhánh lưu trữ là chỉ đọc: không tạo con, không sửa, không nghiệm thu.
+ */
+const ARCHIVED_SQL = {
+  1: `SELECT p.archived_at AS a FROM projects p WHERE p.id = ?`,
+  2: `SELECT COALESCE(ph.archived_at, p.archived_at) AS a
+        FROM phases ph JOIN projects p ON p.id = ph.project_id WHERE ph.id = ?`,
+  3: `SELECT COALESCE(ph.archived_at, p.archived_at) AS a
+        FROM bundles b JOIN phases ph ON ph.id = b.phase_id JOIN projects p ON p.id = ph.project_id
+       WHERE b.id = ?`,
+  4: `SELECT COALESCE(ph.archived_at, p.archived_at) AS a
+        FROM tasks t LEFT JOIN bundles b ON b.id = t.bundle_id
+        LEFT JOIN phases ph ON ph.id = b.phase_id LEFT JOIN projects p ON p.id = ph.project_id
+       WHERE t.id = ?`,
+};
+function isInArchive(tier, id) {
+  const sql = ARCHIVED_SQL[Number(tier)];
+  return !!(sql && db.prepare(sql).get(Number(id))?.a);
+}
+const ARCHIVED_ERROR = {
+  error: 'archived',
+  message: 'Mục này thuộc dự án / giai đoạn đã lưu trữ — khôi phục trước khi chỉnh sửa.',
+};
 
 /** Helper: thêm tier + parent_ids vào row để canSee + transform xử lý. */
 function enrichWithTier(row, tier) {
@@ -179,11 +205,18 @@ router.get('/', (req, res) => {
   const phases = stmt.listPhases.all();
   const bundles = stmt.listBundles.all();
 
+  // `archived` = 1 nếu chính mục hoặc dự án / giai đoạn chứa nó đã lưu trữ.
+  const archivedProjects = new Set(projects.filter((p) => p.archived_at).map((p) => p.id));
+  const archivedPhases = new Set(
+    phases.filter((ph) => ph.archived_at || archivedProjects.has(ph.project_id)).map((ph) => ph.id),
+  );
+  const archivedBundles = new Set(bundles.filter((b) => archivedPhases.has(b.phase_id)).map((b) => b.id));
+
   const all = [
-    ...projects.map((p) => ({ ...p, tier: 1 })),
-    ...phases.map((p) => ({ ...p, tier: 2 })),
-    ...bundles.map((b) => ({ ...b, tier: 3 })),
-    ...tasks.map((t) => ({ ...t, tier: 4 })),
+    ...projects.map((p) => ({ ...p, tier: 1, archived: archivedProjects.has(p.id) ? 1 : 0 })),
+    ...phases.map((p) => ({ ...p, tier: 2, archived: archivedPhases.has(p.id) ? 1 : 0 })),
+    ...bundles.map((b) => ({ ...b, tier: 3, archived: archivedBundles.has(b.id) ? 1 : 0 })),
+    ...tasks.map((t) => ({ ...t, tier: 4, archived: archivedBundles.has(t.bundle_id) ? 1 : 0 })),
   ];
   const visible = all.filter((item) => canSee(req.user, item));
   return res.json({ items: visible });
@@ -237,6 +270,10 @@ router.post('/', (req, res) => {
   }
   if (tierNum === 3 && !(body.parent_id && Number(body.parent_id))) {
     return res.status(400).json({ error: 'parent_id_required', message: 'Bundle phải thuộc 1 phase.' });
+  }
+
+  if (tierNum > 1 && body.parent_id && isInArchive(tierNum - 1, body.parent_id)) {
+    return res.status(409).json(ARCHIVED_ERROR);
   }
 
   // Validate is_today_date format for T4
@@ -325,6 +362,7 @@ router.patch('/:tier(\\d+)/:id(\\d+)', (req, res) => {
   const enriched = enrichWithTier(item, tier);
   const authz = authorize('task:edit', req.user, { task: enriched });
   if (!authz.ok) return res.status(authz.status).json(authz);
+  if (isInArchive(tier, id)) return res.status(409).json(ARCHIVED_ERROR);
 
   const body = req.body || {};
 
@@ -510,6 +548,41 @@ router.delete('/:tier(\\d+)/:id(\\d+)', (req, res) => {
 // Sub-resources
 // ============================================================================
 
+/**
+ * POST /api/tasks/:tier/:id/archive | unarchive — Lưu trữ / khôi phục dự án (T1) hoặc giai đoạn (T2).
+ * Lưu trữ thay cho xoá: dữ liệu giữ nguyên, cả nhánh con ẩn khỏi app (GET trả `archived = 1`).
+ * Quyền: `task:archive` (admin, BGĐ).
+ */
+router.post('/:tier(\\d+)/:id(\\d+)/:op(archive|unarchive)', (req, res) => {
+  const tier = Number(req.params.tier);
+  const id = Number(req.params.id);
+  const item = loadItem(tier, id);
+  if (!item) return res.status(404).json({ error: 'not_found' });
+  const authz = authorize('task:archive', req.user, { task: enrichWithTier(item, tier) });
+  if (!authz.ok) return res.status(authz.status).json(authz);
+
+  const archive = req.params.op === 'archive';
+  if (archive && item.archived_at) {
+    return res.status(409).json({ error: 'already_archived', message: 'Mục này đã được lưu trữ.' });
+  }
+  if (!archive && !item.archived_at) {
+    return res.status(409).json({ error: 'not_archived', message: 'Mục này không ở trạng thái lưu trữ.' });
+  }
+  if (!archive && tier === 2 && isInArchive(1, item.project_id)) {
+    return res.status(409).json({ error: 'parent_archived', message: 'Dự án chứa giai đoạn này đang lưu trữ — khôi phục dự án trước.' });
+  }
+
+  tx(() => {
+    if (tier === 1) stmt.setProjectArchived.run(archive ? 1 : 0, id);
+    else stmt.setPhaseArchived.run(archive ? 1 : 0, id);
+    logAudit(tier === 1 ? 'project' : 'phase', id, 'update',
+      { archived_at: item.archived_at ?? null }, { archived: archive }, req);
+    // Giai đoạn vào / ra khỏi lưu trữ → tiến độ dự án tính lại.
+    if (tier === 2) rollupFrom(1, item.project_id);
+  });
+  return res.json({ item: enrichWithTier(loadItem(tier, id), tier) });
+});
+
 /** GET /api/tasks/4/:id/help-messages — List lịch sử escalation. */
 router.get('/:tier(\\d+)/:id(\\d+)/help-messages', (req, res) => {
   const tier = Number(req.params.tier);
@@ -542,6 +615,7 @@ router.post('/:tier(\\d+)/:id(\\d+)/approve', (req, res) => {
   if (item.status === 'done') {
     return res.status(403).json({ error: 'invalid_transition', message: 'Task đã done, không thể duyệt lại.' });
   }
+  if (isInArchive(tier, id)) return res.status(409).json(ARCHIVED_ERROR);
 
   if (tier < 4) {
     const childDepartments = tier === 3
@@ -552,7 +626,7 @@ router.post('/:tier(\\d+)/:id(\\d+)/approve', (req, res) => {
     if (!authz.ok) return res.status(authz.status).json(authz);
     const child = CHILDREN_OF[tier];
     const { n } = db.prepare(
-      `SELECT COUNT(*) AS n FROM ${child.table} WHERE ${child.fk} = ? AND status <> 'done'`,
+      `SELECT COUNT(*) AS n FROM ${child.table} WHERE ${child.fk} = ? AND status <> 'done' ${child.where ?? ''}`,
     ).get(id);
     if (n > 0) {
       return res.status(409).json({

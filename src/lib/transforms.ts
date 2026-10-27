@@ -128,6 +128,8 @@ export function apiToTierItem(api: TaskApiRowDto): TierItem {
     blockerAlert: api.blocker_alert ?? undefined,
     // 1 cột blocker_note (escalation NV ↔ Manager) — chỉ T4.
     blockerNote: api.blocker_note ?? '',
+    archived: !!api.archived,
+    archivedAt: api.archived_at ?? undefined,
     // gantt.startWeek/endWeek derive runtime từ start_date/end_date — 1 nguồn sự thật.
     gantt: {
       startWeek: computeWeekFromDate(api.start_date),
@@ -398,6 +400,8 @@ function describeAudit(api: HistoryEntryDto, oldV: Record<string, unknown>, newV
   if (api.entity_type === 'task_help_message') {
     return api.action === 'resolve' ? 'Đã xử lý vướng mắc' : `Báo vướng mắc: ${newV.body ?? ''}`;
   }
+  if (newV.archived === true) return 'Lưu trữ';
+  if (newV.archived === false) return 'Khôi phục từ lưu trữ';
   if (newV.unblocked) return `Gỡ vướng mắc${newV.note ? `: ${newV.note}` : ''}`;
   if (newV.returned) return `Trả về để làm lại${newV.reason ? `: ${newV.reason}` : ''}`;
   if (api.action === 'status_change' || (newV.status && oldV.status && newV.status !== oldV.status)) {

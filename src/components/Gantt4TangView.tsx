@@ -11,6 +11,10 @@ interface Gantt4TangViewProps {
   /** Tháng đang xem 'YYYY-MM' — lưu trên URL (?thang=2026-11); null = tháng hiện tại. */
   month: string | null;
   onMonthChange: (month: string | null) => void;
+  /** Đang hiện cả mục lưu trữ (mục có `archived`) trong cây. */
+  showArchived?: boolean;
+  /** Bật/tắt xem mục lưu trữ — chỉ truyền khi người dùng được lưu trữ (admin / BGĐ). */
+  onToggleArchived?: () => void;
 }
 
 /** Format "Tháng N/YYYY". */
@@ -84,13 +88,17 @@ const GANTT_LEGEND: { key: keyof typeof GANTT_COLOR; label: string; dot?: boolea
 ];
 
 export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
-  tierItems,
+  tierItems: allItems,
   currentUser,
   onSelectItem,
   onOpenNewModal,
   month,
   onMonthChange,
+  showArchived = false,
+  onToggleArchived,
 }) => {
+  // KPI / đếm chỉ tính mục đang hoạt động; cây hiển thị thêm mục lưu trữ khi được bật.
+  const tierItems = useMemo(() => allItems.filter((i) => !i.archived), [allItems]);
   const [searchTerm, setSearchTerm] = useState('');
   // searchTermRaw lưu giá trị input ngay, debounce 300ms xuống searchTerm
   const [searchTermRaw, setSearchTermRaw] = useState('');
@@ -122,9 +130,9 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
     const q = searchTerm.trim().toLowerCase();
     let shown: Set<string> | null = null;
     if (q) {
-      const byId = new Map(tierItems.map((t) => [t.id, t]));
+      const byId = new Map(allItems.map((t) => [t.id, t]));
       shown = new Set();
-      for (const item of tierItems) {
+      for (const item of allItems) {
         const match =
           item.title.toLowerCase().includes(q) ||
           item.code.toLowerCase().includes(q) ||
@@ -136,7 +144,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
         }
       }
     }
-    const filtered = tierItems.filter((item) => {
+    const filtered = allItems.filter((item) => {
       if (shown && !shown.has(item.id)) return false;
       if (allCollapsed && (item.tier === 3 || item.tier === 4)) return false;
       if (item.parentId && collapsedMap[item.parentId]) return false;
@@ -162,7 +170,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
     };
     visit(undefined);
     return ordered;
-  }, [tierItems, searchTerm, allCollapsed, collapsedMap]);
+  }, [allItems, searchTerm, allCollapsed, collapsedMap]);
 
   const toggleCollapseAll = () => {
     setAllCollapsed(!allCollapsed);
@@ -287,6 +295,22 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
               </span>
               <span>{allCollapsed ? 'Mở rộng tất cả' : 'Thu gọn tất cả'}</span>
             </button>
+
+            {onToggleArchived && (
+              <button
+                onClick={onToggleArchived}
+                aria-pressed={showArchived}
+                className={`h-8 px-3 text-xs font-semibold rounded flex items-center gap-1.5 transition-colors ${
+                  showArchived
+                    ? 'bg-secondary-container text-on-surface'
+                    : 'bg-surface-container-low hover:bg-surface-container text-on-surface'
+                }`}
+                type="button"
+              >
+                <span aria-hidden="true" className="material-symbols-outlined [--icon-size:16px]">inventory_2</span>
+                <span>{showArchived ? 'Ẩn mục lưu trữ' : 'Mục lưu trữ'}</span>
+              </button>
+            )}
 
             <button
               onClick={onOpenNewModal}
@@ -555,7 +579,9 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                       ? 'pl-10'
                       : 'pl-16';
 
-                  const rowBg = readonlyCtx
+                  const rowBg = item.archived
+                    ? 'bg-surface/70 opacity-60 hover:opacity-100 hover:bg-surface-container-low/80'
+                    : readonlyCtx
                     ? 'bg-surface/70 hover:bg-surface-container-low/80'
                     : item.blockerAlert
                     ? 'bg-warning-container/40 hover:bg-warning-container/70'
@@ -664,6 +690,12 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                           >
                             {item.title}
                           </span>
+
+                          {item.archived && (
+                            <span className="shrink-0 text-xs font-semibold px-1.5 py-0.5 rounded bg-surface-container-high text-secondary">
+                              Lưu trữ
+                            </span>
+                          )}
 
                           {item.blockerAlert && (
                             <span aria-hidden="true"

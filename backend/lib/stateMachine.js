@@ -75,9 +75,13 @@ export function canTransition(from, to, user, task) {
     return { ok: true };
   }
 
-  // Director: read-only, không được mutate.
+  // Director: chỉ dự án (T1) / giai đoạn (T2). Đóng (done) vẫn đi qua Nghiệm thu.
   if (user.role === 'director') {
-    return { ok: false, reason: 'Director không có quyền chỉnh sửa task.' };
+    if (task.tier !== 1 && task.tier !== 2) {
+      return { ok: false, reason: 'BGĐ chỉ đổi trạng thái dự án / giai đoạn.' };
+    }
+    if (from === 'done') return { ok: false, reason: 'Mục đã đóng, không thể đổi trạng thái.' };
+    return { ok: true };
   }
 
   // Employee: chỉ T4 của chính mình.
