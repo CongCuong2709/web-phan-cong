@@ -788,9 +788,9 @@ router.post('/:tier(\\d+)/:id(\\d+)/toggle', (req, res) => {
   if (!tr.ok) {
     return res.status(403).json({ error: 'invalid_transition', message: tr.reason });
   }
-  // Progress: đạt 100 khi chuyển sang pending_approval (đã tick xong, chờ duyệt),
-  // khi về doing thì giữ tối thiểu 50 (đã có tiến độ).
-  const nextProgress = next === 'pending_approval' ? 100 : Math.max(task.progress, 50);
+  // Progress: đạt 100 khi báo xong (pending_approval); các bước khác giữ nguyên
+  // tiến độ thật do nhân viên ghi qua nhật ký.
+  const nextProgress = next === 'pending_approval' ? 100 : task.progress;
 
   tx(() => {
     stmt.updateTask.run(

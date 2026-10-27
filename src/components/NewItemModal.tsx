@@ -99,7 +99,6 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
         title,
         parentId: tier > 1 && parentId ? parentId : undefined,
         ownerUsername,
-        department: currentUser.departments[0],
         startDate,
         endDate,
         priority,
@@ -224,7 +223,7 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
               onChange={(e) => setPriority(e.target.value as TierItem['priority'])}
               className={inputCls}
             >
-              <option value="Cao (Critical Path)">Cao (đường găng)</option>
+              <option value="Cao (Critical Path)">Cao</option>
               <option value="Trung bình">Trung bình</option>
               <option value="Thấp">Thấp</option>
             </select>

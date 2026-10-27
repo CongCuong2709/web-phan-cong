@@ -28,9 +28,13 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
   dailyLogs = [],
   currentUser,
 }) => {
-  const completedTierItems = tierItems.filter((i) => i.progress === 100).length;
-  const inProgressTierItems = tierItems.filter((i) => i.progress > 0 && i.progress < 100).length;
-  const blockedItems = tierItems.filter((i) => i.status === 'Điểm nghẽn');
+  // "Hoàn tất" = đã nghiệm thu; việc 100% nhưng còn chờ duyệt chưa tính.
+  const completedTierItems = tierItems.filter((i) => i.status === 'Đã xong').length;
+  // Vướng mắc = trạng thái nghẽn, hoặc NV đã báo vướng (blocker_note), hoặc cảnh báo giai đoạn.
+  const hasBlocker = (i: TierItem) =>
+    i.status !== 'Đã xong' && (i.status === 'Điểm nghẽn' || !!i.blockerNote?.trim() || !!i.blockerAlert);
+  const blockedItems = tierItems.filter(hasBlocker);
+  const blockerText = (i: TierItem) => i.blockerNote?.trim() || i.blockerAlert || i.managementNotes;
   // Thanh phân bổ: so với người đang có nhiều việc mở nhất.
   const maxActive = Math.max(1, ...teamMembers.map((m) => m.activeTasks));
 
@@ -268,7 +272,7 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
                 className={`h-full rounded-full ${
                   blockedCount > 0 ? 'bg-error' : 'bg-tertiary'
                 }`}
-                style={{ width: blockedCount > 0 ? `${Math.min(blockedCount * 25, 100)}%` : '100%' }}
+                style={{ width: blockedCount > 0 ? `${Math.round((blockedCount / tierItems.length) * 100)}%` : '100%' }}
               ></div>
             </div>
             <span
@@ -277,7 +281,7 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
               }`}
             >
               {blockedCount > 0
-                ? (firstBlocker?.blockerAlert || firstBlocker?.title || 'Xem chi tiết bên dưới')
+                ? (firstBlocker ? blockerText(firstBlocker) || firstBlocker.title : 'Xem chi tiết bên dưới')
                 : 'Không có điểm nghẽn'}
             </span>
           </div>
@@ -323,9 +327,9 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
                       <td className="py-2.5 text-center font-mono font-bold">
                         <span
                           className={
-                            item.progress === 100
+                            item.status === 'Đã xong'
                               ? 'text-tertiary'
-                              : item.blockerAlert
+                              : hasBlocker(item)
                               ? 'text-warning'
                               : 'text-primary'
                           }
@@ -336,9 +340,9 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
                       <td className="py-2.5 text-right">
                         <span
                           className={`text-xs font-semibold px-2 py-0.5 rounded ${
-                            item.progress === 100
+                            item.status === 'Đã xong'
                               ? 'bg-tertiary-fixed/40 text-tertiary'
-                              : item.blockerAlert
+                              : hasBlocker(item)
                               ? 'bg-warning-container text-on-warning-container'
                               : 'bg-surface-container-low text-primary'
                           }`}
@@ -366,11 +370,11 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
                   <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px]">
                     error
                   </span>
-                  <span>Cần hành động ngay: {blockedItems.length} hạng mục bị nghẽn</span>
+                  <span>Cần hành động ngay: {blockedItems.length} mục đang vướng mắc</span>
                 </div>
                 {blockedItems.map((b) => (
                   <p key={b.id} className="text-xs text-on-error-container leading-relaxed mt-1">
-                    • <strong>{b.title}</strong>: {b.managementNotes}
+                    • <strong>{b.title}</strong>{blockerText(b) ? `: ${blockerText(b)}` : ''}
                   </p>
                 ))}
               </div>

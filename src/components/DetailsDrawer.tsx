@@ -43,6 +43,12 @@ const PRIORITY_TONE: Record<TierItem['priority'], string> = {
   'Thấp': 'text-secondary',
 };
 
+const PRIORITY_LABEL: Record<TierItem['priority'], string> = {
+  'Cao (Critical Path)': 'Cao',
+  'Trung bình': 'Trung bình',
+  'Thấp': 'Thấp',
+};
+
 interface LogDraft {
   description: string;
   result: string;
@@ -337,22 +343,25 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
             )}
           </Section>
 
-          <Section title="Mức độ ưu tiên">
-            {isEditing && isLeaf ? (
-              <select
-                value={formData.priority}
-                onChange={(e) => setFormData({ ...formData, priority: e.target.value as TierItem['priority'] })}
-                aria-label="Mức độ ưu tiên"
-                className={inputCls}
-              >
-                <option value="Cao (Critical Path)">Cao (đường găng)</option>
-                <option value="Trung bình">Trung bình</option>
-                <option value="Thấp">Thấp</option>
-              </select>
-            ) : (
-              <span className={`text-sm font-semibold ${PRIORITY_TONE[formData.priority]}`}>{formData.priority}</span>
-            )}
-          </Section>
+          {/* Chỉ T4 có cột priority. */}
+          {isLeaf && (
+            <Section title="Mức độ ưu tiên">
+              {isEditing ? (
+                <select
+                  value={formData.priority}
+                  onChange={(e) => setFormData({ ...formData, priority: e.target.value as TierItem['priority'] })}
+                  aria-label="Mức độ ưu tiên"
+                  className={inputCls}
+                >
+                  <option value="Cao (Critical Path)">Cao</option>
+                  <option value="Trung bình">Trung bình</option>
+                  <option value="Thấp">Thấp</option>
+                </select>
+              ) : (
+                <span className={`text-sm font-semibold ${PRIORITY_TONE[formData.priority]}`}>{PRIORITY_LABEL[formData.priority]}</span>
+              )}
+            </Section>
+          )}
 
           <Section title="Mô tả & Phạm vi">
             {isEditing ? (
@@ -378,21 +387,24 @@ export const DetailsDrawer: React.FC<DetailsDrawerProps> = ({
             </Section>
           )}
 
-          <Section title="Ghi chú điều hành">
-            {isEditing ? (
-              <textarea
-                value={formData.managementNotes}
-                onChange={(e) => setFormData({ ...formData, managementNotes: e.target.value })}
-                aria-label="Ghi chú điều hành"
-                className={textareaCls}
-                rows={2}
-              />
-            ) : (
-              <p className="text-sm text-on-surface-variant leading-relaxed whitespace-pre-line">
-                {formData.managementNotes || <span className="italic text-outline">Chưa có ghi chú.</span>}
-              </p>
-            )}
-          </Section>
+          {/* Chỉ T2 (giai đoạn) có cột management_notes. */}
+          {formData.tier === 2 && (
+            <Section title="Ghi chú điều hành">
+              {isEditing ? (
+                <textarea
+                  value={formData.managementNotes}
+                  onChange={(e) => setFormData({ ...formData, managementNotes: e.target.value })}
+                  aria-label="Ghi chú điều hành"
+                  className={textareaCls}
+                  rows={2}
+                />
+              ) : (
+                <p className="text-sm text-on-surface-variant leading-relaxed whitespace-pre-line">
+                  {formData.managementNotes || <span className="italic text-outline">Chưa có ghi chú.</span>}
+                </p>
+              )}
+            </Section>
+          )}
 
           {isLeaf && (
             <Section title="Nhật ký công việc" aside={<span className="text-xs font-mono text-primary font-semibold">{itemLogs.length} mục</span>}>

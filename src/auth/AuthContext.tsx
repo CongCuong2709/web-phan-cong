@@ -7,9 +7,8 @@
  *
  * Tất cả data nghiệp vụ (tier items, tasks, members…) đến từ backend API sau login.
  *
- * Auto-restore: khi component mount và có token trong localStorage nhưng `user === null`
- * (do users state bị reset sau reload), gọi /api/auth/me để re-hydrate user + departments.
- * Nếu token không hợp lệ → 401 → clear session.
+ * Auto-restore: khi mount mà có token, gọi /api/auth/me để re-hydrate user + departments
+ * (xem `restoreStatus`). Token không hợp lệ → 401 → về trang đăng nhập.
  */
 
 import React, {
@@ -21,7 +20,7 @@ import React, {
   useState,
 } from 'react';
 import { Department, User } from '../types';
-import { api } from '../lib/apiClient';
+import { api, getToken } from '../lib/apiClient';
 
 /** Chỉ giữ session ID để restore "ai đang login" sau khi reload trang. */
 const SESSION_KEY = 'mvp_session_v1';
@@ -37,6 +36,9 @@ const loadSessionUserId = (): string | null => {
 export interface AuthContextValue {
   user: User | null;
   users: User[];
+  /** Trạng thái khôi phục phiên khi tải trang — App không hiện trang đăng nhập khi đang 'checking'/'failed'. */
+  restoreStatus: 'checking' | 'failed' | 'done';
+  retryRestore: () => void;
   login: (username: string, password: string) => Promise<{ ok: true } | { ok: false; reason: string }>;
   logout: () => void;
   /** Refresh users (e.g. sau khi admin edit profile). */
@@ -71,76 +73,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [currentUserId]);
 
   /**
-   * Auto-restore session on mount.
-   *
-   * Sau khi F5/reload, React state `users` rỗng; currentUserId được restore từ
-   * localStorage nhưng `user = useMemo(() => users.find(...), [...])` sẽ trả null
-   * → AppShell render `<LoginPage />` mặc dù token vẫn còn hiệu lực.
-   *
-   * Fix: nếu có token trong localStorage mà `users` rỗng và chưa có user,
-   * gọi /api/auth/me để re-hydrate user. Nếu 401 → clearSession.
+   * Khôi phục phiên sau khi tải lại trang: có token thì hỏi /api/auth/me.
+   *   - 'checking' — đang hỏi; App hiện màn chờ thay vì trang đăng nhập.
+   *   - 'failed'   — không liên lạc được máy chủ; token vẫn giữ, người dùng bấm thử lại.
+   *   - 'done'     — đã có kết quả (đăng nhập lại được, hoặc token hết hạn → trang đăng nhập).
    */
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      // Có token hợp lệ + đang ở trạng thái login (currentUserId = null sau reload
-      // nhưng session key có data). Tuy nhiên currentUserId đã restore từ loadSessionUserId
-      // nên user = find(...) ?? null. Logic rehydrate: nếu currentUserId có mà user null
-      // → gọi /api/auth/me.
-      // (Đơn giản hơn: chỉ cần có token + users rỗng là rehydrate, độc lập currentUserId.)
-      try {
-        const hasToken =
-          typeof localStorage !== 'undefined' &&
-          !!localStorage.getItem('mvp_token');
-        if (!hasToken) return;
-        // Tránh rehydrate trùng lặp nếu user đã có (vd. vừa setUsers ở login callback)
-        if (users.length > 0) return;
+  const [restoreStatus, setRestoreStatus] = useState<'checking' | 'failed' | 'done'>(
+    () => (getToken() ? 'checking' : 'done'),
+  );
 
-        const r = await api.me();
-        if (cancelled) return;
-        if (r.ok && r.data?.user) {
-          const u = r.data.user;
-          // Populate users state để useMemo `user` resolve được.
-          const backendDepts: Department[] = Array.isArray(u.departments)
-            ? (u.departments as Department[])
-            : [];
-          const hydrated: User = {
-            id: String(u.id),
-            username: u.username,
-            fullname: u.fullname,
-            email: u.email ?? '',
-            role: u.role,
-            departments: backendDepts,
-            initial: u.fullname?.charAt(0) ?? '',
-            avatar: u.avatar_url ?? '',
-          };
-          setUsersState([hydrated]);
-          setCurrentUserId(String(u.id));
-        } else if (!r.ok && (r.error as { error?: string })?.error) {
-          // Token invalid/expired/revoked → clear session
-          const errCode = (r.error as { error?: string }).error;
-          if (
-            errCode === 'invalid_token' ||
-            errCode === 'token_expired' ||
-            errCode === 'session_revoked' ||
-            errCode === 'session_expired' ||
-            errCode === 'user_inactive'
-          ) {
-            setCurrentUserId(null);
-            try {
-              localStorage.removeItem('mvp_token');
-            } catch {/* ignore */}
-          }
-        }
-      } catch {
-        /* network error — giữ state, user sẽ phải login lại */
-      }
-    })();
-    return () => {
-      cancelled = true;
+  const restoreSession = useCallback(async () => {
+    if (!getToken()) {
+      setRestoreStatus('done');
+      return;
+    }
+    setRestoreStatus('checking');
+    const r = await api.me();
+    if (r.ok) {
+      const u = r.data.user;
+      const hydrated: User = {
+        id: String(u.id),
+        username: u.username,
+        fullname: u.fullname,
+        email: u.email ?? '',
+        role: u.role,
+        departments: Array.isArray(u.departments) ? (u.departments as Department[]) : [],
+        initial: u.fullname?.charAt(0) ?? '',
+        avatar: u.avatar_url ?? '',
+      };
+      setUsersState([hydrated]);
+      setCurrentUserId(hydrated.id);
+      setRestoreStatus('done');
+    } else if (r.networkError || r.error.error === 'internal') {
+      setRestoreStatus('failed');
+    } else {
+      // 401: apiClient đã xoá token và phát 'auth:logout'.
+      setCurrentUserId(null);
+      setRestoreStatus('done');
+    }
+  }, []);
+
+  useEffect(() => {
+    void restoreSession();
+  }, [restoreSession]);
+
+  // Máy chủ trả 401 cho bất kỳ request nào (token hết hạn / bị thu hồi) → về trang đăng nhập.
+  useEffect(() => {
+    const onLogout = () => {
+      setCurrentUserId(null);
+      setUsersState([]);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Chỉ chạy 1 lần khi mount — tránh loop với setUsersState.
+    window.addEventListener('auth:logout', onLogout);
+    return () => window.removeEventListener('auth:logout', onLogout);
+  }, []);
 
   const user = useMemo(
     () => users.find((u) => u.id === currentUserId) ?? null,
@@ -244,6 +229,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     () => ({
       user,
       users,
+      restoreStatus,
+      retryRestore: restoreSession,
       login,
       logout,
       setUsers,
@@ -251,7 +238,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       canSeeOwner,
       findUser,
     }),
-    [user, login, logout, setUsers, canSeeDepartment, canSeeOwner, findUser, users]
+    [user, restoreStatus, restoreSession, login, logout, setUsers, canSeeDepartment, canSeeOwner, findUser, users]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

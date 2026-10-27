@@ -79,7 +79,7 @@ const GANTT_LEGEND: { key: keyof typeof GANTT_COLOR; label: string; dot?: boolea
   { key: 't3', label: 'T3: Hạng mục' },
   { key: 't4', label: 'T4: Đầu việc' },
   { key: 'blocked', label: 'Điểm nghẽn' },
-  { key: 'critical', label: 'Đường găng', dot: true },
+  { key: 'critical', label: 'Ưu tiên cao', dot: true },
   { key: 'readonly', label: 'Chỉ đọc (ngữ cảnh)' },
 ];
 
@@ -117,12 +117,27 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
   // push của mảng gốc → T1, hết T2, hết T3, hết T4. Giờ sort theo cây: T1 → T2 con →
   // T3 con → T4 con).
   const filteredItems = useMemo(() => {
+    // Mục khớp từ khoá + toàn bộ chuỗi cha của nó (cây chỉ duyệt từ gốc xuống,
+    // nên thiếu cha thì mục con khớp sẽ không hiện).
+    const q = searchTerm.trim().toLowerCase();
+    let shown: Set<string> | null = null;
+    if (q) {
+      const byId = new Map(tierItems.map((t) => [t.id, t]));
+      shown = new Set();
+      for (const item of tierItems) {
+        const match =
+          item.title.toLowerCase().includes(q) ||
+          item.code.toLowerCase().includes(q) ||
+          item.owner.name.toLowerCase().includes(q);
+        let cur: TierItem | undefined = match ? item : undefined;
+        while (cur && !shown.has(cur.id)) {
+          shown.add(cur.id);
+          cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+        }
+      }
+    }
     const filtered = tierItems.filter((item) => {
-      const matchSearch =
-        item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.owner.name.toLowerCase().includes(searchTerm.toLowerCase());
-      if (!matchSearch) return false;
+      if (shown && !shown.has(item.id)) return false;
       if (allCollapsed && (item.tier === 3 || item.tier === 4)) return false;
       if (item.parentId && collapsedMap[item.parentId]) return false;
       return true;
@@ -163,6 +178,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
 
   // Counts
   const t1Count = tierItems.filter((i) => i.tier === 1).length;
+  const t1ActiveCount = tierItems.filter((i) => i.tier === 1 && i.status !== 'Đã xong').length;
   const t2Count = tierItems.filter((i) => i.tier === 2).length;
   const t3Count = tierItems.filter((i) => i.tier === 3).length;
   const t4Count = tierItems.filter((i) => i.tier === 4).length;
@@ -185,13 +201,17 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
   const hasReadOnlyContext = tierItems.some(isReadOnlyContext);
 
   // --- Dynamic KPI calculations ---
+  // Tổng tiến độ = trung bình các mục gốc (dự án + việc độc lập). Mục cha đã là
+  // trung bình của mục con, nên cộng cả 4 tầng sẽ tính trùng.
+  const rootItems = tierItems.filter((i) => !i.parentId);
   const avgAll =
-    tierItems.length === 0
+    rootItems.length === 0
       ? 0
-      : Math.round(tierItems.reduce((s, i) => s + i.progress, 0) / tierItems.length);
+      : Math.round(rootItems.reduce((s, i) => s + i.progress, 0) / rootItems.length);
 
+  // Vướng mắc = trạng thái nghẽn, hoặc NV đã báo vướng (blocker_note), hoặc cảnh báo giai đoạn.
   const blockedItems = tierItems.filter(
-    (i) => i.status === 'Điểm nghẽn' || i.blockerAlert
+    (i) => i.status !== 'Đã xong' && (i.status === 'Điểm nghẽn' || !!i.blockerNote?.trim() || !!i.blockerAlert)
   );
 
   const t3Items = tierItems.filter((i) => i.tier === 3);
@@ -316,10 +336,10 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
             </div>
             <div className="my-2 flex items-baseline gap-2">
               <span className="text-display font-bold text-on-surface tabular-nums tracking-tight">
-                {t1Count}
+                {t1ActiveCount}
               </span>
               <span className="text-xs text-secondary">
-                dự án đang kích hoạt
+                dự án đang triển khai
               </span>
             </div>
             <div className="flex items-center gap-[3px] pt-1">
@@ -327,7 +347,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                 <div
                   key={i}
                   className={`h-2 flex-1 rounded-sm ${
-                    i < Math.min(t1Count, 10) ? 'bg-primary' : 'bg-surface-container'
+                    i < Math.min(t1ActiveCount, 10) ? 'bg-primary' : 'bg-surface-container'
                   }`}
                 />
               ))}
@@ -380,7 +400,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                 {blockedItems.length}
               </span>
               <span className="text-xs text-secondary">
-                {blockedItems.length > 0 ? 'điểm nghẽn phụ thuộc' : 'không có vướng mắc'}
+                {blockedItems.length > 0 ? 'mục đang vướng mắc' : 'không có vướng mắc'}
               </span>
             </div>
             <div className="flex items-center gap-[3px] pt-1">
@@ -846,12 +866,12 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                                       priority_high
                                     </span>
                                   )}
-                                  {/* critical path marker */}
+                                  {/* Đánh dấu việc ưu tiên cao */}
                                   {item.priority === 'Cao (Critical Path)' && !isBlocked && (
                                     <span
                                       className="absolute -top-1 -right-1 w-2 h-2 rounded-full ring-1 ring-white"
                                       style={{ backgroundColor: GANTT_COLOR.critical }}
-                                      title="Đường găng"
+                                      title="Ưu tiên cao"
                                     />
                                   )}
                                 </div>

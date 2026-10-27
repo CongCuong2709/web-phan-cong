@@ -40,9 +40,13 @@ import { ToastStack, useToasts } from './components/Toast';
 import LoginPage from './components/LoginPage';
 
 function AppShell() {
-  const { user } = useAuth();
+  const { user, restoreStatus, retryRestore } = useAuth();
 
   if (!user) {
+    if (restoreStatus === 'checking') return <LoadingState />;
+    if (restoreStatus === 'failed') {
+      return <LoadErrorState message="Không kết nối được máy chủ để khôi phục phiên đăng nhập." onRetry={retryRestore} />;
+    }
     return <LoginPage />;
   }
 
@@ -247,13 +251,13 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     const saved = await commit(
       api.updateTask(ref.tier, ref.num, {
         title: updated.title,
-        progress: updated.progress,
         status: viStatusToEnum(updated.status),
-        priority: viPriorityToEnum(updated.priority),
         start_date: updated.startDate,
         end_date: updated.endDate,
         description: updated.description,
-        management_notes: updated.managementNotes,
+        // Chỉ gửi trường mà tầng đó có cột: progress/priority ở T4, management_notes ở T2.
+        ...(ref.tier === 4 ? { progress: updated.progress, priority: viPriorityToEnum(updated.priority) } : {}),
+        ...(ref.tier === 2 ? { management_notes: updated.managementNotes } : {}),
       }),
       `Đã lưu thay đổi cho ${updated.code}.`,
     );
@@ -263,12 +267,21 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   const handleAddTierItem = async (item: Partial<TierItem>): Promise<boolean> => {
     const tier = item.tier ?? 4;
     const parent = item.parentId ? parseTaskId(item.parentId) : null;
+    // Phòng ban của việc = phòng của người được giao (ưu tiên phòng chung với người giao).
+    const owner = deptUsers.find((u) => u.username === item.ownerUsername);
+    const ownerDepts = owner?.departments ?? [];
+    const department =
+      item.department ??
+      ownerDepts.find((d) => user.departments.includes(d)) ??
+      ownerDepts[0] ??
+      user.departments[0] ??
+      null;
     const created = await commit(
       api.createTask({
         tier,
         title: item.title?.trim() || 'Đầu việc mới',
         parent_id: parent?.num ?? null,
-        department_code: item.department ?? user.departments[0] ?? null,
+        department_code: department,
         owner_username: item.ownerUsername || undefined,
         progress: 0,
         status: 'pending',
