@@ -164,6 +164,25 @@ export function isTierItemOverdue(i: Pick<TierItem, 'daysRemaining' | 'status'>)
   return i.daysRemaining !== undefined && i.daysRemaining < 0 && i.status !== 'Đã xong' && i.status !== 'Chờ duyệt';
 }
 
+/**
+ * Tiến độ kế hoạch (%) theo thời gian: tỉ lệ số ngày đã qua trong khoảng
+ * [startDate, endDate], tính cả 2 đầu. Chưa tới ngày bắt đầu → 0, quá hạn → 100.
+ * Thiếu ngày → undefined (không so sánh được).
+ */
+export function expectedProgress(i: Pick<TierItem, 'startDate' | 'endDate'>, today = todayIso()): number | undefined {
+  const toDay = (iso: string) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+    return m ? Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 86400000 : NaN;
+  };
+  const start = toDay(i.startDate);
+  const end = toDay(i.endDate);
+  const now = toDay(today);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return undefined;
+  if (now < start) return 0;
+  if (now >= end) return 100;
+  return Math.round(((now - start + 1) / (end - start + 1)) * 100);
+}
+
 export function viStatusToEnum(s: TierItem['status']): string {
   return Object.keys(STATUS_VI).find((k) => STATUS_VI[k] === s) ?? 'pending';
 }

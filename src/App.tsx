@@ -543,6 +543,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
                 teamTasks={visibleTeamTasks}
                 dailyLogs={dailyLogs}
                 currentUser={user}
+                onOpenItem={openDrawer}
               />
             )}
           </>

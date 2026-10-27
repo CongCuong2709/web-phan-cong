@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Avatar } from './ui/Brand';
-import { isTierItemOverdue } from '../lib/transforms';
+import { expectedProgress, isTierItemOverdue } from '../lib/transforms';
 import {
   TierItem,
   TeamMember,
@@ -19,7 +19,73 @@ interface BaoCaoTongQuanViewProps {
   dailyLogs?: DailyLog[];
   /** User đang đăng nhập — dùng để filter báo cáo theo phòng ban khi là manager. */
   currentUser?: User | null;
+  /** Mở 1 mục trong Drawer (id composite '<tier>-<num>'). */
+  onOpenItem?: (id: string) => void;
 }
+
+/** Chậm hơn kế hoạch từ ngưỡng này (điểm %) trở lên thì đưa vào "Cần chú ý". */
+const BEHIND_THRESHOLD = 10;
+/** Số dòng "Cần chú ý" hiện mặc định. */
+const ATTENTION_LIMIT = 10;
+
+type AttentionKind = 'blocked' | 'overdue' | 'behind';
+
+const ATTENTION_TONE: Record<AttentionKind, string> = {
+  blocked: 'bg-error-container text-on-error-container',
+  overdue: 'bg-error-container text-on-error-container',
+  behind: 'bg-warning-container text-on-warning-container',
+};
+
+/** Mức chậm so với kế hoạch (điểm %), chỉ cho mục chưa báo xong; undefined nếu không chậm. */
+function behindBy(item: TierItem): number | undefined {
+  if (item.status === 'Đã xong' || item.status === 'Chờ duyệt') return undefined;
+  const plan = expectedProgress(item);
+  if (plan === undefined) return undefined;
+  const lag = plan - item.progress;
+  return lag > 0 ? lag : undefined;
+}
+
+/** 1 dòng tiến độ (dự án / giai đoạn) kèm mốc kế hoạch. */
+const ProgressRow: React.FC<{ item: TierItem; strong?: boolean; onOpen?: (id: string) => void }> = ({ item, strong, onOpen }) => {
+  const done = item.status === 'Đã xong';
+  const plan = done ? undefined : expectedProgress(item);
+  const lag = behindBy(item);
+  const late = lag !== undefined && lag >= BEHIND_THRESHOLD;
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen?.(item.id)}
+      className={`w-full text-left flex flex-col gap-1 rounded hover:bg-surface-container-low/40 transition-colors ${strong ? '' : 'pl-4'}`}
+    >
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className={`truncate ${strong ? 'text-sm font-bold text-on-surface' : 'font-semibold text-on-surface'}`}>
+          <span className="font-mono text-secondary mr-1.5">{item.code}</span>
+          {item.title}
+        </span>
+        <span className="shrink-0 flex items-center gap-2">
+          {done ? (
+            <span className="font-semibold text-tertiary">Đã xong</span>
+          ) : (
+            <>
+              {plan !== undefined && <span className="text-secondary">kế hoạch {plan}%</span>}
+              {late && <span className="font-semibold text-warning">chậm {lag}%</span>}
+            </>
+          )}
+          <span className="font-mono font-bold text-on-surface w-10 text-right">{item.progress}%</span>
+        </span>
+      </div>
+      <div className="relative w-full h-2 bg-surface-container-low rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full ${done ? 'bg-tertiary' : late ? 'bg-warning' : strong ? 'bg-gantt-t1' : 'bg-primary'}`}
+          style={{ width: `${item.progress}%` }}
+        />
+        {plan !== undefined && (
+          <div aria-hidden="true" className="absolute top-0 h-full w-0.5 bg-on-surface/60" style={{ left: `${plan}%` }} />
+        )}
+      </div>
+    </button>
+  );
+};
 
 export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
   tierItems,
@@ -27,14 +93,51 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
   teamTasks,
   dailyLogs = [],
   currentUser,
+  onOpenItem,
 }) => {
-  // "Hoàn tất" = đã nghiệm thu; việc 100% nhưng còn chờ duyệt chưa tính.
-  const completedTierItems = tierItems.filter((i) => i.status === 'Đã xong').length;
   // Vướng mắc = trạng thái nghẽn, hoặc NV đã báo vướng (blocker_note), hoặc cảnh báo giai đoạn.
   const hasBlocker = (i: TierItem) =>
     i.status !== 'Đã xong' && (i.status === 'Điểm nghẽn' || !!i.blockerNote?.trim() || !!i.blockerAlert);
   const blockedItems = tierItems.filter(hasBlocker);
   const blockerText = (i: TierItem) => i.blockerNote?.trim() || i.blockerAlert || i.managementNotes;
+
+  const projects = useMemo(
+    () => tierItems.filter((i) => i.tier === 1).sort((a, b) => a.code.localeCompare(b.code)),
+    [tierItems],
+  );
+  const phasesOf = useMemo(() => {
+    const m = new Map<string, TierItem[]>();
+    for (const i of tierItems) {
+      if (i.tier !== 2 || !i.parentId) continue;
+      const arr = m.get(i.parentId) ?? [];
+      arr.push(i);
+      m.set(i.parentId, arr);
+    }
+    for (const arr of m.values()) arr.sort((a, b) => a.code.localeCompare(b.code));
+    return m;
+  }, [tierItems]);
+
+  // Mỗi mục lấy lý do nặng nhất: vướng mắc > quá hạn > chậm kế hoạch.
+  const attention = useMemo(() => {
+    const rows: { item: TierItem; kind: AttentionKind; label: string; detail?: string; weight: number }[] = [];
+    for (const item of tierItems) {
+      if (item.status === 'Đã xong') continue;
+      if (hasBlocker(item)) {
+        rows.push({ item, kind: 'blocked', label: 'Vướng mắc', detail: blockerText(item) || undefined, weight: 0 });
+      } else if (isTierItemOverdue(item)) {
+        const days = Math.abs(item.daysRemaining ?? 0);
+        rows.push({ item, kind: 'overdue', label: `Quá hạn ${days} ngày`, weight: 1000 - days });
+      } else {
+        const lag = behindBy(item);
+        if (lag !== undefined && lag >= BEHIND_THRESHOLD) {
+          rows.push({ item, kind: 'behind', label: `Chậm ${lag}%`, weight: 2000 - lag });
+        }
+      }
+    }
+    return rows.sort((a, b) => a.weight - b.weight);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tierItems]);
+  const [showAllAttention, setShowAllAttention] = useState(false);
   // Thanh phân bổ: so với người đang có nhiều việc mở nhất.
   const maxActive = Math.max(1, ...teamMembers.map((m) => m.activeTasks));
 
@@ -287,112 +390,99 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
           </div>
         </div>
 
-        {/* Detailed Breakdown Tables */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Left Table: 4-Tier Items Progress Overview */}
+          {/* Tiến độ theo dự án: chỉ T1 → T2, số dòng không phình theo số đầu việc. */}
           <div className="bg-white p-5 rounded-xl border border-surface-container shadow-sm flex flex-col gap-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold text-on-surface">
-                Tiến độ chi tiết
-              </h3>
+              <h3 className="text-base font-bold text-on-surface">Tiến độ theo dự án</h3>
               <span className="text-xs text-secondary">
-                {completedTierItems}/{tierItems.length} hoàn tất
+                {projects.filter((p) => p.status === 'Đã xong').length}/{projects.length} dự án đã xong
               </span>
             </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-surface-container text-secondary text-xs font-bold uppercase">
-                    <th className="pb-2.5">Mã & Hạng mục</th>
-                    <th className="pb-2.5">Người làm</th>
-                    <th className="pb-2.5 text-center">Tiến độ</th>
-                    <th className="pb-2.5 text-right">Trạng thái</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-surface-container-low">
-                  {tierItems.map((item) => (
-                    <tr key={item.id} className="hover:bg-surface-container-low/40 transition-colors">
-                      <td className="py-2.5 pr-2">
-                        <div className="font-semibold text-on-surface truncate max-w-[200px]">
-                          {item.title}
-                        </div>
-                        <span className="text-xs text-secondary font-mono">
-                          {item.code} · {item.tierName}
-                        </span>
-                      </td>
-                      <td className="py-2.5 text-on-surface">
-                        {item.owner.name}
-                      </td>
-                      <td className="py-2.5 text-center font-mono font-bold">
-                        <span
-                          className={
-                            item.status === 'Đã xong'
-                              ? 'text-tertiary'
-                              : hasBlocker(item)
-                              ? 'text-warning'
-                              : 'text-primary'
-                          }
-                        >
-                          {item.progress}%
-                        </span>
-                      </td>
-                      <td className="py-2.5 text-right">
-                        <span
-                          className={`text-xs font-semibold px-2 py-0.5 rounded ${
-                            item.status === 'Đã xong'
-                              ? 'bg-tertiary-fixed/40 text-tertiary'
-                              : hasBlocker(item)
-                              ? 'bg-warning-container text-on-warning-container'
-                              : 'bg-surface-container-low text-primary'
-                          }`}
-                        >
-                          {item.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            {projects.length === 0 ? (
+              <p className="text-sm text-secondary italic">Chưa có dự án nào trong phạm vi bạn được xem.</p>
+            ) : (
+              <ul className="flex flex-col gap-4">
+                {projects.map((p) => (
+                  <li key={p.id} className="flex flex-col gap-1.5">
+                    <ProgressRow item={p} strong onOpen={onOpenItem} />
+                    {(phasesOf.get(p.id) ?? []).map((ph) => (
+                      <ProgressRow key={ph.id} item={ph} onOpen={onOpenItem} />
+                    ))}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
-          {/* Right Section: Team Workload & Bottleneck Resolution */}
+          {/* Cần chú ý: chỉ ngoại lệ, xếp theo mức nghiêm trọng. */}
           <div className="bg-white p-5 rounded-xl border border-surface-container shadow-sm flex flex-col gap-4">
-            <h3 className="text-base font-bold text-on-surface">
-              Tải công việc & Điểm nghẽn cần tháo gỡ
-            </h3>
-
-            {/* Blocked Items Card */}
-            {blockedItems.length > 0 && (
-              <div className="p-4 rounded-lg bg-error-container/40 border border-error-fixed">
-                <div className="flex items-center gap-2 text-error font-bold text-sm mb-1">
-                  <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px]">
-                    error
-                  </span>
-                  <span>Cần hành động ngay: {blockedItems.length} mục đang vướng mắc</span>
-                </div>
-                {blockedItems.map((b) => (
-                  <p key={b.id} className="text-xs text-on-error-container leading-relaxed mt-1">
-                    • <strong>{b.title}</strong>{blockerText(b) ? `: ${blockerText(b)}` : ''}
-                  </p>
-                ))}
-              </div>
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-on-surface">Cần chú ý</h3>
+              <span className={`text-xs font-semibold ${attention.length > 0 ? 'text-error' : 'text-tertiary'}`}>
+                {attention.length} mục
+              </span>
+            </div>
+            {attention.length === 0 ? (
+              <p className="text-sm text-tertiary">
+                Không có mục nào quá hạn, vướng mắc hoặc chậm hơn kế hoạch từ {BEHIND_THRESHOLD}% trở lên.
+              </p>
+            ) : (
+              <>
+                <ul className="divide-y divide-surface-container-low">
+                  {(showAllAttention ? attention : attention.slice(0, ATTENTION_LIMIT)).map((a) => (
+                    <li key={a.item.id}>
+                      <button
+                        type="button"
+                        onClick={() => onOpenItem?.(a.item.id)}
+                        className="w-full text-left py-2.5 flex items-start gap-3 hover:bg-surface-container-low/40 rounded transition-colors"
+                      >
+                        <span
+                          className={`shrink-0 w-32 text-xs font-semibold px-2 py-0.5 rounded text-center ${ATTENTION_TONE[a.kind]}`}
+                        >
+                          {a.label}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-semibold text-on-surface truncate">{a.item.title}</span>
+                          <span className="block text-xs text-secondary truncate">
+                            <span className="font-mono">{a.item.code}</span> · {a.item.tierName.split(': ')[1] ?? a.item.tierName} ·{' '}
+                            {a.item.owner.name}
+                            {a.detail ? ` · “${a.detail}”` : ''}
+                          </span>
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                {attention.length > ATTENTION_LIMIT && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllAttention((v) => !v)}
+                    className="self-start text-xs font-semibold text-primary hover:underline"
+                  >
+                    {showAllAttention ? 'Thu gọn' : `Xem tất cả ${attention.length} mục`}
+                  </button>
+                )}
+              </>
             )}
+          </div>
+        </div>
 
-            {/* Member load bars */}
-            <div className="space-y-3 pt-2">
-              <div className="text-xs font-bold text-secondary uppercase tracking-wider">
-                Phân bổ nguồn lực đội ngũ:
-              </div>
+        {/* Tải công việc đội ngũ */}
+        <div className="bg-white p-5 rounded-xl border border-surface-container shadow-sm flex flex-col gap-4">
+          <h3 className="text-base font-bold text-on-surface">Tải công việc đội ngũ</h3>
+          {teamMembers.length === 0 ? (
+            <p className="text-sm text-secondary italic">Chưa có thành viên nào trong phạm vi bạn được xem.</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
               {teamMembers.map((member) => (
                 <div key={member.id} className="space-y-1">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-semibold text-on-surface">
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="font-semibold text-on-surface truncate">
                       {member.name} ({member.role})
                     </span>
                     <span
-                      className={`font-semibold ${
+                      className={`font-semibold shrink-0 ${
                         member.overdueTasks > 0 || member.needHelp ? 'text-error' : 'text-tertiary'
                       }`}
                     >
@@ -403,16 +493,14 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
                   </div>
                   <div className="w-full bg-surface-container-low rounded-full h-2 overflow-hidden">
                     <div
-                      className={`h-full rounded-full ${
-                        member.needHelp ? 'bg-error' : 'bg-primary'
-                      }`}
+                      className={`h-full rounded-full ${member.needHelp ? 'bg-error' : 'bg-primary'}`}
                       style={{ width: `${(member.activeTasks / maxActive) * 100}%` }}
                     ></div>
                   </div>
                 </div>
               ))}
             </div>
-          </div>
+          )}
         </div>
 
         {/* Hoạt động nhân viên hôm nay — Daily Logs theo phòng ban */}
