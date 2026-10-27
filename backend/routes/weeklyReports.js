@@ -231,8 +231,8 @@ router.get('/team', (req, res) => {
     return res.status(403).json({ error: 'forbidden', message: 'Chỉ quản lý mới xem tổng hợp phòng ban.' });
   }
 
-  // Khoanh vùng phòng ban theo quyền xem của actor.
-  const myDepts = parseDepartments(req.user.departments);
+  // Khoanh vùng phòng ban: chỉ manager bị giới hạn trong phòng mình; admin/director xem toàn công ty.
+  const myDepts = req.user.role === 'manager' ? parseDepartments(req.user.departments) : [];
   const deptFilter = myDepts.length
     ? `AND ud.department_code IN (${myDepts.map(() => '?').join(',')})`
     : '';

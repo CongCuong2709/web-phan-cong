@@ -153,7 +153,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   }, [tierItems, user]);
 
   const visibleTeamMembers = useMemo<TeamMember[]>(() => {
-    if (user.role === 'admin') return teamMembers;
+    if (user.role === 'admin' || user.role === 'director') return teamMembers;
     if (user.role === 'manager') {
       return teamMembers.filter((m) => !m.department || user.departments.includes(m.department));
     }
@@ -219,7 +219,11 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     };
   }, [drawerItem, tierItems, user]);
   const [isNewPersonalTaskOpen, setIsNewPersonalTaskOpen] = useState(false);
-  const baoCaoSubTab: 'tong-quan' | 'tuan-phong-ban' = route.sub === 'tong-quan' ? 'tong-quan' : 'tuan-phong-ban';
+  // URL không chỉ rõ tab con → BGĐ mở "Tổng quan", quản lý mở "Báo cáo tuần phòng ban".
+  const baoCaoSubTab: 'tong-quan' | 'tuan-phong-ban' =
+    route.sub === 'tong-quan' ? 'tong-quan'
+    : route.sub === 'tuan' ? 'tuan-phong-ban'
+    : user.role === 'director' ? 'tong-quan' : 'tuan-phong-ban';
 
   // ---------------- Ghi dữ liệu ----------------
   /**

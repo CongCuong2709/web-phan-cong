@@ -40,7 +40,7 @@ const NEW_ROW = (): Row => ({
 });
 
 // ── Helpers ngày tuần ────────────────────────────────────────────────────────
-function weekStartOf(d = new Date()): string {
+export function weekStartOf(d = new Date()): string {
   const dt = new Date(d);
   dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7)); // về thứ 2
   const y = dt.getFullYear();
@@ -99,6 +99,8 @@ export const WeeklyReportView: React.FC<Props> = ({
 }) => {
   const isReview = mode === 'review';
   const canEdit = mode === 'edit';
+  // Chỉ quản lý/admin phản hồi được (POST /review); BGĐ xem báo cáo ở chế độ chỉ đọc.
+  const canRespond = isReview && (currentUser.role === 'manager' || currentUser.role === 'admin');
 
   const [weekStart, setWeekStart] = useState<string>(() => week ?? weekStartOf());
   const [rows, setRows] = useState<Row[]>([]);
@@ -296,7 +298,7 @@ export const WeeklyReportView: React.FC<Props> = ({
   /** Cột phản hồi/chỉ đạo của QL (cột 6). */
   const mgrCell = (idx: number) => {
     const r = rows[idx];
-    if (isReview) {
+    if (canRespond) {
       return (
         <td className="bg-surface">
           <div
@@ -309,7 +311,7 @@ export const WeeklyReportView: React.FC<Props> = ({
         </td>
       );
     }
-    // NV: chỉ đọc chỉ đạo của QL
+    // NV / BGĐ: chỉ đọc chỉ đạo của QL
     if (!r.mgr_comment) {
       return <td className="bg-surface"><span className="text-outline-variant">—</span></td>;
     }
@@ -469,7 +471,7 @@ export const WeeklyReportView: React.FC<Props> = ({
           )}
 
           {/* QL: Xác nhận đã xem — KHÔNG phải duyệt (không có trạng thái từ chối) */}
-          {isReview && (
+          {canRespond && (
             <button type="button"
               className={`px-3 py-1.5 rounded-md text-sm font-semibold ${
                 acked
@@ -485,7 +487,7 @@ export const WeeklyReportView: React.FC<Props> = ({
 
       {/* ===== Nhận xét chung của QL ===== */}
       {!loading && (
-        isReview ? (
+        canRespond ? (
           <div className="border border-surface-container rounded-lg p-3 mb-3">
             <div className="flex items-center justify-between gap-3 mb-1.5">
               <div className="text-xs font-semibold">

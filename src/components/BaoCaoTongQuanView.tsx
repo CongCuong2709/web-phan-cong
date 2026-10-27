@@ -1,6 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Avatar } from './ui/Brand';
 import { expectedProgress, isTierItemOverdue } from '../lib/transforms';
+import { api, type WeeklyTeamMemberDto } from '../lib/apiClient';
+import { weekStartOf } from './WeeklyReportView';
 import {
   TierItem,
   TeamMember,
@@ -44,6 +46,32 @@ function behindBy(item: TierItem): number | undefined {
   const lag = plan - item.progress;
   return lag > 0 ? lag : undefined;
 }
+
+/** Thanh tải việc của 1 thành viên. */
+const MemberLoad: React.FC<{ member: TeamMember; maxActive: number }> = ({ member, maxActive }) => (
+  <div className="space-y-1">
+    <div className="flex items-center justify-between gap-2 text-xs">
+      <span className="font-semibold text-on-surface truncate">
+        {member.name} ({member.role})
+      </span>
+      <span
+        className={`font-semibold shrink-0 ${
+          member.overdueTasks > 0 || member.needHelp ? 'text-error' : 'text-tertiary'
+        }`}
+      >
+        {member.activeTasks} việc đang mở
+        {member.overdueTasks > 0 && ` · ${member.overdueTasks} quá hạn`}
+        {member.blockedTasks > 0 && ` · ${member.blockedTasks} đang vướng`}
+      </span>
+    </div>
+    <div className="w-full bg-surface-container-low rounded-full h-2 overflow-hidden">
+      <div
+        className={`h-full rounded-full ${member.needHelp ? 'bg-error' : 'bg-primary'}`}
+        style={{ width: `${(member.activeTasks / maxActive) * 100}%` }}
+      ></div>
+    </div>
+  </div>
+);
 
 /** 1 dòng tiến độ (dự án / giai đoạn) kèm mốc kế hoạch. */
 const ProgressRow: React.FC<{ item: TierItem; strong?: boolean; onOpen?: (id: string) => void }> = ({ item, strong, onOpen }) => {
@@ -138,6 +166,56 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tierItems]);
   const [showAllAttention, setShowAllAttention] = useState(false);
+
+  // ── Theo phòng ban (admin / BGĐ) ──
+  const isManagerView = currentUser?.role === 'manager';
+  const [weekly, setWeekly] = useState<WeeklyTeamMemberDto[]>([]);
+  const [weeklyStatus, setWeeklyStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [expandedDept, setExpandedDept] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isManagerView) return;
+    let cancelled = false;
+    setWeeklyStatus('loading');
+    api.getWeeklyReportTeam(weekStartOf()).then((r) => {
+      if (cancelled) return;
+      if (r.ok) {
+        setWeekly(r.data.items);
+        setWeeklyStatus('ready');
+      } else {
+        setWeeklyStatus('error');
+      }
+    });
+    return () => { cancelled = true; };
+  }, [isManagerView]);
+
+  const deptRows = useMemo(() => {
+    const openTasks = tierItems.filter((t) => t.tier === 4 && t.status !== 'Đã xong');
+    const codes = new Set<string>();
+    for (const t of openTasks) if (t.department) codes.add(t.department);
+    for (const m of teamMembers) if (m.department) codes.add(m.department);
+    for (const w of weekly) for (const d of w.departments) codes.add(d);
+    return Array.from(codes)
+      .map((code) => {
+        const tasks = openTasks.filter((t) => t.department === code);
+        const employees = weekly.filter((w) => w.departments.includes(code));
+        return {
+          code,
+          label: DEPARTMENT_LABEL[code as Department] ?? code,
+          // "Đang mở" = chưa báo xong; việc chờ duyệt không tính (đã làm xong).
+          open: tasks.filter((t) => t.status !== 'Chờ duyệt').length,
+          overdue: tasks.filter((t) => isTierItemOverdue(t)).length,
+          blocked: tasks.filter((t) => hasBlocker(t)).length,
+          employees: employees.length,
+          submitted: employees.filter((w) => w.submitted).length,
+          notSubmitted: employees.filter((w) => !w.submitted).map((w) => w.fullname),
+          members: teamMembers.filter((m) => m.department === code),
+        };
+      })
+      .filter((d) => d.open > 0 || d.members.length > 0 || d.employees > 0)
+      .sort((a, b) => b.overdue + b.blocked - (a.overdue + a.blocked) || a.label.localeCompare(b.label));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tierItems, teamMembers, weekly]);
   // Thanh phân bổ: so với người đang có nhiều việc mở nhất.
   const maxActive = Math.max(1, ...teamMembers.map((m) => m.activeTasks));
 
@@ -282,6 +360,171 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
   // Click-to-expand một nhân viên để xem chi tiết các log hôm nay.
   // (UI trước đây chỉ hiển thị số liệu tóm tắt — user phải mở từng task mới biết NV ghi gì.)
   const [expandedUsername, setExpandedUsername] = useState<string | null>(null);
+
+  const [expandedDailyDept, setExpandedDailyDept] = useState<string | null>(null);
+
+  // Người cần ghi nhật ký = người có việc đang mở; cộng thêm ai đã ghi dù không còn việc mở.
+  const dailyByDept = useMemo(() => {
+    const loggedBy = new Map(summariesByDepartment);
+    const codes = new Set<string>(loggedBy.keys());
+    for (const m of teamMembers) if (m.department && m.activeTasks > 0) codes.add(m.department);
+    return Array.from(codes)
+      .map((code) => {
+        const logged = loggedBy.get(code as Department | 'Chưa rõ') ?? [];
+        const loggedNames = new Set(logged.map((x) => x.username.toLowerCase()));
+        const notLogged = teamMembers
+          .filter((m) => m.department === code && m.activeTasks > 0 && !loggedNames.has((m.username ?? '').toLowerCase()))
+          .map((m) => m.name);
+        return {
+          code,
+          label: code === 'Chưa rõ' ? 'Chưa rõ phòng ban' : `${code} · ${DEPARTMENT_LABEL[code as Department] ?? code}`,
+          logged,
+          notLogged,
+          expected: logged.length + notLogged.length,
+          obstacles: logged.filter((x) => x.hasObstacle).length,
+        };
+      })
+      .sort((a, b) => b.obstacles - a.obstacles || a.label.localeCompare(b.label));
+  }, [summariesByDepartment, teamMembers]);
+
+  /** Danh sách từng người + nhật ký hôm nay của họ (bấm để mở chi tiết). */
+  const renderMemberList = (members: MemberDailySummary[]) => (
+    <ul className="divide-y divide-surface-container-low">
+      {members.map((m) => {
+        const isOpen = expandedUsername === m.username;
+        // Sắp xếp log mới nhất trước cho dễ đọc
+        const logsAsc = [...m.logs].sort((a, b) =>
+          (b.createdAt || '').localeCompare(a.createdAt || ''),
+        );
+        return (
+          <li key={m.username} className="hover:bg-white transition-colors">
+            {/* Click vào header để expand/collapse danh sách log */}
+            <button
+              type="button"
+              onClick={() =>
+                setExpandedUsername(isOpen ? null : m.username)
+              }
+              className="w-full text-left flex items-start gap-3 px-3.5 py-2.5"
+              aria-expanded={isOpen}
+            >
+              <Avatar name={m.userName} src={m.avatar} className="w-9 h-9 text-sm shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-semibold text-on-surface truncate">
+                    {m.userName}
+                  </span>
+                  <span className="font-mono text-xs text-secondary">
+                    @{m.username}
+                  </span>
+                  {m.hasObstacle && (
+                    <span
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-error-container text-error text-xs font-bold"
+                      title="Có vướng mắc được ghi nhận hôm nay"
+                    >
+                      <span aria-hidden="true" className="material-symbols-outlined [--icon-size:11px]">
+                        warning
+                      </span>
+                      Vướng mắc
+                    </span>
+                  )}
+                </div>
+                {m.role && (
+                  <p className="text-xs text-secondary truncate mt-0.5">
+                    {m.role}
+                  </p>
+                )}
+                <div className="flex items-center gap-3 mt-1 text-xs text-on-surface-variant">
+                  <span className="inline-flex items-center gap-1">
+                    <span aria-hidden="true" className="material-symbols-outlined [--icon-size:12px] text-primary">
+                      description
+                    </span>
+                    <span className="font-semibold">{m.logCount}</span>
+                    <span className="text-secondary">nhật ký</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span aria-hidden="true" className="material-symbols-outlined [--icon-size:12px] text-tertiary">
+                      trending_up
+                    </span>
+                    <span className="font-semibold">TB</span>
+                    <span className="font-mono font-bold text-tertiary">
+                      {m.avgProgress}%
+                    </span>
+                  </span>
+                </div>
+              </div>
+              <span
+                className={`material-symbols-outlined [--icon-size:18px] text-secondary shrink-0 mt-2 transition-transform ${
+                  isOpen ? 'rotate-180' : ''
+                }`}
+                aria-hidden="true"
+              >
+                expand_more
+              </span>
+            </button>
+
+            {/* Expanded: danh sách log chi tiết trong ngày */}
+            {isOpen && (
+              <div className="px-3.5 pb-3 pt-1 space-y-2 bg-surface/60">
+                {logsAsc.length === 0 ? (
+                  <p className="text-xs text-secondary italic">
+                    Không có nhật ký chi tiết.
+                  </p>
+                ) : (
+                  logsAsc.map((log) => (
+                    <div
+                      key={log.id}
+                      className="border-l-2 border-outline-variant pl-2.5 py-1.5 bg-white rounded-r"
+                    >
+                      <div className="flex items-center gap-2 text-xs text-secondary mb-1">
+                        <span className="font-mono">#{log.id}</span>
+                        <span>·</span>
+                        <span>
+                          tiến độ{' '}
+                          <span className="font-bold text-tertiary">
+                            {log.progress}%
+                          </span>
+                        </span>
+                        {log.obstacle && log.obstacle.trim() && (
+                          <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-error-container text-error font-bold">
+                            <span aria-hidden="true" className="material-symbols-outlined [--icon-size:10px]">
+                              warning
+                            </span>
+                            vướng mắc
+                          </span>
+                        )}
+                      </div>
+                      {log.description && (
+                        <p className="text-xs text-on-surface leading-relaxed">
+                          <span className="text-secondary font-semibold">
+                            Việc đã làm:
+                          </span>{' '}
+                          {log.description}
+                        </p>
+                      )}
+                      {log.result && (
+                        <p className="text-xs text-on-surface leading-relaxed mt-0.5">
+                          <span className="text-secondary font-semibold">
+                            Kết quả:
+                          </span>{' '}
+                          {log.result}
+                        </p>
+                      )}
+                      {log.obstacle && log.obstacle.trim() && (
+                        <p className="text-xs text-error leading-relaxed mt-0.5">
+                          <span className="font-semibold">Vướng mắc:</span>{' '}
+                          {log.obstacle}
+                        </p>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
 
   return (
     <div className="flex flex-col w-full">
@@ -468,240 +711,247 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
           </div>
         </div>
 
-        {/* Tải công việc đội ngũ */}
-        <div className="bg-white p-5 rounded-xl border border-surface-container shadow-sm flex flex-col gap-4">
-          <h3 className="text-base font-bold text-on-surface">Tải công việc đội ngũ</h3>
-          {teamMembers.length === 0 ? (
-            <p className="text-sm text-secondary italic">Chưa có thành viên nào trong phạm vi bạn được xem.</p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
-              {teamMembers.map((member) => (
-                <div key={member.id} className="space-y-1">
-                  <div className="flex items-center justify-between gap-2 text-xs">
-                    <span className="font-semibold text-on-surface truncate">
-                      {member.name} ({member.role})
-                    </span>
-                    <span
-                      className={`font-semibold shrink-0 ${
-                        member.overdueTasks > 0 || member.needHelp ? 'text-error' : 'text-tertiary'
-                      }`}
-                    >
-                      {member.activeTasks} việc đang mở
-                      {member.overdueTasks > 0 && ` · ${member.overdueTasks} quá hạn`}
-                      {member.blockedTasks > 0 && ` · ${member.blockedTasks} đang vướng`}
-                    </span>
-                  </div>
-                  <div className="w-full bg-surface-container-low rounded-full h-2 overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${member.needHelp ? 'bg-error' : 'bg-primary'}`}
-                      style={{ width: `${(member.activeTasks / maxActive) * 100}%` }}
-                    ></div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Hoạt động nhân viên hôm nay — Daily Logs theo phòng ban */}
-        <div className="bg-white p-5 rounded-xl border border-surface-container shadow-sm flex flex-col gap-4">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <span aria-hidden="true" className="material-symbols-outlined [--icon-size:20px] text-primary">
-                edit_calendar
-              </span>
-              <h3 className="text-base font-bold text-on-surface">
-                Hoạt động nhân viên hôm nay
-              </h3>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-surface-container-low text-primary font-semibold">
-                <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
-                {todayStats.members} nhân viên đã ghi
-              </span>
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-surface-container-low text-primary font-semibold">
-                {todayStats.totalLogs} nhật ký
-              </span>
-              {todayStats.obstacleMembers > 0 && (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-error-container text-error font-semibold">
-                  <span aria-hidden="true" className="material-symbols-outlined [--icon-size:13px]">warning</span>
-                  {todayStats.obstacleMembers} có vướng mắc
-                </span>
-              )}
-            </div>
-          </div>
-
-          {todayStats.totalLogs === 0 ? (
-            <div className="flex items-center gap-3 p-4 rounded-lg bg-surface-container-low/40 border border-dashed border-outline-variant">
-              <span aria-hidden="true" className="material-symbols-outlined [--icon-size:22px] text-secondary">
-                inbox
-              </span>
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-on-surface-variant">
-                  Chưa có nhân viên nào ghi nhật ký hôm nay ({today}).
-                </p>
-                <p className="text-xs text-secondary mt-0.5">
-                  Nhân viên ghi nhật ký ở tab <span className="font-semibold">Việc của tôi</span>, hoặc
-                  trong mục "Nhật ký công việc" khi mở chi tiết một đầu việc. Nhật ký theo ngày
-                  dùng để đối chiếu tiến độ khi xem báo cáo.
-                </p>
+        {/* Tải công việc: quản lý xem từng người trong phòng; admin/BGĐ xem theo phòng ban. */}
+        {isManagerView ? (
+          <div className="bg-white p-5 rounded-xl border border-surface-container shadow-sm flex flex-col gap-4">
+            <h3 className="text-base font-bold text-on-surface">Tải công việc đội ngũ</h3>
+            {teamMembers.length === 0 ? (
+              <p className="text-sm text-secondary italic">Chưa có thành viên nào trong phạm vi bạn được xem.</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
+                {teamMembers.map((member) => (
+                  <MemberLoad key={member.id} member={member} maxActive={maxActive} />
+                ))}
               </div>
+            )}
+          </div>
+        ) : (
+          <div className="bg-white p-5 rounded-xl border border-surface-container shadow-sm flex flex-col gap-4">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-base font-bold text-on-surface">Theo phòng ban</h3>
+              <span className="text-xs text-secondary">Bấm vào một phòng để xem từng người</span>
             </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {summariesByDepartment.map(([dept, members]) => (
-                <div
-                  key={dept}
-                  className="rounded-lg border border-surface-container-low bg-surface overflow-hidden"
-                >
-                  <div className="flex items-center justify-between px-3.5 py-2 bg-white border-b border-surface-container-low">
-                    <span className="text-xs font-bold text-on-surface tracking-tight">
-                      {dept === 'Chưa rõ' ? dept : `${dept} · ${DEPARTMENT_LABEL[dept as Department]}`}
-                    </span>
-                    <span className="text-xs text-secondary font-mono">
-                      {members.length} người
-                    </span>
-                  </div>
-                  <ul className="divide-y divide-surface-container-low">
-                    {members.map((m) => {
-                      const isOpen = expandedUsername === m.username;
-                      // Sắp xếp log mới nhất trước cho dễ đọc
-                      const logsAsc = [...m.logs].sort((a, b) =>
-                        (b.createdAt || '').localeCompare(a.createdAt || ''),
-                      );
+            {deptRows.length === 0 ? (
+              <p className="text-sm text-secondary italic">Chưa có phòng ban nào có công việc hoặc nhân sự.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-surface-container text-secondary text-xs font-bold uppercase">
+                      <th className="pb-2.5">Phòng ban</th>
+                      <th className="pb-2.5 text-right">Đang mở</th>
+                      <th className="pb-2.5 text-right">Quá hạn</th>
+                      <th className="pb-2.5 text-right">Đang vướng</th>
+                      <th className="pb-2.5 text-right">Nộp báo cáo tuần này</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {deptRows.map((d) => {
+                      const expanded = expandedDept === d.code;
                       return (
-                        <li key={m.username} className="hover:bg-white transition-colors">
-                          {/* Click vào header để expand/collapse danh sách log */}
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setExpandedUsername(isOpen ? null : m.username)
-                            }
-                            className="w-full text-left flex items-start gap-3 px-3.5 py-2.5"
-                            aria-expanded={isOpen}
+                        <React.Fragment key={d.code}>
+                          <tr
+                            onClick={() => setExpandedDept(expanded ? null : d.code)}
+                            className="border-b border-surface-container-low cursor-pointer hover:bg-surface-container-low/40 transition-colors"
                           >
-                            <Avatar name={m.userName} src={m.avatar} className="w-9 h-9 text-sm shrink-0" />
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-sm font-semibold text-on-surface truncate">
-                                  {m.userName}
+                            <td className="py-2.5 pr-2">
+                              <button
+                                type="button"
+                                aria-expanded={expanded}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setExpandedDept(expanded ? null : d.code);
+                                }}
+                                className="flex items-center gap-1.5 font-semibold text-on-surface text-left"
+                              >
+                                <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px] text-secondary">
+                                  {expanded ? 'expand_more' : 'chevron_right'}
                                 </span>
-                                <span className="font-mono text-xs text-secondary">
-                                  @{m.username}
-                                </span>
-                                {m.hasObstacle && (
-                                  <span
-                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-error-container text-error text-xs font-bold"
-                                    title="Có vướng mắc được ghi nhận hôm nay"
-                                  >
-                                    <span aria-hidden="true" className="material-symbols-outlined [--icon-size:11px]">
-                                      warning
-                                    </span>
-                                    Vướng mắc
-                                  </span>
-                                )}
-                              </div>
-                              {m.role && (
-                                <p className="text-xs text-secondary truncate mt-0.5">
-                                  {m.role}
-                                </p>
-                              )}
-                              <div className="flex items-center gap-3 mt-1 text-xs text-on-surface-variant">
-                                <span className="inline-flex items-center gap-1">
-                                  <span aria-hidden="true" className="material-symbols-outlined [--icon-size:12px] text-primary">
-                                    description
-                                  </span>
-                                  <span className="font-semibold">{m.logCount}</span>
-                                  <span className="text-secondary">nhật ký</span>
-                                </span>
-                                <span className="inline-flex items-center gap-1">
-                                  <span aria-hidden="true" className="material-symbols-outlined [--icon-size:12px] text-tertiary">
-                                    trending_up
-                                  </span>
-                                  <span className="font-semibold">TB</span>
-                                  <span className="font-mono font-bold text-tertiary">
-                                    {m.avgProgress}%
-                                  </span>
-                                </span>
-                              </div>
-                            </div>
-                            <span
-                              className={`material-symbols-outlined [--icon-size:18px] text-secondary shrink-0 mt-2 transition-transform ${
-                                isOpen ? 'rotate-180' : ''
-                              }`}
-                              aria-hidden="true"
-                            >
-                              expand_more
-                            </span>
-                          </button>
-
-                          {/* Expanded: danh sách log chi tiết trong ngày */}
-                          {isOpen && (
-                            <div className="px-3.5 pb-3 pt-1 space-y-2 bg-surface/60">
-                              {logsAsc.length === 0 ? (
-                                <p className="text-xs text-secondary italic">
-                                  Không có nhật ký chi tiết.
-                                </p>
+                                {d.label}
+                              </button>
+                            </td>
+                            <td className="py-2.5 text-right font-mono">{d.open}</td>
+                            <td className={`py-2.5 text-right font-mono ${d.overdue > 0 ? 'text-error font-bold' : ''}`}>{d.overdue}</td>
+                            <td className={`py-2.5 text-right font-mono ${d.blocked > 0 ? 'text-error font-bold' : ''}`}>{d.blocked}</td>
+                            <td className="py-2.5 text-right">
+                              {weeklyStatus === 'loading' ? (
+                                <span className="text-xs text-outline">Đang tải…</span>
+                              ) : weeklyStatus === 'error' || d.employees === 0 ? (
+                                <span className="text-xs text-outline">—</span>
                               ) : (
-                                logsAsc.map((log) => (
-                                  <div
-                                    key={log.id}
-                                    className="border-l-2 border-outline-variant pl-2.5 py-1.5 bg-white rounded-r"
-                                  >
-                                    <div className="flex items-center gap-2 text-xs text-secondary mb-1">
-                                      <span className="font-mono">#{log.id}</span>
-                                      <span>·</span>
-                                      <span>
-                                        tiến độ{' '}
-                                        <span className="font-bold text-tertiary">
-                                          {log.progress}%
-                                        </span>
-                                      </span>
-                                      {log.obstacle && log.obstacle.trim() && (
-                                        <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-error-container text-error font-bold">
-                                          <span aria-hidden="true" className="material-symbols-outlined [--icon-size:10px]">
-                                            warning
-                                          </span>
-                                          vướng mắc
-                                        </span>
-                                      )}
-                                    </div>
-                                    {log.description && (
-                                      <p className="text-xs text-on-surface leading-relaxed">
-                                        <span className="text-secondary font-semibold">
-                                          Việc đã làm:
-                                        </span>{' '}
-                                        {log.description}
-                                      </p>
-                                    )}
-                                    {log.result && (
-                                      <p className="text-xs text-on-surface leading-relaxed mt-0.5">
-                                        <span className="text-secondary font-semibold">
-                                          Kết quả:
-                                        </span>{' '}
-                                        {log.result}
-                                      </p>
-                                    )}
-                                    {log.obstacle && log.obstacle.trim() && (
-                                      <p className="text-xs text-error leading-relaxed mt-0.5">
-                                        <span className="font-semibold">Vướng mắc:</span>{' '}
-                                        {log.obstacle}
-                                      </p>
-                                    )}
-                                  </div>
-                                ))
+                                <span className={`font-mono ${d.submitted < d.employees ? 'text-warning font-semibold' : 'text-tertiary font-semibold'}`}>
+                                  {d.submitted}/{d.employees} ({Math.round((d.submitted / d.employees) * 100)}%)
+                                </span>
                               )}
-                            </div>
+                            </td>
+                          </tr>
+                          {expanded && (
+                            <tr className="border-b border-surface-container-low">
+                              <td colSpan={5} className="py-3 px-2 bg-surface-container-low/30">
+                                {d.members.length === 0 ? (
+                                  <p className="text-xs text-secondary italic">Phòng chưa có nhân sự nhận việc.</p>
+                                ) : (
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
+                                    {d.members.map((member) => (
+                                      <MemberLoad key={member.id} member={member} maxActive={maxActive} />
+                                    ))}
+                                  </div>
+                                )}
+                                {weeklyStatus === 'ready' && d.notSubmitted.length > 0 && (
+                                  <p className="mt-3 text-xs text-warning">
+                                    Chưa nộp báo cáo tuần này: {d.notSubmitted.join(', ')}
+                                  </p>
+                                )}
+                              </td>
+                            </tr>
                           )}
-                        </li>
+                        </React.Fragment>
                       );
                     })}
-                  </ul>
-                </div>
-              ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Hoạt động hôm nay — quản lý xem từng người; admin/BGĐ xem theo phòng. */}
+        {isManagerView ? (
+          <div className="bg-white p-5 rounded-xl border border-surface-container shadow-sm flex flex-col gap-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span aria-hidden="true" className="material-symbols-outlined [--icon-size:20px] text-primary">
+                  edit_calendar
+                </span>
+                <h3 className="text-base font-bold text-on-surface">
+                  Hoạt động nhân viên hôm nay
+                </h3>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-surface-container-low text-primary font-semibold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
+                  {todayStats.members} nhân viên đã ghi
+                </span>
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-surface-container-low text-primary font-semibold">
+                  {todayStats.totalLogs} nhật ký
+                </span>
+                {todayStats.obstacleMembers > 0 && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-error-container text-error font-semibold">
+                    <span aria-hidden="true" className="material-symbols-outlined [--icon-size:13px]">warning</span>
+                    {todayStats.obstacleMembers} có vướng mắc
+                  </span>
+                )}
+              </div>
             </div>
-          )}
-        </div>
+
+            {todayStats.totalLogs === 0 ? (
+              <div className="flex items-center gap-3 p-4 rounded-lg bg-surface-container-low/40 border border-dashed border-outline-variant">
+                <span aria-hidden="true" className="material-symbols-outlined [--icon-size:22px] text-secondary">
+                  inbox
+                </span>
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-on-surface-variant">
+                    Chưa có nhân viên nào ghi nhật ký hôm nay ({today}).
+                  </p>
+                  <p className="text-xs text-secondary mt-0.5">
+                    Nhân viên ghi nhật ký ở tab <span className="font-semibold">Việc của tôi</span>, hoặc
+                    trong mục "Nhật ký công việc" khi mở chi tiết một đầu việc. Nhật ký theo ngày
+                    dùng để đối chiếu tiến độ khi xem báo cáo.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {summariesByDepartment.map(([dept, members]) => (
+                  <div
+                    key={dept}
+                    className="rounded-lg border border-surface-container-low bg-surface overflow-hidden"
+                  >
+                    <div className="flex items-center justify-between px-3.5 py-2 bg-white border-b border-surface-container-low">
+                      <span className="text-xs font-bold text-on-surface tracking-tight">
+                        {dept === 'Chưa rõ' ? dept : `${dept} · ${DEPARTMENT_LABEL[dept as Department]}`}
+                      </span>
+                      <span className="text-xs text-secondary font-mono">
+                        {members.length} người
+                      </span>
+                    </div>
+                    {renderMemberList(members)}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          /* Admin / BGĐ: thu gọn theo phòng — bấm 1 phòng mới xem từng người. */
+          <div className="bg-white p-5 rounded-xl border border-surface-container shadow-sm flex flex-col gap-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span aria-hidden="true" className="material-symbols-outlined [--icon-size:20px] text-primary">
+                  edit_calendar
+                </span>
+                <h3 className="text-base font-bold text-on-surface">Ghi nhật ký hôm nay</h3>
+              </div>
+              <span className="text-xs text-secondary">
+                {todayStats.members} người · {todayStats.totalLogs} nhật ký
+              </span>
+            </div>
+            {dailyByDept.length === 0 ? (
+              <p className="text-sm text-secondary italic">
+                Chưa có ai đang có việc mở hoặc đã ghi nhật ký hôm nay.
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {dailyByDept.map((d) => {
+                  const open = expandedDailyDept === d.code;
+                  return (
+                    <li key={d.code} className="rounded-lg border border-surface-container-low bg-surface overflow-hidden">
+                      <button
+                        type="button"
+                        aria-expanded={open}
+                        onClick={() => setExpandedDailyDept(open ? null : d.code)}
+                        className="w-full text-left flex items-center gap-3 px-3.5 py-2.5 hover:bg-white transition-colors"
+                      >
+                        <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px] text-secondary">
+                          {open ? 'expand_more' : 'chevron_right'}
+                        </span>
+                        <span className="flex-1 min-w-0 text-sm font-semibold text-on-surface truncate">{d.label}</span>
+                        <span
+                          className={`text-xs font-semibold ${
+                            d.logged.length < d.expected ? 'text-warning' : 'text-tertiary'
+                          }`}
+                        >
+                          {d.logged.length}/{d.expected} người đã ghi
+                        </span>
+                        {d.obstacles > 0 && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-error-container text-error text-xs font-bold">
+                            <span aria-hidden="true" className="material-symbols-outlined [--icon-size:13px]">warning</span>
+                            {d.obstacles} báo vướng
+                          </span>
+                        )}
+                      </button>
+                      {open && (
+                        <div className="border-t border-surface-container-low">
+                          {d.logged.length > 0 ? (
+                            renderMemberList(d.logged)
+                          ) : (
+                            <p className="px-3.5 py-2.5 text-xs text-secondary italic">
+                              Chưa ai trong phòng ghi nhật ký hôm nay.
+                            </p>
+                          )}
+                          {d.notLogged.length > 0 && (
+                            <p className="px-3.5 py-2.5 text-xs text-warning border-t border-surface-container-low">
+                              Chưa ghi hôm nay: {d.notLogged.join(', ')}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
