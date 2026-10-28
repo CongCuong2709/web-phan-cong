@@ -51,6 +51,8 @@ interface DialogProps {
   icon?: string;
   /** 'center' cho modal form, 'drawer' cho panel trượt bên phải. */
   variant?: 'center' | 'drawer';
+  /** Chỉ với 'center': 'wide' = hộp thoại lớn (chi tiết công việc), toàn màn hình trên điện thoại. */
+  size?: 'default' | 'wide';
   /** Chặn đóng (Esc / nền / nút X) khi đang gửi dữ liệu. */
   dismissible?: boolean;
   headerExtra?: React.ReactNode;
@@ -64,6 +66,7 @@ export const Dialog: React.FC<DialogProps> = ({
   title,
   icon,
   variant = 'center',
+  size = 'default',
   dismissible = true,
   headerExtra,
   children,
@@ -79,8 +82,13 @@ export const Dialog: React.FC<DialogProps> = ({
   if (!isOpen) return null;
 
   const isDrawer = variant === 'drawer';
+  const isWide = !isDrawer && size === 'wide';
   return (
-    <div className={`fixed inset-0 z-50 ${isDrawer ? '' : 'flex items-center justify-center p-4'}`}>
+    <div
+      className={`fixed inset-0 z-50 ${
+        isDrawer ? '' : isWide ? 'flex items-stretch sm:items-center justify-center sm:p-4' : 'flex items-center justify-center p-4'
+      }`}
+    >
       <div aria-hidden="true" className="absolute inset-0 bg-on-surface/40" onClick={requestClose} />
       <div
         ref={panelRef}
@@ -91,7 +99,9 @@ export const Dialog: React.FC<DialogProps> = ({
         className={`relative bg-white shadow-2xl flex flex-col focus:outline-none ${
           isDrawer
             ? 'ml-auto h-full w-full sm:w-[480px] border-l border-surface-container animate-slideUp'
-            : 'w-full max-w-lg max-h-[calc(100vh-2rem)] rounded-xl border border-surface-container overflow-hidden'
+            : isWide
+              ? 'w-full h-full sm:h-[calc(100vh-2rem)] sm:max-w-6xl sm:rounded-xl sm:border border-surface-container overflow-hidden'
+              : 'w-full max-w-lg max-h-[calc(100vh-2rem)] rounded-xl border border-surface-container overflow-hidden'
         } ${className}`}
       >
         <div className="px-4 py-3 bg-surface-container-low flex items-center justify-between gap-3 border-b border-surface-container-high shrink-0">

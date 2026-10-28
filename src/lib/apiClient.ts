@@ -68,11 +68,18 @@ async function request<T = unknown>(
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE' | 'PUT',
   path: string,
   body?: unknown,
-  opts: { timeoutMs?: number; requireAuth?: boolean } = {}
+  opts: {
+    timeoutMs?: number;
+    requireAuth?: boolean;
+    /** Gửi nguyên nội dung tệp thay cho JSON (tải tệp lên). */
+    raw?: Blob;
+    /** Nhận nội dung nhị phân (tải tệp xuống) thay cho JSON. */
+    blob?: boolean;
+  } = {}
 ): Promise<ApiResponse<T>> {
   const token = getToken();
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    'Content-Type': opts.raw ? opts.raw.type || 'application/octet-stream' : 'application/json',
   };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
@@ -84,7 +91,7 @@ async function request<T = unknown>(
     const res = await fetch(`${API_BASE}${path}`, {
       method,
       headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: opts.raw ?? (body !== undefined ? JSON.stringify(body) : undefined),
       signal: controller.signal,
     });
 
@@ -112,7 +119,7 @@ async function request<T = unknown>(
       return { ok: true, data: undefined as T };
     }
 
-    const data = await res.json();
+    const data = opts.blob ? await res.blob() : await res.json();
     return { ok: true, data };
   } catch (err) {
     clearTimeout(timeoutId);
@@ -201,6 +208,17 @@ export interface TaskApiRowDto {
 
   // ── T1/T2/T3 rollup ──
   progress_rollup?: number;
+
+  // ── T4: đếm sẵn ở GET /api/tasks (không có ở GET /api/tasks/:tier/:id) ──
+  /** Số tin trong luồng trao đổi. */
+  message_count?: number;
+  /** Số lần báo vướng mắc / số vướng mắc chưa được gỡ. */
+  blocker_count?: number;
+  open_blocker_count?: number;
+  /** Thời điểm (UTC) của vướng mắc chưa gỡ gần nhất. */
+  open_blocker_at?: string | null;
+  /** Số tệp đính kèm của task (không tính tệp trong tin trao đổi). */
+  attachment_count?: number;
 
   // ── Lưu trữ ──
   /** Chỉ T1/T2: thời điểm lưu trữ (null = đang hoạt động). */
@@ -307,17 +325,50 @@ export interface HistoryEntryDto {
   author_fullname_str?: string | null;
 }
 
-export interface HelpMessageDto {
+/** Loại tin trong luồng trao đổi — khớp CHECK `task_help_messages.kind` (backend/sql/schema.sql). */
+export type TaskMessageKind = 'note' | 'blocker' | 'start' | 'submit' | 'approve' | 'return' | 'unblock';
+
+/** 1 tệp đính kèm (GET /api/tasks/4/:id/attachments, hoặc `attachments` của 1 tin). */
+export interface AttachmentDto {
   id: number;
   task_id: number;
+  /** null = tệp của task; có giá trị = tệp gắn trong tin trao đổi đó. */
+  message_id: number | null;
+  original_name: string;
+  mime: string;
+  size_bytes: number;
+  uploaded_by_user_id: number;
+  uploader_fullname: string | null;
+  created_at: string;
+}
+
+/** 1 tin của luồng trao đổi (GET /api/tasks/4/:id/messages), cũ → mới. */
+export interface TaskMessageDto {
+  id: number;
+  task_id: number;
+  kind: TaskMessageKind;
   body: string;
   author_user_id: number;
   author_fullname?: string | null;
-  author_username?: string | null;
+  author_username_str?: string | null;
+  /** Chỉ có nghĩa với `kind = 'blocker'`. */
   is_resolved: number;
   resolved_by_user_id?: number | null;
+  resolved_by_fullname?: string | null;
   resolved_at?: string | null;
   created_at: string;
+  attachments: AttachmentDto[];
+}
+
+/** Ghi chú tuỳ chọn kèm thao tác đổi trạng thái; `with_files` khi sẽ gắn tệp ngay sau đó. */
+export interface ActionNote {
+  note?: string;
+  with_files?: boolean;
+}
+
+/** Thao tác có thể sinh 1 tin trao đổi trả về `message_id` (null khi không có ghi chú). */
+interface WithMessageId {
+  message_id?: number | null;
 }
 
 export const api = {
@@ -396,8 +447,9 @@ export const api = {
   },
 
   // --- Sub-resource trên task (daily_logs + blocker_note) ---
-  async approveTask(tier: number, id: number) {
-    return request<{ item: TaskApiRowDto }>('POST', `/api/tasks/${tier}/${id}/approve`);
+  /** Duyệt / nghiệm thu. Ghi chú chỉ có tác dụng với T4. */
+  async approveTask(tier: number, id: number, note?: ActionNote) {
+    return request<{ item: TaskApiRowDto } & WithMessageId>('POST', `/api/tasks/${tier}/${id}/approve`, note);
   },
   /** POST /api/tasks/4/:id/blocker — NV ghi 1 dòng blocker_note (escalation). */
   async setTaskBlocker(tier: number, id: number, note: string) {
@@ -405,13 +457,17 @@ export const api = {
       'POST', `/api/tasks/${tier}/${id}/blocker`, { note }
     );
   },
-  /** POST /api/tasks/4/:id/return — TP trả việc chờ duyệt về làm lại. */
-  async returnTask(id: number, reason: string) {
-    return request<{ item: TaskApiRowDto }>('POST', `/api/tasks/4/${id}/return`, { reason });
+  /** POST /api/tasks/4/:id/return — TP trả việc chờ duyệt về làm lại (lý do bắt buộc). */
+  async returnTask(id: number, reason: string, withFiles = false) {
+    return request<{ item: TaskApiRowDto } & WithMessageId>(
+      'POST', `/api/tasks/4/${id}/return`, { reason, with_files: withFiles }
+    );
   },
-  /** POST /api/tasks/4/:id/unblock — TP gỡ vướng mắc (xoá blocker_note, đóng help message). */
-  async unblockTask(id: number, note: string) {
-    return request<{ item: TaskApiRowDto }>('POST', `/api/tasks/4/${id}/unblock`, { note });
+  /** POST /api/tasks/4/:id/unblock — TP gỡ vướng mắc (xoá blocker_note, đóng các vướng mắc đang mở). */
+  async unblockTask(id: number, note: string, withFiles = false) {
+    return request<{ item: TaskApiRowDto } & WithMessageId>(
+      'POST', `/api/tasks/4/${id}/unblock`, { note, with_files: withFiles }
+    );
   },
   /** POST /api/tasks/:tier/:id/archive|unarchive — lưu trữ / khôi phục dự án, giai đoạn. */
   async setArchived(tier: number, id: number, archived: boolean) {
@@ -419,12 +475,39 @@ export const api = {
       'POST', `/api/tasks/${tier}/${id}/${archived ? 'archive' : 'unarchive'}`
     );
   },
-  async toggleTask(tier: number, id: number) {
-    return request<{ item: TaskApiRowDto }>('POST', `/api/tasks/${tier}/${id}/toggle`);
+  async toggleTask(tier: number, id: number, note?: ActionNote) {
+    return request<{ item: TaskApiRowDto } & WithMessageId>('POST', `/api/tasks/${tier}/${id}/toggle`, note);
   },
-  /** GET /api/tasks/4/:id/help-messages — lịch sử escalation. */
-  async listHelpMessages(tier: number, id: number) {
-    return request<{ items: HelpMessageDto[] }>('GET', `/api/tasks/${tier}/${id}/help-messages`);
+
+  // --- Trao đổi + tệp đính kèm (chỉ T4) ---
+  /** GET /api/tasks/4/:id/messages — luồng trao đổi, cũ → mới, kèm tệp của từng tin. */
+  async listMessages(taskId: number) {
+    return request<{ items: TaskMessageDto[] }>('GET', `/api/tasks/4/${taskId}/messages`);
+  },
+  /** POST /api/tasks/4/:id/messages — ghi chú hoặc báo vướng mắc. */
+  async postMessage(taskId: number, body: string, kind: 'note' | 'blocker', withFiles = false) {
+    return request<{ item: TaskApiRowDto; message_id: number }>(
+      'POST', `/api/tasks/4/${taskId}/messages`, { body, kind, with_files: withFiles }
+    );
+  },
+  /** GET /api/tasks/4/:id/attachments — mọi tệp của task (kể cả tệp trong tin, có message_id). */
+  async listAttachments(taskId: number) {
+    return request<{ items: AttachmentDto[] }>('GET', `/api/tasks/4/${taskId}/attachments`);
+  },
+  /** POST /api/tasks/4/:id/attachments — 1 tệp mỗi lần; `messageId` để gắn vào tin vừa gửi. */
+  async uploadAttachment(taskId: number, file: File, messageId?: number | null) {
+    const qs = new URLSearchParams({ name: file.name });
+    if (messageId) qs.set('message_id', String(messageId));
+    return request<{ item: AttachmentDto }>(
+      'POST', `/api/tasks/4/${taskId}/attachments?${qs}`, undefined, { raw: file, timeoutMs: 120_000 }
+    );
+  },
+  /** GET /api/attachments/:id — nội dung tệp (cần token nên không dùng link trực tiếp). */
+  async downloadAttachment(id: number) {
+    return request<Blob>('GET', `/api/attachments/${id}`, undefined, { blob: true, timeoutMs: 120_000 });
+  },
+  async deleteAttachment(id: number) {
+    return request('DELETE', `/api/attachments/${id}`);
   },
 
   // --- Daily logs (gắn trực tiếp vào task) ---
@@ -585,6 +668,10 @@ const ERROR_TEXT: Record<string, string> = {
   invalid_date: 'Ngày không hợp lệ.',
   missing_description: 'Cần nhập mô tả công việc.',
   note_required: 'Cần nhập nội dung vướng mắc.',
+  body_required: 'Cần nhập nội dung.',
+  reason_required: 'Cần nhập lý do trả về.',
+  file_too_large: 'Tệp vượt quá 25 MB.',
+  file_type_not_allowed: 'Định dạng tệp không được hỗ trợ.',
   timeout: 'Máy chủ phản hồi quá lâu.',
   network: 'Không kết nối được máy chủ.',
 };

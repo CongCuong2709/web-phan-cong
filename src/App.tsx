@@ -19,8 +19,8 @@ import {
   apiToTeamMember,
   buildEmployeeTasks,
   extractBackendId,
+  isPriority,
   todayIso,
-  viPriorityToEnum,
   viStatusToEnum,
 } from './lib/transforms';
 import { useWorkspaceData } from './lib/useWorkspaceData';
@@ -33,7 +33,7 @@ import { ViecCuaToiView, type SaveLogEntry } from './components/ViecCuaToiView';
 import { BaoCaoTongQuanView } from './components/BaoCaoTongQuanView';
 import { WeeklyReportView } from './components/WeeklyReportView';
 import { WeeklyReportTeamView } from './components/WeeklyReportTeamView';
-import { DetailsDrawer } from './components/DetailsDrawer';
+import { TaskDetailDialog, type DetailTab } from './components/TaskDetailDialog';
 import { NewItemModal } from './components/NewItemModal';
 import { NewPersonalTaskModal } from './components/NewPersonalTaskModal';
 import { ToastStack, useToasts } from './components/Toast';
@@ -68,7 +68,7 @@ function parseTaskId(id: string): { tier: 1 | 2 | 3 | 4; num: number } | null {
 const STALE_ITEM_MESSAGE = 'Không xác định được công việc này. Hãy tải lại trang.';
 
 function AuthenticatedApp({ user }: AuthenticatedAppProps) {
-  const { route, navigate, setSub, setParam } = useHashRoute();
+  const { route, navigate, setSub, setParam, setParams } = useHashRoute();
   const allowedTabs = useMemo(() => visibleTabsFor(user), [user]);
   // URL trống / sai / trang không được phép → về trang đầu của vai trò (thay URL, không thêm lịch sử).
   const activeTab: ActiveAppTab =
@@ -184,8 +184,8 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     return employeeTasks.filter((t) => t.ownerUsername?.toLowerCase() === me);
   }, [employeeTasks, user]);
 
-  // ---------------- Modals & Drawer ----------------
-  // Mục đang mở trong Drawer nằm trên URL (?muc=4-12) → chia sẻ được link tới đúng 1 mục.
+  // ---------------- Modals & chi tiết công việc ----------------
+  // Mục đang mở nằm trên URL (?muc=4-12&tab=trao-doi) → chia sẻ được link tới đúng 1 mục, đúng tab.
   const drawerItemId = route.params.muc ?? null;
   // Xem mục lưu trữ trên Cây công việc: chỉ admin / BGĐ (người lưu trữ được).
   const canViewArchive = user.role === 'admin' || user.role === 'director';
@@ -198,14 +198,14 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     [drawerItemId, tierItems, archivedTierItems],
   );
   const [drawerPushed, setDrawerPushed] = useState(false);
-  const openDrawer = (id: string) => {
-    setParam('muc', id, 'push');
+  const openDrawer = (id: string, tab?: DetailTab) => {
+    setParams({ muc: id, tab: tab ?? null }, 'push');
     setDrawerPushed(true);
   };
-  // Mở bằng click → Back đóng Drawer; mở từ link dán vào → đóng thì chỉ bỏ tham số.
+  // Mở bằng click → Back đóng chi tiết; mở từ link dán vào → đóng thì chỉ bỏ tham số.
   const closeDrawer = () => {
     if (drawerPushed) window.history.back();
-    else setParam('muc', null);
+    else setParams({ muc: null, tab: null });
     setDrawerPushed(false);
   };
   useEffect(() => {
@@ -214,9 +214,9 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   useEffect(() => {
     if (loadStatus === 'ready' && drawerItemId && !drawerItem) {
       showToast('Không tìm thấy mục này, hoặc bạn không có quyền xem.', 'warning');
-      setParam('muc', null);
+      setParams({ muc: null, tab: null });
     }
-  }, [loadStatus, drawerItemId, drawerItem, showToast, setParam]);
+  }, [loadStatus, drawerItemId, drawerItem, showToast, setParams]);
   const [newItemMode, setNewItemMode] = useState<'plan' | 'assign' | null>(null);
 
   // Nghiệm thu mục cha đang mở: cần mọi con trực tiếp đã xong (server kiểm tra lại).
@@ -240,25 +240,65 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     : route.sub === 'tuan' ? 'tuan-phong-ban'
     : user.role === 'director' ? 'tong-quan' : 'tuan-phong-ban';
 
+  // Lọc mức ưu tiên dùng chung cho "Việc của tôi" và "Giao việc nhóm" (?uu=critical).
+  const priorityFilter = isPriority(route.params.uu) ? route.params.uu : null;
+
   // ---------------- Ghi dữ liệu ----------------
+  /** Tải lần lượt từng tệp lên task (gắn vào tin `messageId` nếu có). Trả mô tả các tệp lỗi. */
+  async function uploadFiles(taskNum: number, files: File[], messageId?: number | null): Promise<string[]> {
+    const failed: string[] = [];
+    for (const f of files) {
+      const r = await api.uploadAttachment(taskNum, f, messageId);
+      if (!r.ok) failed.push(`${f.name} (${describeApiError(r)})`);
+    }
+    return failed;
+  }
+
   /**
    * Mọi thao tác ghi đi qua đây: chờ server trả lời, lỗi thì báo đúng lý do và
    * KHÔNG đổi gì trên UI; thành công thì tải lại dữ liệu thật rồi mới báo.
+   *
+   * `attach`: tệp tải lên SAU khi thao tác chính thành công — gắn vào tin trao đổi
+   * mà thao tác đó tạo (`message_id` trong response) nếu có, không thì gắn vào task.
+   * Tệp lỗi không huỷ thao tác chính (đã lưu) mà được báo riêng.
    */
-  async function commit<T>(request: Promise<ApiResponse<T>>, successMessage?: string | ((data: T) => string)) {
+  async function commit<T>(
+    request: Promise<ApiResponse<T>>,
+    successMessage?: string | ((data: T) => string),
+    attach?: { files: File[]; taskNum: number | ((data: T) => number) },
+  ) {
     const r = await request;
     if (!r.ok) {
       showToast(describeApiError(r), 'error');
       return null;
     }
+    let failed: string[] = [];
+    if (attach && attach.files.length > 0) {
+      const taskNum = typeof attach.taskNum === 'function' ? attach.taskNum(r.data) : attach.taskNum;
+      const messageId = (r.data as { message_id?: number | null } | undefined)?.message_id ?? null;
+      failed = await uploadFiles(taskNum, attach.files, messageId);
+    }
     const refreshed = await reload();
     if (successMessage) {
       showToast(typeof successMessage === 'function' ? successMessage(r.data) : successMessage);
+    }
+    if (failed.length > 0) {
+      showToast(`Đã lưu, nhưng chưa tải lên được: ${failed.join('; ')}`, 'warning');
     }
     if (!refreshed) {
       showToast('Đã lưu, nhưng chưa tải lại được dữ liệu mới nhất. Hãy tải lại trang.', 'warning');
     }
     return r.data;
+  }
+
+  /** Composite id → tham chiếu T4; báo lỗi và trả null nếu id hỏng hoặc không phải đầu việc. */
+  function taskRef(taskId: string) {
+    const ref = parseTaskId(taskId);
+    if (!ref || ref.tier !== 4) {
+      showToast(STALE_ITEM_MESSAGE, 'error');
+      return null;
+    }
+    return ref;
   }
 
   const handleUpdateTierItem = async (updated: TierItem): Promise<boolean> => {
@@ -275,7 +315,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
         end_date: updated.endDate,
         description: updated.description,
         // Chỉ gửi trường mà tầng đó có cột: progress/priority ở T4, management_notes ở T2.
-        ...(ref.tier === 4 ? { progress: updated.progress, priority: viPriorityToEnum(updated.priority) } : {}),
+        ...(ref.tier === 4 ? { progress: updated.progress, priority: updated.priority } : {}),
         ...(ref.tier === 2 ? { management_notes: updated.managementNotes } : {}),
       }),
       `Đã lưu thay đổi cho ${updated.code}.`,
@@ -283,7 +323,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     return saved !== null;
   };
 
-  const handleAddTierItem = async (item: Partial<TierItem>): Promise<boolean> => {
+  const handleAddTierItem = async (item: Partial<TierItem>, files: File[] = []): Promise<boolean> => {
     const tier = item.tier ?? 4;
     const parent = item.parentId ? parseTaskId(item.parentId) : null;
     // Phòng ban của việc = phòng của người được giao (ưu tiên phòng chung với người giao).
@@ -304,13 +344,14 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
         owner_username: item.ownerUsername || undefined,
         progress: 0,
         status: 'pending',
-        priority: viPriorityToEnum(item.priority),
+        priority: item.priority ?? 'normal',
         description: item.description ?? '',
         management_notes: item.managementNotes ?? '',
         start_date: item.startDate,
         end_date: item.endDate,
       }),
       (res) => `Đã tạo ${res.item.code}: ${res.item.title}`,
+      tier === 4 ? { files, taskNum: (res) => res.item.id } : undefined,
     );
     return created !== null;
   };
@@ -327,33 +368,78 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     return (await commit(api.setArchived(ref.tier, ref.num, archived), message)) !== null;
   };
 
-  const handleApproveTeamTask = async (taskId: string): Promise<boolean> => {
+  /** Duyệt (T4, kèm ghi chú / tệp tuỳ chọn) hoặc nghiệm thu mục cha (T1–T3). */
+  const handleApproveTeamTask = async (taskId: string, note = '', files: File[] = []): Promise<boolean> => {
     const ref = parseTaskId(taskId);
     if (!ref) {
       showToast(STALE_ITEM_MESSAGE, 'error');
       return false;
     }
-    const message = ref.tier === 4 ? 'Đã duyệt nghiệm thu công việc.' : 'Đã nghiệm thu — mục này đã đóng.';
-    return (await commit(api.approveTask(ref.tier, ref.num), message)) !== null;
+    if (ref.tier !== 4) {
+      return (await commit(api.approveTask(ref.tier, ref.num), 'Đã nghiệm thu — mục này đã đóng.')) !== null;
+    }
+    return (
+      (await commit(
+        api.approveTask(4, ref.num, { note, with_files: files.length > 0 }),
+        'Đã duyệt nghiệm thu công việc.',
+        { files, taskNum: ref.num },
+      )) !== null
+    );
   };
 
-  const handleReturnTask = async (taskId: string, reason: string): Promise<boolean> => {
-    const ref = parseTaskId(taskId);
-    if (!ref) {
-      showToast(STALE_ITEM_MESSAGE, 'error');
-      return false;
-    }
-    return (await commit(api.returnTask(ref.num, reason), 'Đã trả việc về cho nhân viên làm lại.')) !== null;
+  const handleReturnTask = async (taskId: string, reason: string, files: File[] = []): Promise<boolean> => {
+    const ref = taskRef(taskId);
+    if (!ref) return false;
+    return (
+      (await commit(api.returnTask(ref.num, reason, files.length > 0), 'Đã trả việc về cho nhân viên làm lại.', {
+        files,
+        taskNum: ref.num,
+      })) !== null
+    );
   };
 
-  const handleUnblockTask = async (taskId: string, note: string): Promise<boolean> => {
-    const ref = parseTaskId(taskId);
-    if (!ref) {
-      showToast(STALE_ITEM_MESSAGE, 'error');
-      return false;
-    }
-    return (await commit(api.unblockTask(ref.num, note), 'Đã gỡ vướng mắc.')) !== null;
+  const handleUnblockTask = async (taskId: string, note: string, files: File[] = []): Promise<boolean> => {
+    const ref = taskRef(taskId);
+    if (!ref) return false;
+    return (
+      (await commit(api.unblockTask(ref.num, note, files.length > 0), 'Đã gỡ vướng mắc.', { files, taskNum: ref.num })) !==
+      null
+    );
   };
+
+  /** Ghi chú / báo vướng mắc trong luồng trao đổi của 1 đầu việc. */
+  const handlePostMessage = async (
+    taskId: string,
+    body: string,
+    kind: 'note' | 'blocker',
+    files: File[],
+  ): Promise<boolean> => {
+    const ref = taskRef(taskId);
+    if (!ref) return false;
+    return (
+      (await commit(
+        api.postMessage(ref.num, body, kind, files.length > 0),
+        kind === 'blocker' ? 'Đã báo vướng mắc cho Trưởng phòng.' : 'Đã gửi ghi chú.',
+        { files, taskNum: ref.num },
+      )) !== null
+    );
+  };
+
+  /** Bổ sung tệp cho đầu việc (không gắn vào tin trao đổi). */
+  const handleUploadTaskFiles = async (taskId: string, files: File[]): Promise<boolean> => {
+    const ref = taskRef(taskId);
+    if (!ref || files.length === 0) return false;
+    const failed = await uploadFiles(ref.num, files);
+    const refreshed = await reload();
+    const done = files.length - failed.length;
+    if (done > 0) showToast(`Đã tải lên ${done} tệp.`);
+    if (failed.length > 0) showToast(`Chưa tải lên được: ${failed.join('; ')}`, 'error');
+    if (!refreshed) showToast('Chưa tải lại được dữ liệu mới nhất. Hãy tải lại trang.', 'warning');
+    return failed.length === 0;
+  };
+
+  const handleDeleteAttachment = async (attachmentId: number): Promise<boolean> =>
+    (await commit(api.deleteAttachment(attachmentId), 'Đã xoá tệp.')) !== null;
 
   /** Dời hạn và/hoặc đổi người làm — chỉ gửi trường thực sự thay đổi. */
   const handleAdjustTask = async (
@@ -380,19 +466,22 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     );
   };
 
-  /** Chuyển task sang bước kế tiếp do server quyết định: Chuẩn bị → Đang làm → Chờ duyệt. */
-  const handleAdvanceEmployeeTask = async (taskId: string): Promise<boolean> => {
-    const ref = parseTaskId(taskId);
-    if (!ref) {
-      showToast(STALE_ITEM_MESSAGE, 'error');
-      return false;
-    }
-    const res = await commit(api.toggleTask(ref.tier, ref.num), (r) =>
-      r.item.status === 'pending_approval'
-        ? 'Đã báo xong — đang chờ Trưởng phòng duyệt.'
-        : r.item.status === 'done'
-          ? 'Đã hoàn thành công việc.'
-          : 'Đã chuyển sang Đang làm.',
+  /**
+   * Chuyển task sang bước kế tiếp do server quyết định: Chưa bắt đầu → Đang làm → Chờ duyệt.
+   * Ghi chú / tệp (khi báo xong) thành 1 tin trong luồng trao đổi.
+   */
+  const handleAdvanceEmployeeTask = async (taskId: string, note = '', files: File[] = []): Promise<boolean> => {
+    const ref = taskRef(taskId);
+    if (!ref) return false;
+    const res = await commit(
+      api.toggleTask(ref.tier, ref.num, { note, with_files: files.length > 0 }),
+      (r) =>
+        r.item.status === 'pending_approval'
+          ? 'Đã báo xong — đang chờ Trưởng phòng duyệt.'
+          : r.item.status === 'done'
+            ? 'Đã hoàn thành công việc.'
+            : 'Đã chuyển sang Đang làm.',
+      { files, taskNum: ref.num },
     );
     return res !== null;
   };
@@ -522,6 +611,8 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
             onFilterChange={(f) => setParam('loc', f === 'open' ? null : f)}
             memberFilter={route.params.nv ?? null}
             onMemberFilterChange={(u) => setParam('nv', u)}
+            priorityFilter={priorityFilter}
+            onPriorityFilterChange={(p) => setParam('uu', p)}
           />
         );
       case 'viec-cua-toi':
@@ -533,8 +624,11 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
             tasks={visibleEmployeeTasks}
             dailyLogs={dailyLogs}
             onAdvanceTask={handleAdvanceEmployeeTask}
+            onOpenTask={openDrawer}
             filter={route.params.loc}
             onFilterChange={(f) => setParam('loc', f === 'open' ? null : f)}
+            priorityFilter={priorityFilter}
+            onPriorityFilterChange={(p) => setParam('uu', p)}
             onSaveLogs={handleSaveLogs}
             onOpenNewPersonalTaskModal={() => setIsNewPersonalTaskOpen(true)}
           />
@@ -602,17 +696,24 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
         </div>
       </footer>
 
-      <DetailsDrawer
+      <TaskDetailDialog
         item={drawerItem}
-        isOpen={drawerItem !== null}
         onClose={closeDrawer}
+        tab={route.params.tab}
+        onTabChange={(t) => setParam('tab', t === 'trao-doi' ? null : t)}
         onUpdateItem={handleUpdateTierItem}
         onSetArchived={handleSetArchived}
         dailyLogs={dailyLogs}
         currentUser={user}
         onAddDailyLog={handleAddDrawerLog}
         acceptance={drawerAcceptance}
-        onAcceptItem={handleApproveTeamTask}
+        onApprove={handleApproveTeamTask}
+        onAdvance={handleAdvanceEmployeeTask}
+        onReturn={handleReturnTask}
+        onUnblock={handleUnblockTask}
+        onPostMessage={handlePostMessage}
+        onUploadFiles={handleUploadTaskFiles}
+        onDeleteAttachment={handleDeleteAttachment}
       />
 
       <NewItemModal

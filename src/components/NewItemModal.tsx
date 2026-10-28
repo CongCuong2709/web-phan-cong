@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { TierItem, TierLevel, User } from '../types';
-import { todayIso } from '../lib/transforms';
+import { PRIORITY_OPTIONS, PRIORITY_VI, todayIso } from '../lib/transforms';
 import { Dialog, ghostButtonCls, inputCls, labelCls, primaryButtonCls, textareaCls } from './ui/Dialog';
+import { FilePicker } from './ui/FilePicker';
 
 interface NewItemModalProps {
   isOpen: boolean;
   onClose: () => void;
-  /** Resolve true khi server đã tạo xong — modal chỉ đóng khi đó. */
-  onAddItem: (item: Partial<TierItem>) => Promise<boolean>;
+  /** Resolve true khi server đã tạo xong — modal chỉ đóng khi đó. `files` chỉ có với đầu việc (T4). */
+  onAddItem: (item: Partial<TierItem>, files: File[]) => Promise<boolean>;
   parents: { id: string; title: string; tier: TierLevel }[];
   currentUser: User;
   /** Danh sách users cùng phòng ban (dùng cho dropdown owner) */
@@ -65,7 +66,8 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
   const [startDate, setStartDate] = useState(todayIso());
   const [endDate, setEndDate] = useState(plusDays(todayIso(), 30));
   const [description, setDescription] = useState('');
-  const [priority, setPriority] = useState<TierItem['priority']>('Trung bình');
+  const [priority, setPriority] = useState<TierItem['priority']>('normal');
+  const [files, setFiles] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
   // Mở modal là bắt đầu một form mới.
@@ -78,7 +80,8 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
     setStartDate(todayIso());
     setEndDate(plusDays(todayIso(), 30));
     setDescription('');
-    setPriority('Trung bình');
+    setPriority('normal');
+    setFiles([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
@@ -104,7 +107,7 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
         priority,
         description,
         managementNotes: `Tạo bởi ${currentUser.fullname}.`,
-      });
+      }, tier === 4 ? files : []);
       if (ok) onClose();
     } finally {
       setSubmitting(false);
@@ -223,9 +226,9 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
               onChange={(e) => setPriority(e.target.value as TierItem['priority'])}
               className={inputCls}
             >
-              <option value="Cao (Critical Path)">Cao</option>
-              <option value="Trung bình">Trung bình</option>
-              <option value="Thấp">Thấp</option>
+              {PRIORITY_OPTIONS.map((p) => (
+                <option key={p} value={p}>{PRIORITY_VI[p]}</option>
+              ))}
             </select>
           </div>
         </div>
@@ -268,17 +271,24 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
 
         <div className="flex flex-col gap-1.5">
           <label htmlFor="new-item-desc" className={labelCls}>
-            Mô tả & Phạm vi
+            {tier === 4 ? 'Chỉ thị / mô tả công việc' : 'Mô tả & Phạm vi'}
           </label>
           <textarea
             id="new-item-desc"
-            rows={2}
+            rows={tier === 4 ? 4 : 2}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Mục tiêu bàn giao chính..."
+            placeholder={tier === 4 ? 'Cần làm gì, yêu cầu kết quả ra sao, lưu ý…' : 'Mục tiêu bàn giao chính...'}
             className={textareaCls}
           />
         </div>
+
+        {tier === 4 && (
+          <div className="flex flex-col gap-1.5">
+            <span className={labelCls}>Tệp đính kèm</span>
+            <FilePicker files={files} onChange={setFiles} disabled={submitting} />
+          </div>
+        )}
 
         <div className="pt-3 flex items-center justify-end gap-2.5 border-t border-surface-container-low">
           <button type="button" onClick={onClose} disabled={submitting} className={ghostButtonCls}>

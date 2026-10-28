@@ -65,7 +65,10 @@ export function useHashRoute() {
     if (url === window.location.hash) return;
     if (mode === 'push') window.history.pushState(null, '', url);
     else window.history.replaceState(null, '', url);
-    setRoute(parse(url));
+    const parsed = parse(url);
+    // Cập nhật ngay để lần ghi kế tiếp trong cùng lượt xử lý không dùng URL cũ.
+    current.current = parsed;
+    setRoute(parsed);
   }, []);
 
   /** Sang trang khác; bộ lọc của trang cũ không mang theo. */
@@ -89,5 +92,15 @@ export function useHashRoute() {
     [write],
   );
 
-  return { route, navigate, setSub, setParam };
+  /** Như setParam nhưng nhiều khoá trong 1 lần ghi (1 mục lịch sử). */
+  const setParams = useCallback(
+    (patch: Record<string, string | null>, mode: 'push' | 'replace' = 'replace') => {
+      const params = { ...current.current.params };
+      for (const [k, v] of Object.entries(patch)) params[k] = v ?? '';
+      write({ ...current.current, params }, mode);
+    },
+    [write],
+  );
+
+  return { route, navigate, setSub, setParam, setParams };
 }

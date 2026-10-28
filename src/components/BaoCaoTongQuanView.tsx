@@ -125,7 +125,7 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
 }) => {
   // Vướng mắc = trạng thái nghẽn, hoặc NV đã báo vướng (blocker_note), hoặc cảnh báo giai đoạn.
   const hasBlocker = (i: TierItem) =>
-    i.status !== 'Đã xong' && (i.status === 'Điểm nghẽn' || !!i.blockerNote?.trim() || !!i.blockerAlert);
+    i.status !== 'Đã xong' && (i.status === 'Đang vướng' || !!i.blockerNote?.trim() || !!i.blockerAlert);
   const blockedItems = tierItems.filter(hasBlocker);
   const blockerText = (i: TierItem) => i.blockerNote?.trim() || i.blockerAlert || i.managementNotes;
 
@@ -604,7 +604,7 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
                 blockedCount > 0 ? 'text-error' : 'text-tertiary'
               }`}
             >
-              Điểm nghẽn
+              Đang vướng
             </span>
             <div
               className={`text-3xl font-bold tabular-nums ${

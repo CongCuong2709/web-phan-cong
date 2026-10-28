@@ -236,6 +236,15 @@ CREATE INDEX IF NOT EXISTS idx_daily_logs_date ON daily_logs(log_date);
 -- Schema tối giản: chỉ body + author + is_resolved. KHÔNG có description/result
 -- /obstacle/progress (vì đã có daily_logs cho mục đích đó).
 
+--
+-- Bảng này là luồng "Trao đổi" của task (tin theo dòng thời gian, không sửa / xoá).
+-- `kind` cho biết tin sinh ra từ đâu:
+--   note    — ghi chú tự do (NV hoặc TP)
+--   blocker — NV báo vướng mắc (is_resolved / resolved_* chỉ có nghĩa với loại này)
+--   start / submit / approve / return / unblock — ghi chú kèm thao tác đổi trạng thái
+--     (Bắt đầu / Báo xong / Hoàn thành – duyệt / Trả về / Gỡ vướng mắc)
+-- DB cũ được thêm cột này bằng bước nâng cấp trong db.js.
+
 CREATE TABLE IF NOT EXISTS task_help_messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -244,10 +253,35 @@ CREATE TABLE IF NOT EXISTS task_help_messages (
   is_resolved INTEGER NOT NULL DEFAULT 0 CHECK (is_resolved IN (0,1)),
   resolved_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   resolved_at TEXT,
+  kind TEXT NOT NULL DEFAULT 'blocker'
+    CHECK (kind IN ('note','blocker','start','submit','approve','return','unblock')),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_help_msg_task ON task_help_messages(task_id);
 CREATE INDEX IF NOT EXISTS idx_help_msg_unresolved ON task_help_messages(task_id, is_resolved);
+
+-- ============================================================================
+-- 4b. Tệp đính kèm của task (lưu nội bộ trên máy chủ)
+-- ============================================================================
+--
+-- message_id NULL  = tệp gắn khi giao việc / bổ sung cho task (người tải lên hoặc admin xoá được).
+-- message_id có giá trị = tệp gắn trong 1 tin trao đổi (không xoá được, như tin nhắn).
+-- Nội dung tệp nằm ở thư mục UPLOAD_DIR (mặc định backend/uploads) dưới tên `stored_name`
+-- ngẫu nhiên; `original_name` chỉ dùng khi tải xuống. Giữ khớp với bước nâng cấp trong db.js.
+
+CREATE TABLE IF NOT EXISTS task_attachments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  message_id INTEGER REFERENCES task_help_messages(id) ON DELETE CASCADE,
+  original_name TEXT NOT NULL,
+  stored_name TEXT NOT NULL UNIQUE,
+  mime TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL CHECK (size_bytes > 0),
+  uploaded_by_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_attachments_task ON task_attachments(task_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_message ON task_attachments(message_id);
 
 -- ============================================================================
 -- 5. Audit log (Phase D — upgrade: thêm old_values, new_values, IP, UA)

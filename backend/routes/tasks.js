@@ -16,13 +16,18 @@
  *   POST   /api/tasks                — Tạo mới (dispatch theo tier)
  *   PATCH  /api/tasks/:tier/:id      — Update theo tier
  *   DELETE /api/tasks/:tier/:id      — Xoá theo tier (T4 snapshot daily_logs/help_messages)
- *   POST   /api/tasks/:tier/:id/notes    — Thêm note (reserved)
- *   POST   /api/tasks/:tier/:id/approve  — Manager duyệt
+ *   POST   /api/tasks/:tier/:id/approve  — Manager duyệt ({ note?, with_files? } với T4)
  *   POST   /api/tasks/:tier/:id/blocker  — NV ghi blocker_note
- *   POST   /api/tasks/:tier/:id/toggle   — Đổi status
- *   POST   /api/tasks/4/:id/return   — TP trả việc chờ duyệt về làm lại ({ reason? })
- *   POST   /api/tasks/4/:id/unblock  — TP gỡ vướng mắc ({ note? })
+ *   POST   /api/tasks/:tier/:id/toggle   — Đổi status ({ note?, with_files? })
+ *   POST   /api/tasks/4/:id/return   — TP trả việc chờ duyệt về làm lại ({ reason, with_files? } — reason bắt buộc)
+ *   POST   /api/tasks/4/:id/unblock  — TP gỡ vướng mắc ({ note?, with_files? })
+ *   GET    /api/tasks/4/:id/messages — Luồng trao đổi (cũ → mới, kèm tệp của từng tin)
+ *   POST   /api/tasks/4/:id/messages — Gửi ghi chú / vướng mắc ({ body, kind: 'note'|'blocker', with_files? })
  *   POST   /api/tasks/:tier/:id/archive|unarchive — Lưu trữ / khôi phục dự án (T1), giai đoạn (T2)
+ *
+ * Ghi chú kèm thao tác: nếu có `note` (hoặc `with_files: true` để gắn tệp ngay sau đó),
+ * server tạo 1 tin trong luồng trao đổi và trả `message_id` — client tải tệp lên với id đó
+ * (xem routes/attachments.js).
  *
  * Lưu ý:
  *   - recomputeRollup dùng subquery UPDATE single-statement (atomic).
@@ -37,6 +42,7 @@ import { authorize, inDepartment, uid } from '../lib/policies.js';
 import { canTransition } from '../lib/stateMachine.js';
 import { today } from '../lib/dates.js';
 import { recomputeRollup, rollupFrom } from '../lib/rollup.js';
+import { removeStoredFiles, storedNamesUnder } from '../lib/attachments.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -65,11 +71,13 @@ function normalizeStatus(status) {
   if (['pending', 'chuẩn bị'].includes(s)) return 'pending';
   return 'pending';
 }
+/** 4 mức ưu tiên: critical (Khẩn cấp) > high (Cao) > normal (Bình thường) > low (Thấp). */
 function normalizePriority(p) {
   if (!p) return 'normal';
   const s = String(p).toLowerCase();
   if (['low', 'thấp'].includes(s)) return 'low';
-  if (['high', 'critical', 'khẩn', 'cao'].includes(s)) return 'high';
+  if (['critical', 'khẩn', 'khẩn cấp'].includes(s)) return 'critical';
+  if (['high', 'cao'].includes(s)) return 'high';
   return 'normal';
 }
 
@@ -134,11 +142,11 @@ const ARCHIVED_SQL = {
         LEFT JOIN phases ph ON ph.id = b.phase_id LEFT JOIN projects p ON p.id = ph.project_id
        WHERE t.id = ?`,
 };
-function isInArchive(tier, id) {
+export function isInArchive(tier, id) {
   const sql = ARCHIVED_SQL[Number(tier)];
   return !!(sql && db.prepare(sql).get(Number(id))?.a);
 }
-const ARCHIVED_ERROR = {
+export const ARCHIVED_ERROR = {
   error: 'archived',
   message: 'Mục này thuộc dự án / giai đoạn đã lưu trữ — khôi phục trước khi chỉnh sửa.',
 };
@@ -179,7 +187,7 @@ function resolveCreatedBy(req) {
 }
 
 /** Audit log helper. */
-function logAudit(entityType, entityId, action, oldValues, newValues, req) {
+export function logAudit(entityType, entityId, action, oldValues, newValues, req) {
   stmt.insertAuditLog.run(
     entityType,
     entityId,
@@ -191,6 +199,34 @@ function logAudit(entityType, entityId, action, oldValues, newValues, req) {
     req.ip || null,
     (req.headers['user-agent'] || '').slice(0, 255),
   );
+}
+
+/**
+ * Thêm 1 tin vào luồng trao đổi của task (gọi trong tx()). Trả id tin.
+ * `kind` xem schema.sql (note | blocker | start | submit | approve | return | unblock).
+ */
+function addMessage(taskId, kind, body, req) {
+  const info = stmt.insertHelpMessage.run(taskId, body, req.user.id, kind);
+  const id = Number(info.lastInsertRowid);
+  logAudit('task_help_message', id, 'create', null, { task_id: taskId, kind, body }, req);
+  return id;
+}
+
+/**
+ * Ghi chú kèm thao tác đổi trạng thái: tạo tin khi có nội dung, hoặc khi client
+ * báo sẽ gắn tệp (`with_files`). Trả id tin hoặc null.
+ */
+function addActionNote(taskId, kind, req, text = req.body?.note) {
+  const body = String(text ?? '').trim();
+  if (!body && !req.body?.with_files) return null;
+  return addMessage(taskId, kind, body, req);
+}
+
+/** Ghi vướng mắc: cập nhật `blocker_note` (dòng hiện tại) + 1 tin `blocker` trong luồng trao đổi. */
+function reportBlocker(task, note, req) {
+  rewriteTask(task, { blocker_note: note });
+  logAudit('task', task.id, 'update', { blocker_note: task.blocker_note || '' }, { blocker_note: note }, req);
+  return addMessage(task.id, 'blocker', note, req);
 }
 
 // ============================================================================
@@ -515,6 +551,8 @@ router.delete('/:tier(\\d+)/:id(\\d+)', (req, res) => {
   const authz = authorize('task:delete', req.user, { task: enriched });
   if (!authz.ok) return res.status(authz.status).json(authz);
 
+  // Tệp đính kèm của cả nhánh — xoá khỏi đĩa sau khi DB đã xoá xong.
+  const storedFiles = storedNamesUnder(tier, id);
   tx(() => {
     // Snapshot sub-resources trước khi CASCADE xoá (giữ truy vết audit).
     if (tier === 4) {
@@ -541,6 +579,7 @@ router.delete('/:tier(\\d+)/:id(\\d+)', (req, res) => {
     const parent = PARENT_OF[tier];
     if (parent && item[parent.fk]) rollupFrom(parent.tier, item[parent.fk]);
   });
+  removeStoredFiles(storedFiles);
   return res.status(204).send();
 });
 
@@ -583,8 +622,11 @@ router.post('/:tier(\\d+)/:id(\\d+)/:op(archive|unarchive)', (req, res) => {
   return res.json({ item: enrichWithTier(loadItem(tier, id), tier) });
 });
 
-/** GET /api/tasks/4/:id/help-messages — List lịch sử escalation. */
-router.get('/:tier(\\d+)/:id(\\d+)/help-messages', (req, res) => {
+/**
+ * GET /api/tasks/4/:id/messages (alias cũ: /help-messages) — Luồng trao đổi, cũ → mới.
+ * Mỗi tin kèm `attachments` (tệp gắn trong tin đó).
+ */
+router.get('/:tier(\\d+)/:id(\\d+)/:res(messages|help-messages)', (req, res) => {
   const tier = Number(req.params.tier);
   if (tier !== 4) return res.status(400).json({ error: 'help_messages_only_for_task' });
   const id = Number(req.params.id);
@@ -592,8 +634,38 @@ router.get('/:tier(\\d+)/:id(\\d+)/help-messages', (req, res) => {
   if (!task) return res.status(404).json({ error: 'task_not_found' });
   const authz = authorize('task:read', req.user, { task: { ...task, tier: 4 } });
   if (!authz.ok) return res.status(authz.status).json(authz);
-  const items = stmt.listHelpMessagesByTask.all(id);
+  const files = stmt.listAttachmentsByTask.all(id).filter((f) => f.message_id != null);
+  const items = stmt.listHelpMessagesByTask.all(id).map((m) => ({
+    ...m,
+    attachments: files.filter((f) => f.message_id === m.id),
+  }));
   return res.json({ items });
+});
+
+/**
+ * POST /api/tasks/4/:id/messages — Gửi ghi chú (`kind: 'note'`) hoặc báo vướng mắc
+ * (`kind: 'blocker'`, như /blocker). Body: { body, kind, with_files? }.
+ * Quyền: như sửa task (`task:edit` — NV làm việc đó, TP phòng đó, admin).
+ */
+router.post('/:tier(\\d+)/:id(\\d+)/messages', (req, res) => {
+  if (Number(req.params.tier) !== 4) return res.status(400).json({ error: 'messages_only_for_task' });
+  const task = stmt.getTask.get(Number(req.params.id));
+  if (!task) return res.status(404).json({ error: 'not_found' });
+  const authz = authorize('task:edit', req.user, { task: enrichWithTier(task, 4) });
+  if (!authz.ok) return res.status(authz.status).json(authz);
+  if (isInArchive(4, task.id)) return res.status(409).json(ARCHIVED_ERROR);
+
+  const kind = req.body?.kind === 'blocker' ? 'blocker' : 'note';
+  const body = String(req.body?.body ?? '').trim();
+  if (!body && (kind === 'blocker' || !req.body?.with_files)) {
+    return res.status(400).json({ error: 'body_required', message: 'Cần nhập nội dung.' });
+  }
+
+  let messageId = 0;
+  tx(() => {
+    messageId = kind === 'blocker' ? reportBlocker(task, body, req) : addMessage(task.id, 'note', body, req);
+  });
+  return res.status(201).json({ message_id: messageId, item: enrichWithTier(stmt.getTask.get(task.id), 4) });
 });
 
 /**
@@ -643,6 +715,7 @@ router.post('/:tier(\\d+)/:id(\\d+)/approve', (req, res) => {
     }
   }
 
+  let messageId = null;
   tx(() => {
     // Khi manager approve T4 task → done, đảm bảo progress = 100.
     // Logic trước dùng `item.deliverable_completed` (field không tồn tại trong schema)
@@ -668,11 +741,14 @@ router.post('/:tier(\\d+)/:id(\\d+)/approve', (req, res) => {
       tier === 1 ? 'project' : tier === 2 ? 'phase' : tier === 3 ? 'bundle' : 'task',
       id, 'status_change', { status: item.status }, { status: 'done' }, req,
     );
-    if (tier === 4) recomputeRollup(id);
+    if (tier === 4) {
+      messageId = addActionNote(id, 'approve', req);
+      recomputeRollup(id);
+    }
   });
 
   const updated = loadItem(tier, id);
-  return res.json({ item: enrichWithTier(updated, tier) });
+  return res.json({ item: enrichWithTier(updated, tier), message_id: messageId });
 });
 
 /** Ghi lại 1 task T4 với các trường thay đổi (các trường khác giữ nguyên). */
@@ -689,7 +765,7 @@ function rewriteTask(task, changes) {
 
 /**
  * POST /api/tasks/4/:id/return — Trưởng phòng trả việc "chờ duyệt" về cho NV làm lại.
- * Body: { reason?: string } — lý do không bắt buộc, được ghi vào lịch sử việc.
+ * Body: { reason: string, with_files? } — lý do BẮT BUỘC, thành 1 tin `return` trong luồng trao đổi.
  * Quyền: như duyệt (`task:approve`).
  */
 router.post('/:tier(\\d+)/:id(\\d+)/return', (req, res) => {
@@ -706,12 +782,17 @@ router.post('/:tier(\\d+)/:id(\\d+)/return', (req, res) => {
   if (!tr.ok) return res.status(403).json({ error: 'invalid_transition', message: tr.reason });
 
   const reason = String(req.body?.reason ?? '').trim();
+  if (!reason) {
+    return res.status(400).json({ error: 'reason_required', message: 'Cần nhập lý do trả về để nhân viên biết phải sửa gì.' });
+  }
+  let messageId = null;
   tx(() => {
     rewriteTask(task, { status: 'doing' });
     logAudit('task', task.id, 'status_change', { status: task.status }, { status: 'doing', returned: true, reason }, req);
+    messageId = addActionNote(task.id, 'return', req, reason);
     recomputeRollup(task.id);
   });
-  return res.json({ item: enrichWithTier(stmt.getTask.get(task.id), 4) });
+  return res.json({ item: enrichWithTier(stmt.getTask.get(task.id), 4), message_id: messageId });
 });
 
 /**
@@ -736,12 +817,13 @@ router.post('/:tier(\\d+)/:id(\\d+)/unblock', (req, res) => {
   }
 
   const note = String(req.body?.note ?? '').trim();
+  let messageId = null;
   tx(() => {
     rewriteTask(task, { status: nextStatus, blocker_note: '' });
     db.prepare(`
       UPDATE task_help_messages
       SET is_resolved = 1, resolved_by_user_id = ?, resolved_at = datetime('now')
-      WHERE task_id = ? AND is_resolved = 0
+      WHERE task_id = ? AND kind = 'blocker' AND is_resolved = 0
     `).run(req.user.id, task.id);
     logAudit(
       'task', task.id, 'update',
@@ -749,8 +831,9 @@ router.post('/:tier(\\d+)/:id(\\d+)/unblock', (req, res) => {
       { status: nextStatus, blocker_note: '', unblocked: true, note },
       req,
     );
+    messageId = addActionNote(task.id, 'unblock', req, note);
   });
-  return res.json({ item: enrichWithTier(stmt.getTask.get(task.id), 4) });
+  return res.json({ item: enrichWithTier(stmt.getTask.get(task.id), 4), message_id: messageId });
 });
 
 /** POST /api/tasks/:tier/:id/blocker — NV ghi 1 dòng `blocker_note` cho task.
@@ -766,6 +849,7 @@ router.post('/:tier(\\d+)/:id(\\d+)/blocker', (req, res) => {
   const enriched = enrichWithTier(task, tier);
   const authz = authorize('task:edit', req.user, { task: enriched });
   if (!authz.ok) return res.status(authz.status).json(authz);
+  if (isInArchive(4, id)) return res.status(409).json(ARCHIVED_ERROR);
 
   const body = req.body || {};
   const note = String(body.note ?? '').trim();
@@ -773,19 +857,7 @@ router.post('/:tier(\\d+)/:id(\\d+)/blocker', (req, res) => {
 
   let helpMsgId = 0;
   tx(() => {
-    stmt.updateTask.run(
-      task.title, task.description, task.owner_user_id, task.assigned_by_user_id,
-      task.department_code, task.start_date, task.end_date,
-      task.progress, task.status, task.priority,
-      task.is_today ?? 0, task.is_today_date ?? null, task.collapsed,
-      note, // ← blocker_note (current state)
-      id,
-    );
-    // Ghi lịch sử escalation vào help_messages.
-    const info = stmt.insertHelpMessage.run(id, note, req.user.id);
-    helpMsgId = Number(info.lastInsertRowid);
-    logAudit('task', id, 'update', { blocker_note: task.blocker_note || '' }, { blocker_note: note }, req);
-    logAudit('task_help_message', helpMsgId, 'create', null, { task_id: id, body: note }, req);
+    helpMsgId = reportBlocker(task, note, req);
   });
 
   return res.json({ item: enrichWithTier(stmt.getTask.get(id), tier), blocker_note: note, help_message_id: helpMsgId });
@@ -870,7 +942,15 @@ router.post('/:tier(\\d+)/:id(\\d+)/toggle', (req, res) => {
   // Progress: đạt 100 khi báo xong / hoàn thành; các bước khác giữ nguyên
   // tiến độ thật do nhân viên ghi qua nhật ký.
   const nextProgress = next === 'pending_approval' || next === 'done' ? 100 : task.progress;
+  // Loại tin trao đổi cho ghi chú đi kèm (nếu có).
+  const noteKind =
+    next === 'pending_approval' ? 'submit'
+      : next === 'done' ? 'approve'
+        : task.status === 'pending' ? 'start'
+          : task.status === 'blocked' ? 'unblock'
+            : 'return';
 
+  let messageId = null;
   tx(() => {
     stmt.updateTask.run(
       task.title, task.description, task.owner_user_id, task.assigned_by_user_id,
@@ -881,11 +961,12 @@ router.post('/:tier(\\d+)/:id(\\d+)/toggle', (req, res) => {
       id,
     );
     logAudit('task', id, 'status_change', { status: task.status }, { status: next }, req);
+    messageId = addActionNote(id, noteKind, req);
     recomputeRollup(id);
   });
 
   const updated = stmt.getTask.get(id);
-  return res.json({ item: enrichWithTier(updated, tier) });
+  return res.json({ item: enrichWithTier(updated, tier), message_id: messageId });
 });
 
 /** POST /api/tasks/4/:id/toggle-today — Owner mark/unmark "today".

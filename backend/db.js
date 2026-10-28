@@ -53,6 +53,34 @@ if (isFreshDb) {
 }
 
 /**
+ * Nâng cấp idempotent cho DB đã tồn tại (schema.sql chỉ chạy với DB mới).
+ * Chạy mỗi lần khởi động, trước khi prepare statement. Giữ khớp với schema.sql.
+ */
+function hasColumn(table, column) {
+  return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+}
+if (!hasColumn('task_help_messages', 'kind')) {
+  db.exec(`ALTER TABLE task_help_messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'blocker'
+    CHECK (kind IN ('note','blocker','start','submit','approve','return','unblock'))`);
+  console.log('[db] Đã thêm cột task_help_messages.kind.');
+}
+db.exec(`
+  CREATE TABLE IF NOT EXISTS task_attachments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    message_id INTEGER REFERENCES task_help_messages(id) ON DELETE CASCADE,
+    original_name TEXT NOT NULL,
+    stored_name TEXT NOT NULL UNIQUE,
+    mime TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL CHECK (size_bytes > 0),
+    uploaded_by_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_attachments_task ON task_attachments(task_id);
+  CREATE INDEX IF NOT EXISTS idx_attachments_message ON task_attachments(message_id);
+`);
+
+/**
  * Manual transaction wrapper. node:sqlite không có `db.transaction()` built-in.
  */
 export function tx(fn) {
@@ -200,12 +228,20 @@ export const stmt = {
   deleteBundle: db.prepare('DELETE FROM bundles WHERE id = ?'),
 
   // --- Tasks (Tier 4) ---
+  // Kèm số tin trao đổi / vướng mắc / tệp để danh sách hiện mà không phải tải từng task.
   listTasks: db.prepare(`
     SELECT t.*,
       u.username AS owner_username_str, u.fullname AS owner_fullname,
       a.username AS assigned_by_username_str, a.fullname AS assigned_by_fullname,
       b.title AS bundle_name,
-      b.phase_id AS phase_id, ph.project_id AS project_id
+      b.phase_id AS phase_id, ph.project_id AS project_id,
+      (SELECT COUNT(*) FROM task_help_messages m WHERE m.task_id = t.id) AS message_count,
+      (SELECT COUNT(*) FROM task_help_messages m WHERE m.task_id = t.id AND m.kind = 'blocker') AS blocker_count,
+      (SELECT COUNT(*) FROM task_help_messages m
+        WHERE m.task_id = t.id AND m.kind = 'blocker' AND m.is_resolved = 0) AS open_blocker_count,
+      (SELECT MAX(m.created_at) FROM task_help_messages m
+        WHERE m.task_id = t.id AND m.kind = 'blocker' AND m.is_resolved = 0) AS open_blocker_at,
+      (SELECT COUNT(*) FROM task_attachments f WHERE f.task_id = t.id AND f.message_id IS NULL) AS attachment_count
     FROM tasks t
       LEFT JOIN users u ON u.id = t.owner_user_id
       LEFT JOIN users a ON a.id = t.assigned_by_user_id
@@ -295,18 +331,45 @@ export const stmt = {
      WHERE task_id = ? AND log_date = ?
   `),
 
-  // --- Task help messages (lịch sử escalation 1:N) ---
+  // --- Task help messages (luồng "Trao đổi" 1:N, xem `kind` trong schema.sql) ---
   insertHelpMessage: db.prepare(`
-    INSERT INTO task_help_messages (task_id, body, author_user_id)
-    VALUES (?, ?, ?)
+    INSERT INTO task_help_messages (task_id, body, author_user_id, kind)
+    VALUES (?, ?, ?, ?)
   `),
+  // Cũ → mới: đọc như một dòng thời gian.
   listHelpMessagesByTask: db.prepare(`
-    SELECT m.*, u.username AS author_username_str, u.fullname AS author_fullname
+    SELECT m.*, u.username AS author_username_str, u.fullname AS author_fullname,
+      r.fullname AS resolved_by_fullname
     FROM task_help_messages m
     LEFT JOIN users u ON u.id = m.author_user_id
+    LEFT JOIN users r ON r.id = m.resolved_by_user_id
     WHERE m.task_id = ?
-    ORDER BY m.created_at DESC, m.id DESC
+    ORDER BY m.created_at ASC, m.id ASC
   `),
+  getHelpMessage: db.prepare(
+    'SELECT * FROM task_help_messages WHERE id = ? AND task_id = ?'
+  ),
+  /** Tin còn được gắn thêm tệp: của chính người gửi, trong vài phút sau khi gửi. */
+  getOwnRecentHelpMessage: db.prepare(`
+    SELECT * FROM task_help_messages
+    WHERE id = ? AND task_id = ? AND author_user_id = ?
+      AND created_at >= datetime('now', '-10 minutes')
+  `),
+
+  // --- Task attachments ---
+  insertAttachment: db.prepare(`
+    INSERT INTO task_attachments (task_id, message_id, original_name, stored_name, mime, size_bytes, uploaded_by_user_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `),
+  listAttachmentsByTask: db.prepare(`
+    SELECT f.id, f.task_id, f.message_id, f.original_name, f.mime, f.size_bytes,
+      f.uploaded_by_user_id, f.created_at, u.fullname AS uploader_fullname
+    FROM task_attachments f LEFT JOIN users u ON u.id = f.uploaded_by_user_id
+    WHERE f.task_id = ?
+    ORDER BY f.created_at ASC, f.id ASC
+  `),
+  getAttachment: db.prepare('SELECT * FROM task_attachments WHERE id = ?'),
+  deleteAttachment: db.prepare('DELETE FROM task_attachments WHERE id = ?'),
   resolveHelpMessage: db.prepare(`
     UPDATE task_help_messages
     SET is_resolved = 1, resolved_by_user_id = ?, resolved_at = datetime('now')

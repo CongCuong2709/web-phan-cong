@@ -11,8 +11,10 @@ import {
   smallPrimaryButtonCls,
   textareaCls,
 } from './ui/Dialog';
-import { TeamMember, TeamLeadTask } from '../types';
-import { todayIso } from '../lib/transforms';
+import { TaskPriority, TeamMember, TeamLeadTask } from '../types';
+import { PRIORITY_OPTIONS, PRIORITY_RANK, PRIORITY_VI, serverTimeToLocalDate, todayIso } from '../lib/transforms';
+import { FilePicker } from './ui/FilePicker';
+import { PriorityBadge } from './ui/PriorityBadge';
 
 export interface Assignee {
   id: string;
@@ -25,18 +27,22 @@ interface GiaoViecNhomViewProps {
   tasks: TeamLeadTask[];
   /** Người có thể nhận việc (dùng khi đổi người làm). */
   assignees: Assignee[];
-  /** Các thao tác resolve true khi server đã lưu. */
-  onApproveTask: (taskId: string) => Promise<boolean>;
-  onReturnTask: (taskId: string, reason: string) => Promise<boolean>;
-  onUnblockTask: (taskId: string, note: string) => Promise<boolean>;
+  /** Các thao tác resolve true khi server đã lưu. Ghi chú + tệp thành 1 tin trong luồng trao đổi. */
+  onApproveTask: (taskId: string, note: string, files: File[]) => Promise<boolean>;
+  onReturnTask: (taskId: string, reason: string, files: File[]) => Promise<boolean>;
+  onUnblockTask: (taskId: string, note: string, files: File[]) => Promise<boolean>;
   onAdjustTask: (taskId: string, changes: { ownerUserId?: string; endDate?: string }) => Promise<boolean>;
-  onOpenTask: (taskId: string) => void;
+  /** Mở chi tiết công việc; việc có vướng mắc thì mở thẳng tab Trao đổi. */
+  onOpenTask: (taskId: string, tab?: 'trao-doi' | 'lich-su') => void;
   onAssignTask: () => void;
   /** Bộ lọc trạng thái + người làm lưu trên URL (?loc=open&nv=hong). */
   filter?: string;
   onFilterChange: (filter: StatusFilter) => void;
   memberFilter: string | null;
   onMemberFilterChange: (username: string | null) => void;
+  /** Lọc mức ưu tiên (?uu=critical); null = mọi mức. */
+  priorityFilter: TaskPriority | null;
+  onPriorityFilterChange: (p: TaskPriority | null) => void;
 }
 
 const STATUS_FILTERS = [
@@ -46,7 +52,7 @@ const STATUS_FILTERS = [
   ['in_progress', 'Đang làm'],
   ['need_help', 'Có vướng mắc'],
   ['pending_approval', 'Chờ duyệt'],
-  ['done', 'Đã nghiệm thu'],
+  ['done', 'Đã xong'],
 ] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number][0];
 
@@ -55,7 +61,7 @@ const STATUS_META: Record<TeamLeadTask['status'], { label: string; dot: string }
   in_progress: { label: 'Đang làm', dot: 'bg-primary' },
   need_help: { label: 'Đang vướng', dot: 'bg-error' },
   pending_approval: { label: 'Chờ duyệt', dot: 'bg-warning-fixed' },
-  done: { label: 'Đã nghiệm thu', dot: 'bg-tertiary' },
+  done: { label: 'Đã xong', dot: 'bg-tertiary' },
 };
 
 /** Thứ tự khi sắp xếp theo trạng thái: việc cần chú ý lên trước. */
@@ -81,7 +87,7 @@ function daysBetween(fromIso: string, toIso: string): number {
 
 const isOpen = (t: TeamLeadTask) => t.status !== 'done' && t.status !== 'pending_approval';
 
-type Action = { kind: 'return' | 'unblock' | 'adjust'; task: TeamLeadTask };
+type Action = { kind: 'approve' | 'return' | 'unblock' | 'adjust'; task: TeamLeadTask };
 
 export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
   teamMembers,
@@ -97,6 +103,8 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
   onFilterChange,
   memberFilter,
   onMemberFilterChange,
+  priorityFilter,
+  onPriorityFilterChange,
 }) => {
   const today = todayIso();
   const statusFilter: StatusFilter = STATUS_FILTERS.find(([k]) => k === filterParam)?.[0] ?? 'open';
@@ -146,6 +154,7 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
     const q = search.trim().toLowerCase();
     const rows = tasks.filter((t) => {
       if (memberFilter && t.ownerUsername !== memberFilter) return false;
+      if (priorityFilter && t.priority !== priorityFilter) return false;
       if (q && !`${t.code} ${t.title} ${t.category} ${t.ownerName}`.toLowerCase().includes(q)) return false;
       switch (statusFilter) {
         case 'open': return isOpen(t);
@@ -161,9 +170,13 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
             : t.progress;
     return rows.sort((a, b) => {
       const [x, y] = [val(a), val(b)];
-      return (x < y ? -1 : x > y ? 1 : 0) * sort.dir || a.code.localeCompare(b.code);
+      return (
+        (x < y ? -1 : x > y ? 1 : 0) * sort.dir ||
+        PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] ||
+        a.code.localeCompare(b.code)
+      );
     });
-  }, [tasks, memberFilter, search, statusFilter, sort]);
+  }, [tasks, memberFilter, priorityFilter, search, statusFilter, sort]);
 
   const run = async (taskId: string, fn: () => Promise<boolean>) => {
     if (busyId) return false;
@@ -233,7 +246,7 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                   <div className="min-w-0 flex-1">
                     <button
                       type="button"
-                      onClick={() => onOpenTask(task.id)}
+                      onClick={() => onOpenTask(task.id, reason === 'help' ? 'trao-doi' : undefined)}
                       className="text-sm font-semibold text-on-surface hover:text-primary hover:underline text-left"
                     >
                       <span className="font-mono text-xs text-secondary mr-2">{task.code}</span>
@@ -245,10 +258,16 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                         {task.ownerName}
                       </span>
                       <span aria-hidden="true">·</span>
+                      <PriorityBadge priority={task.priority} hideNormal />
                       {reason === 'help' ? (
-                        <span className="text-on-surface">“{task.blockerNote || 'Đang bị chặn, chưa ghi lý do'}”</span>
+                        <span className="text-on-surface">
+                          “{task.blockerNote || 'Đang bị chặn, chưa ghi lý do'}”
+                          {task.openBlockerCount > 1 && (
+                            <span className="ml-1 text-error font-semibold">({task.openBlockerCount} vướng mắc chưa xử lý)</span>
+                          )}
+                        </span>
                       ) : reason === 'approve' ? (
-                        <span>Báo xong {ddmm(task.updatedAt)} · hạn {ddmm(task.deadline)}</span>
+                        <span>Báo xong {ddmm(serverTimeToLocalDate(task.updatedAt))} · hạn {ddmm(task.deadline)}</span>
                       ) : (
                         <span className="text-error">
                           Hạn {ddmm(task.deadline)} · trễ {daysBetween(task.deadline!, today)} ngày · tiến độ {task.progress}%
@@ -270,7 +289,7 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                         <button
                           type="button"
                           disabled={busyId !== null}
-                          onClick={() => run(task.id, () => onApproveTask(task.id))}
+                          onClick={() => setAction({ kind: 'approve', task })}
                           className={smallPrimaryButtonCls}
                         >
                           {busy ? 'Đang duyệt…' : 'Duyệt'}
@@ -343,6 +362,17 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                 <option key={k} value={k}>{label}</option>
               ))}
             </select>
+            <select
+              value={priorityFilter ?? ''}
+              onChange={(e) => onPriorityFilterChange((e.target.value || null) as TaskPriority | null)}
+              aria-label="Lọc theo mức ưu tiên"
+              className={compactInputCls}
+            >
+              <option value="">Mọi mức ưu tiên</option>
+              {PRIORITY_OPTIONS.map((p) => (
+                <option key={p} value={p}>{PRIORITY_VI[p]}</option>
+              ))}
+            </select>
           </div>
         </div>
 
@@ -386,7 +416,14 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
                     >
                       <td className="px-3 py-2.5 font-mono text-xs text-secondary">{t.code}</td>
                       <td className="px-3 py-2.5">
-                        <div className="font-medium text-on-surface">{t.title}</div>
+                        <div className="font-medium text-on-surface">
+                          {t.title}
+                          {t.priority !== 'normal' && (
+                            <span className="ml-1.5 align-middle">
+                              <PriorityBadge priority={t.priority} />
+                            </span>
+                          )}
+                        </div>
                         {t.category && <div className="text-xs text-secondary">{t.category}</div>}
                       </td>
                       <td className="px-3 py-2.5">
@@ -447,11 +484,13 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
         onClose={() => setAction(null)}
         onSubmit={async (a, input) => {
           const ok = await run(a.task.id, () =>
-            a.kind === 'return'
-              ? onReturnTask(a.task.id, input.text)
-              : a.kind === 'unblock'
-                ? onUnblockTask(a.task.id, input.text)
-                : onAdjustTask(a.task.id, { ownerUserId: input.ownerUserId, endDate: input.endDate }),
+            a.kind === 'approve'
+              ? onApproveTask(a.task.id, input.text, input.files)
+              : a.kind === 'return'
+                ? onReturnTask(a.task.id, input.text, input.files)
+                : a.kind === 'unblock'
+                  ? onUnblockTask(a.task.id, input.text, input.files)
+                  : onAdjustTask(a.task.id, { ownerUserId: input.ownerUserId, endDate: input.endDate }),
           );
           if (ok) setAction(null);
         }}
@@ -463,11 +502,33 @@ export const GiaoViecNhomView: React.FC<GiaoViecNhomViewProps> = ({
 
 interface ActionInput {
   text: string;
+  files: File[];
   ownerUserId?: string;
   endDate?: string;
 }
 
-/** Hộp thoại cho Trả về / Gỡ vướng / Dời hạn – đổi người. Mở lại với việc khác thì form bắt đầu mới. */
+const ACTION_TEXT: Record<Exclude<Action['kind'], 'adjust'>, { title: string; label: string; placeholder: string; submit: string }> = {
+  approve: {
+    title: 'Duyệt hoàn thành',
+    label: 'Nhận xét (không bắt buộc)',
+    placeholder: 'Ví dụ: Đạt yêu cầu, lưu bản cuối vào thư mục dự án',
+    submit: 'Duyệt',
+  },
+  return: {
+    title: 'Trả về để làm lại',
+    label: 'Lý do / cần sửa gì (bắt buộc)',
+    placeholder: 'Ví dụ: Bổ sung bảng khối lượng trước khi nộp lại',
+    submit: 'Trả về',
+  },
+  unblock: {
+    title: 'Gỡ vướng mắc',
+    label: 'Hướng xử lý (không bắt buộc)',
+    placeholder: 'Ví dụ: Đã liên hệ nhà cung cấp, nhận báo giá thứ Năm',
+    submit: 'Đã gỡ vướng',
+  },
+};
+
+/** Hộp thoại cho Duyệt / Trả về / Gỡ vướng / Dời hạn – đổi người. Mở lại với việc khác thì form bắt đầu mới. */
 const ActionDialog: React.FC<{
   action: Action | null;
   assignees: Assignee[];
@@ -476,6 +537,7 @@ const ActionDialog: React.FC<{
   onSubmit: (action: Action, input: ActionInput) => void;
 }> = ({ action, assignees, busy, onClose, onSubmit }) => {
   const [text, setText] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
   const [owner, setOwner] = useState('');
   const [endDate, setEndDate] = useState('');
   const key = action ? `${action.kind}:${action.task.id}` : '';
@@ -483,14 +545,17 @@ const ActionDialog: React.FC<{
   if (key !== lastKey) {
     setLastKey(key);
     setText('');
+    setFiles([]);
     setOwner(assignees.find((a) => a.username === action?.task.ownerUsername)?.id ?? '');
     setEndDate(action?.task.deadline?.slice(0, 10) ?? '');
   }
   if (!action) return null;
   const { kind, task } = action;
-  const title = kind === 'return' ? 'Trả về để làm lại' : kind === 'unblock' ? 'Gỡ vướng mắc' : 'Dời hạn / Đổi người làm';
+  const texts = kind === 'adjust' ? null : ACTION_TEXT[kind];
+  const title = texts?.title ?? 'Dời hạn / Đổi người làm';
   const currentOwnerId = assignees.find((a) => a.username === task.ownerUsername)?.id ?? '';
   const unchanged = kind === 'adjust' && owner === currentOwnerId && endDate === (task.deadline?.slice(0, 10) ?? '');
+  const missingReason = kind === 'return' && !text.trim();
 
   return (
     <Dialog isOpen onClose={onClose} title={title} dismissible={!busy}>
@@ -498,9 +563,10 @@ const ActionDialog: React.FC<{
         className="p-5 flex flex-col gap-4"
         onSubmit={(e) => {
           e.preventDefault();
-          if (unchanged) return;
+          if (unchanged || missingReason) return;
           onSubmit(action, {
             text: text.trim(),
+            files: kind === 'adjust' ? [] : files,
             ownerUserId: kind === 'adjust' && owner !== currentOwnerId ? owner : undefined,
             endDate: kind === 'adjust' && endDate !== task.deadline?.slice(0, 10) ? endDate : undefined,
           });
@@ -535,28 +601,30 @@ const ActionDialog: React.FC<{
             </label>
           </div>
         ) : (
-          <label className="flex flex-col gap-1.5">
-            <span className={labelCls}>
-              {kind === 'return' ? 'Lý do / cần sửa gì (không bắt buộc)' : 'Hướng xử lý (không bắt buộc)'}
-            </span>
-            <textarea
-              data-autofocus
-              rows={3}
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder={kind === 'return' ? 'Ví dụ: Bổ sung bảng khối lượng trước khi nộp lại' : 'Ví dụ: Đã liên hệ nhà cung cấp, nhận báo giá thứ Năm'}
-              className={textareaCls}
-            />
-            <span className="text-xs text-secondary">Ghi vào lịch sử việc để nhân viên xem lại.</span>
-          </label>
+          <>
+            <label className="flex flex-col gap-1.5">
+              <span className={labelCls}>{texts?.label}</span>
+              <textarea
+                data-autofocus
+                rows={4}
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder={texts?.placeholder}
+                aria-invalid={missingReason}
+                className={textareaCls}
+              />
+              <span className="text-xs text-secondary">Lưu vào mục Trao đổi của việc, kèm ngày giờ, để nhân viên xem lại.</span>
+            </label>
+            <FilePicker files={files} onChange={setFiles} disabled={busy} />
+          </>
         )}
 
         <div className="flex justify-end gap-2 pt-3 border-t border-surface-container-low">
           <button type="button" onClick={onClose} disabled={busy} className={ghostButtonCls}>
             Huỷ
           </button>
-          <button type="submit" disabled={busy || unchanged} className={primaryButtonCls}>
-            {busy ? 'Đang lưu…' : kind === 'return' ? 'Trả về' : kind === 'unblock' ? 'Đã gỡ vướng' : 'Lưu thay đổi'}
+          <button type="submit" disabled={busy || unchanged || missingReason} className={primaryButtonCls}>
+            {busy ? 'Đang lưu…' : texts?.submit ?? 'Lưu thay đổi'}
           </button>
         </div>
       </form>

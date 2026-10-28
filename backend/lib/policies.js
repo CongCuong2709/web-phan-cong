@@ -10,7 +10,7 @@
  * re-export shim để các import cũ không vỡ.
  *
  * Naming convention: `<entity>:<verb>`
- *   - task:create / task:edit / task:delete / task:archive / task:close / task:approve / task:toggle / task:read
+ *   - task:create / task:edit / task:delete / task:archive / task:close / task:approve / task:attach / task:toggle / task:read
  *   - daily_log:create / daily_log:list
  *   - user:list / user:read
  *   - history:read_all
@@ -210,6 +210,17 @@ const POLICIES = {
       return deny(403, 'cross_dept_approve', 'Manager phải cùng phòng ban.');
     }
     return allow();
+  },
+
+  /**
+   * Tệp "khi giao việc" của T4 (không gắn tin trao đổi): người giao, Trưởng phòng
+   * phụ trách (như `task:approve`), admin. Việc tự tạo thì người làm cũng là người giao.
+   * Kết quả của người làm gửi qua luồng trao đổi (`task:edit`).
+   */
+  'task:attach': (user, { task }) => {
+    if (task.assigned_by_user_id === user.id) return allow();
+    const r = POLICIES['task:approve'](user, { task });
+    return r.ok ? allow() : deny(403, 'forbidden', 'Chỉ người giao việc hoặc Trưởng phòng mới thêm / xoá tệp khi giao việc. Tệp kết quả hãy gửi kèm trong mục Trao đổi.');
   },
 
   'task:toggle': (user, { task }) => {

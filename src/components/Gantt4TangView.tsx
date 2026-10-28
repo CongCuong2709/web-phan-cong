@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Avatar } from './ui/Brand';
-import { isTierItemOverdue } from '../lib/transforms';
+import { isTierItemOverdue, PRIORITY_VI } from '../lib/transforms';
 import { TierItem, User } from '../types';
 
 interface Gantt4TangViewProps {
@@ -82,7 +82,7 @@ const GANTT_LEGEND: { key: keyof typeof GANTT_COLOR; label: string; dot?: boolea
   { key: 't2', label: 'T2: Giai đoạn' },
   { key: 't3', label: 'T3: Hạng mục' },
   { key: 't4', label: 'T4: Đầu việc' },
-  { key: 'blocked', label: 'Điểm nghẽn' },
+  { key: 'blocked', label: 'Đang vướng' },
   { key: 'critical', label: 'Ưu tiên cao', dot: true },
   { key: 'readonly', label: 'Chỉ đọc (ngữ cảnh)' },
 ];
@@ -178,7 +178,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
 
   const toggleRowCollapse = (e: React.MouseEvent, id: string) => {
     // chặn cả bubble (click) và capture (mousedown) để chắc chắn
-    // row's onClick (DetailsDrawer) không trigger khi click toggle.
+    // row's onClick (mở chi tiết công việc) không trigger khi click toggle.
     e.stopPropagation();
     e.preventDefault();
     setCollapsedMap((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -219,7 +219,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
 
   // Vướng mắc = trạng thái nghẽn, hoặc NV đã báo vướng (blocker_note), hoặc cảnh báo giai đoạn.
   const blockedItems = tierItems.filter(
-    (i) => i.status !== 'Đã xong' && (i.status === 'Điểm nghẽn' || !!i.blockerNote?.trim() || !!i.blockerAlert)
+    (i) => i.status !== 'Đã xong' && (i.status === 'Đang vướng' || !!i.blockerNote?.trim() || !!i.blockerAlert)
   );
 
   const t3Items = tierItems.filter((i) => i.tier === 3);
@@ -408,11 +408,11 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
             </div>
           </div>
 
-          {/* KPI 4: Điểm nghẽn */}
+          {/* KPI 4: Đang vướng */}
           <div className="bg-white p-4 rounded-lg border border-surface-container shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-secondary uppercase tracking-wider">
-                Điểm nghẽn
+                Đang vướng
               </span>
             </div>
             <div className="my-2 flex items-baseline gap-2">
@@ -769,9 +769,9 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                               </span>
                               <span>Đã xong</span>
                             </span>
-                          ) : item.status === 'Điểm nghẽn' ? (
+                          ) : item.status === 'Đang vướng' ? (
                             <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-error-container text-on-error-container">
-                              Điểm nghẽn
+                              Đang vướng
                             </span>
                           ) : (
                             <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-surface-container-low text-primary">
@@ -843,7 +843,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                           const widthPct = endPct > startPct
                             ? endPct - startPct
                             : Math.max(0.5, (1 / timeline.unitDays) * 100);
-                          const isBlocked = item.status === 'Điểm nghẽn';
+                          const isBlocked = item.status === 'Đang vướng';
                           // isBlocked ưu tiên tier color — T1/T2/T3 nghẽn cũng đỏ.
                           const barColor = GANTT_COLOR[readonlyCtx ? 'readonly' : isBlocked ? 'blocked' : (`t${item.tier}` as const)];
                           const height = item.tier === 1 ? 'h-5' : item.tier === 2 ? 'h-4' : item.tier === 3 ? 'h-3.5' : 'h-3';
@@ -898,12 +898,12 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                                       priority_high
                                     </span>
                                   )}
-                                  {/* Đánh dấu việc ưu tiên cao */}
-                                  {item.priority === 'Cao (Critical Path)' && !isBlocked && (
+                                  {/* Đánh dấu việc ưu tiên Cao / Khẩn cấp */}
+                                  {(item.priority === 'critical' || item.priority === 'high') && !isBlocked && (
                                     <span
                                       className="absolute -top-1 -right-1 w-2 h-2 rounded-full ring-1 ring-white"
                                       style={{ backgroundColor: GANTT_COLOR.critical }}
-                                      title="Ưu tiên cao"
+                                      title={`Ưu tiên ${PRIORITY_VI[item.priority].toLowerCase()}`}
                                     />
                                   )}
                                 </div>

@@ -106,6 +106,20 @@ export function canArchiveTierItem(
   return user.role === 'admin' || user.role === 'director';
 }
 
+/**
+ * Thêm / xoá tệp "khi giao việc" của T4 — khớp policy `task:attach` ở backend:
+ * người giao, Trưởng phòng phụ trách, admin. Kết quả của người làm gửi qua Trao đổi.
+ */
+export function canAttachToTask(
+  user: User | null | undefined,
+  item: TierItem | null | undefined
+): boolean {
+  if (!user || !item || item.tier !== 4 || item.archived) return false;
+  if (user.role === 'admin') return true;
+  if (item.assignedByUserId && item.assignedByUserId === user.id) return true;
+  return user.role === 'manager' && inDepartment(user, item.department);
+}
+
 /** Cho phép đổi trạng thái (status dropdown) — cùng guard với edit. */
 export const canChangeStatus = canEditTierItem;
 

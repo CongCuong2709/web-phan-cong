@@ -1,8 +1,11 @@
 import React, { useState, useMemo } from 'react';
-import { EmployeeTask, DailyLog, ROLE_LABEL, User } from '../types';
-import { todayIso } from '../lib/transforms';
+import { EmployeeTask, DailyLog, ROLE_LABEL, TaskPriority, User } from '../types';
+import { formatDateTime, PRIORITY_OPTIONS, PRIORITY_RANK, PRIORITY_VI, todayIso } from '../lib/transforms';
 import { canApproveTask } from '../auth/permissions';
 import { useSessionState, useUnsavedChangesWarning } from '../lib/useSessionState';
+import { compactInputCls } from './ui/Dialog';
+import { PriorityBadge } from './ui/PriorityBadge';
+import { NoteDialog } from './NoteDialog';
 
 /** Một entry để lưu nhật ký qua onSaveLogs. */
 export interface SaveLogEntry {
@@ -18,14 +21,22 @@ interface ViecCuaToiViewProps {
   tasks: EmployeeTask[];
   /** Nhật ký đã tải ở App — panel lịch sử 7 ngày đọc từ đây, không fetch riêng. */
   dailyLogs: DailyLog[];
-  /** Chuyển task sang bước kế tiếp (Chuẩn bị → Đang làm → Chờ duyệt). Resolve true khi server chấp nhận. */
-  onAdvanceTask: (taskId: string) => Promise<boolean>;
+  /**
+   * Chuyển task sang bước kế tiếp (Chưa bắt đầu → Đang làm → Chờ duyệt). Ghi chú + tệp
+   * (khi báo xong) vào luồng trao đổi. Resolve true khi server chấp nhận.
+   */
+  onAdvanceTask: (taskId: string, note?: string, files?: File[]) => Promise<boolean>;
+  /** Mở chi tiết công việc (chỉ thị, tệp, trao đổi, lịch sử), tuỳ chọn mở thẳng 1 tab. */
+  onOpenTask: (taskId: string, tab?: 'trao-doi' | 'lich-su') => void;
   /** Lưu nhật ký; resolve danh sách taskId đã lưu thành công. */
   onSaveLogs: (entries: SaveLogEntry[]) => Promise<string[]>;
   onOpenNewPersonalTaskModal: () => void;
   /** Bộ lọc lưu trên URL (?loc=due); giá trị lạ coi như 'open'. */
   filter?: string;
   onFilterChange: (filter: Filter) => void;
+  /** Lọc mức ưu tiên (?uu=critical); null = mọi mức. */
+  priorityFilter: TaskPriority | null;
+  onPriorityFilterChange: (p: TaskPriority | null) => void;
 }
 
 interface LogDraft {
@@ -65,6 +76,14 @@ function isBlocked(t: EmployeeTask) {
   return t.status === 'blocked' || !!t.blockerNote?.trim();
 }
 
+/** Còn tin vướng mắc chưa được gỡ, hoặc đã từng báo — để hiện lối mở luồng trao đổi. */
+function blockerSummary(t: EmployeeTask): string | null {
+  if (t.blockerCount === 0) return null;
+  return t.openBlockerCount > 0
+    ? `${t.blockerCount} vướng mắc · ${t.openBlockerCount} chưa xử lý`
+    : `${t.blockerCount} vướng mắc · đã xử lý hết`;
+}
+
 /** "2026-10-26" → "26/10"; giá trị không phải ngày ISO giữ nguyên. */
 function formatDeadline(iso: string) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
@@ -76,10 +95,13 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
   tasks,
   dailyLogs,
   onAdvanceTask,
+  onOpenTask,
   onSaveLogs,
   onOpenNewPersonalTaskModal,
   filter: filterParam,
   onFilterChange: setFilter,
+  priorityFilter,
+  onPriorityFilterChange,
 }) => {
   const today = todayIso();
   const filter: Filter = FILTERS.find((f) => f === filterParam) ?? 'open';
@@ -94,6 +116,8 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const [savingAll, setSavingAll] = useState(false);
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
+  /** Việc đang mở hộp thoại "Báo xong / Hoàn thành" (ghi chú + tệp). */
+  const [finishing, setFinishing] = useState<EmployeeTask | null>(null);
 
   const matches: Record<Filter, (t: EmployeeTask) => boolean> = {
     open: isOpen,
@@ -102,14 +126,17 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
     due: (t) => isDue(t, today),
     blocked: (t) => isOpen(t) && isBlocked(t),
   };
-  const filteredTasks = tasks.filter(matches[filter]);
+  const statusTasks = tasks.filter(matches[filter]);
+  const filteredTasks = priorityFilter ? statusTasks.filter((t) => t.priority === priorityFilter) : statusTasks;
 
   // Mọi nhóm: hạn chót gần nhất lên trước (việc quá hạn tự nằm trên cùng); việc không có hạn xuống cuối.
+  // Cùng hạn thì việc ưu tiên cao hơn lên trước.
   const sortedTasks = useMemo(
     () =>
       [...filteredTasks].sort(
         (a, b) =>
           (hasDeadline(a) ? a.deadline : '9999').localeCompare(hasDeadline(b) ? b.deadline : '9999') ||
+          PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] ||
           a.code.localeCompare(b.code),
       ),
     [filteredTasks],
@@ -127,10 +154,10 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
 
   const isManager = currentUser.role === 'manager' || currentUser.role === 'director';
 
-  /** Nháp của 1 task; chưa gõ gì thì lấy baseline đã lưu hôm nay. */
+  /** Nháp của 1 task; chưa gõ gì thì lấy nhật ký đã lưu hôm nay (không phải chỉ thị của người giao). */
   const getDraft = (task: EmployeeTask): LogDraft =>
     logDrafts[task.id] ?? {
-      desc: task.description || '',
+      desc: task.logDescription,
       result: task.currentDeliverable || '',
       obstacle: task.blockerNote || '',
       progress: task.progress ?? 0,
@@ -145,7 +172,7 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
     const d = logDrafts[task.id];
     if (!d) return false;
     return (
-      d.desc !== (task.description || '') ||
+      d.desc !== task.logDescription ||
       d.result !== (task.currentDeliverable || '') ||
       d.obstacle !== (task.blockerNote || '') ||
       d.progress !== (task.progress ?? 0)
@@ -216,11 +243,11 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
     setLogDrafts({});
   };
 
-  const advance = async (task: EmployeeTask) => {
-    if (busyTaskId) return;
+  const advance = async (task: EmployeeTask, note?: string, files?: File[]) => {
+    if (busyTaskId) return false;
     setBusyTaskId(task.id);
     try {
-      await onAdvanceTask(task.id);
+      return await onAdvanceTask(task.id, note, files);
     } finally {
       setBusyTaskId(null);
     }
@@ -324,7 +351,7 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
               [
                 ['open', `Cần làm (${openTasks.length})`],
                 ['awaiting', `Chờ duyệt (${awaitingCount})`],
-                ['done', `Đã nghiệm thu (${doneCount})`],
+                ['done', `Đã xong (${doneCount})`],
                 null,
                 ['due', `Quá hạn & hôm nay (${overdueCount + dueTodayCount})`],
                 ['blocked', `Đang vướng (${blockedCount})`],
@@ -347,6 +374,19 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
                 </button>
               ),
             )}
+            <select
+              value={priorityFilter ?? ''}
+              onChange={(e) => onPriorityFilterChange((e.target.value || null) as TaskPriority | null)}
+              aria-label="Lọc theo mức ưu tiên"
+              className={`${compactInputCls} ml-auto`}
+            >
+              <option value="">Mọi mức ưu tiên</option>
+              {PRIORITY_OPTIONS.map((p) => (
+                <option key={p} value={p}>
+                  {PRIORITY_VI[p]} ({statusTasks.filter((t) => t.priority === p).length})
+                </option>
+              ))}
+            </select>
           </div>
 
 {/* Inline-edit Task Table (sheet-style, 1 row = 1 task) */}
@@ -406,14 +446,40 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
                       </div>
 
                       <div className="min-w-0">
-                        <div className={`text-sm font-bold truncate ${locked ? 'line-through text-outline' : 'text-on-surface'}`}>
+                        <button
+                          type="button"
+                          onClick={() => onOpenTask(task.id)}
+                          title="Xem chi tiết: chỉ thị, tệp đính kèm, trao đổi, lịch sử"
+                          className={`text-left text-sm font-bold line-clamp-2 hover:text-primary hover:underline ${
+                            locked ? 'line-through text-outline' : 'text-on-surface'
+                          }`}
+                        >
                           {task.title}
-                        </div>
+                        </button>
                         <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                           <StatusBadge {...flowCfg} />
+                          <PriorityBadge priority={task.priority} hideNormal />
                           {logCfg && <StatusBadge {...logCfg} />}
+                          {task.attachmentCount > 0 && (
+                            <span className="inline-flex items-center gap-0.5 text-xs text-secondary" title="Tệp đính kèm">
+                              <span aria-hidden="true" className="material-symbols-outlined [--icon-size:14px]">attach_file</span>
+                              <span className="sr-only">Tệp đính kèm:</span>
+                              {task.attachmentCount}
+                            </span>
+                          )}
+                          {task.messageCount > 0 && (
+                            <span className="inline-flex items-center gap-0.5 text-xs text-secondary" title="Tin trao đổi">
+                              <span aria-hidden="true" className="material-symbols-outlined [--icon-size:14px]">forum</span>
+                              <span className="sr-only">Tin trao đổi:</span>
+                              {task.messageCount}
+                            </span>
+                          )}
                         </div>
-                        <div className="text-xs text-secondary truncate mt-0.5">{task.bundleName}</div>
+                        <div className="text-xs text-secondary mt-0.5">
+                          {task.bundleName}
+                          {task.assignedByName && <> · Giao bởi {task.assignedByName}</>}
+                          {task.startDate && <> · Bắt đầu {formatDeadline(task.startDate)}</>}
+                        </div>
                       </div>
 
                       <div className={`text-xs font-semibold ${overdue ? 'text-error' : dueToday ? 'text-warning' : 'text-on-surface'}`}>
@@ -445,15 +511,31 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
                         placeholder="Kết quả…"
                       />
 
-                      <textarea
-                        value={draft.obstacle}
-                        onChange={(e) => patchDraft(task, { obstacle: e.target.value })}
-                        rows={1}
-                        disabled={locked}
-                        aria-label={`Vướng mắc — ${task.title}`}
-                        className={`${FIELD_CLS} ${draft.obstacle.trim() ? 'bg-error-container/40 border-error-fixed' : 'border-surface-container'}`}
-                        placeholder="(không có)"
-                      />
+                      <div className="flex flex-col gap-1 min-w-0">
+                        <textarea
+                          value={draft.obstacle}
+                          onChange={(e) => patchDraft(task, { obstacle: e.target.value })}
+                          rows={1}
+                          disabled={locked}
+                          aria-label={`Vướng mắc — ${task.title}`}
+                          className={`${FIELD_CLS} ${draft.obstacle.trim() ? 'bg-error-container/40 border-error-fixed' : 'border-surface-container'}`}
+                          placeholder="(không có)"
+                        />
+                        {task.openBlockerAt && (
+                          <span className="text-xs text-secondary">Gửi TP lúc {formatDateTime(task.openBlockerAt)}</span>
+                        )}
+                        {blockerSummary(task) && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenTask(task.id, 'trao-doi')}
+                            className={`text-left text-xs font-semibold hover:underline ${
+                              task.openBlockerCount > 0 ? 'text-error' : 'text-secondary'
+                            }`}
+                          >
+                            {blockerSummary(task)} — xem tất cả
+                          </button>
+                        )}
+                      </div>
 
                       <div className="flex flex-col gap-1">
                         <div className="flex items-center gap-1.5">
@@ -499,17 +581,26 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
                           selfClose={canApproveTask(currentUser, task)}
                           busy={busy}
                           disabled={busyTaskId !== null}
-                          onAdvance={() => advance(task)}
+                          onAdvance={() => (task.status === 'doing' ? setFinishing(task) : void advance(task))}
                         />
                       </div>
                     </div>
 
                     {isExpanded && (
                       <div className="col-span-full -mx-4 px-4 py-4 bg-surface-container-low border-t border-surface-container">
-                        <h4 className="text-xs font-bold text-secondary uppercase tracking-wider flex items-center gap-1.5 mb-3">
-                          <span aria-hidden="true" className="material-symbols-outlined [--icon-size:16px] text-primary">history</span>
-                          Lịch sử {HISTORY_LIMIT} ngày gần nhất
-                        </h4>
+                        <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
+                          <h4 className="text-xs font-bold text-secondary uppercase tracking-wider flex items-center gap-1.5">
+                            <span aria-hidden="true" className="material-symbols-outlined [--icon-size:16px] text-primary">history</span>
+                            Nhật ký {HISTORY_LIMIT} lần ghi gần nhất
+                          </h4>
+                          <button
+                            type="button"
+                            onClick={() => onOpenTask(task.id, 'lich-su')}
+                            className="text-xs font-semibold text-primary hover:underline"
+                          >
+                            Xem lịch sử đầy đủ
+                          </button>
+                        </div>
                         {history.length === 0 ? (
                           <div className="text-xs text-outline italic py-3">
                             Chưa có nhật ký nào trước hôm nay cho việc này.
@@ -519,29 +610,32 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
                             {history.map((log) => (
                               <div key={log.id} className="bg-white rounded-lg border border-surface-container p-3 flex flex-col gap-1.5">
                                 <div className="flex items-center justify-between">
-                                  <span className="text-xs font-extrabold text-primary font-mono">{log.logDate}</span>
+                                  <span className="text-xs font-extrabold text-primary font-mono" title={`Lưu lúc ${formatDateTime(log.createdAt)}`}>
+                                    {log.logDate}
+                                  </span>
                                   <span className="px-1.5 py-0.5 rounded-full bg-surface-container-low text-primary text-xs font-bold">
                                     {log.progress}%
                                   </span>
                                 </div>
                                 {log.description && (
-                                  <div className="text-xs text-on-surface">
+                                  <div className="text-xs text-on-surface whitespace-pre-line break-words">
                                     <span className="font-bold text-secondary mr-1">Mô tả:</span>
                                     {log.description}
                                   </div>
                                 )}
                                 {log.result && (
-                                  <div className="text-xs text-on-surface">
+                                  <div className="text-xs text-on-surface whitespace-pre-line break-words">
                                     <span className="font-bold text-secondary mr-1">Kết quả:</span>
                                     {log.result}
                                   </div>
                                 )}
                                 {log.obstacle && (
-                                  <div className="text-xs text-error">
+                                  <div className="text-xs text-error whitespace-pre-line break-words">
                                     <span className="font-bold mr-1">Vướng mắc:</span>
                                     {log.obstacle}
                                   </div>
                                 )}
+                                <div className="text-xs text-secondary">Lưu lúc {formatDateTime(log.createdAt)}</div>
                               </div>
                             ))}
                           </div>
@@ -559,9 +653,11 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
                   </span>
                   {tasks.length === 0
                     ? 'Bạn chưa được giao việc nào.'
-                    : filter === 'open'
-                      ? 'Bạn đã báo xong mọi việc.'
-                      : 'Không có việc nào trong mục này.'}
+                    : priorityFilter && statusTasks.length > 0
+                      ? `Không có việc mức "${PRIORITY_VI[priorityFilter]}" trong mục này.`
+                      : filter === 'open'
+                        ? 'Bạn đã báo xong mọi việc.'
+                        : 'Không có việc nào trong mục này.'}
                 </div>
               )}
             </div>
@@ -608,14 +704,31 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
           )}
         </div>
       </div>
+
+      <NoteDialog
+        request={
+          finishing && {
+            title: canApproveTask(currentUser, finishing) ? 'Hoàn thành công việc' : 'Báo xong công việc',
+            taskCode: finishing.code,
+            taskTitle: finishing.title,
+            label: canApproveTask(currentUser, finishing) ? 'Ghi chú kết quả' : 'Ghi chú cho người duyệt',
+            placeholder: 'Kết quả đạt được, nơi lưu sản phẩm, điều người duyệt cần lưu ý…',
+            confirmLabel: canApproveTask(currentUser, finishing) ? 'Hoàn thành' : 'Báo xong',
+          }
+        }
+        busy={busyTaskId !== null}
+        onClose={() => setFinishing(null)}
+        onSubmit={(note, files) => (finishing ? advance(finishing, note, files) : Promise.resolve(false))}
+      />
     </div>
   );
 };
 
 const PROGRESS_PRESETS = [0, 25, 50, 75, 100];
 
+/** Ô nhập trong bảng: gọn khi xem, tự cao lên khi đang gõ để viết / đọc nội dung dài. */
 const FIELD_CLS =
-  'text-xs px-2 py-1.5 bg-surface border rounded-md focus:outline-none focus:bg-white focus:ring-2 focus:ring-primary resize-none disabled:bg-surface-container disabled:cursor-not-allowed min-h-[34px] text-on-surface';
+  'text-xs px-2 py-1.5 bg-surface border rounded-md focus:outline-none focus:bg-white focus:ring-2 focus:ring-primary resize-y disabled:bg-surface-container disabled:cursor-not-allowed min-h-[34px] focus:min-h-[120px] transition-[min-height] text-on-surface';
 
 interface BadgeCfg {
   cls: string;
@@ -629,7 +742,7 @@ const FLOW_STATUS: Record<EmployeeTask['status'], BadgeCfg> = {
   doing: { cls: 'bg-primary-fixed text-on-primary-fixed-variant border-primary-fixed-dim', icon: 'play_circle', label: 'Đang làm' },
   pending_approval: { cls: 'bg-warning-container text-on-warning-container border-warning-fixed', icon: 'hourglass_top', label: 'Chờ duyệt' },
   blocked: { cls: 'bg-error-container text-on-error-container border-error-fixed', icon: 'block', label: 'Đang vướng' },
-  done: { cls: 'bg-tertiary-fixed/40 text-tertiary border-tertiary/30', icon: 'verified', label: 'Đã nghiệm thu' },
+  done: { cls: 'bg-tertiary-fixed/40 text-tertiary border-tertiary/30', icon: 'verified', label: 'Đã xong' },
 };
 
 /** Trạng thái nhật ký hôm nay. Không hiện gì khi chưa ghi để bảng đỡ rối. */

@@ -22,6 +22,7 @@ import dailyLogRoutes from './routes/dailyLogs.js';
 import historyRoutes from './routes/history.js';
 import teamMemberRoutes from './routes/teamMembers.js';
 import weeklyReportRoutes from './routes/weeklyReports.js';
+import attachmentRoutes from './routes/attachments.js';
 
 const PORT = Number(process.env.PORT) || 3001;
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
@@ -63,6 +64,8 @@ app.use('/api/employee-tasks', taskRoutes);
 //   GET    /api/daily-logs          - list tất cả (cho Báo cáo)
 //   DELETE /api/daily-logs/:id      - xoá log
 app.use('/api', dailyLogRoutes);
+// Tệp đính kèm: /api/tasks/4/:id/attachments, /api/attachments/:id
+app.use('/api', attachmentRoutes);
 app.use('/api/team-members', teamMemberRoutes);
 app.use('/api/history', historyRoutes);
 app.use('/api/weekly-reports', weeklyReportRoutes);
@@ -74,6 +77,9 @@ app.use('/api/*', (_req, res) => {
 
 // --- Error handler (cuối cùng) ---
 app.use((err, _req, res, _next) => {
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'file_too_large', message: 'Dữ liệu gửi lên quá lớn (tệp tối đa 25 MB).' });
+  }
   console.error('[server] Unhandled error:', err);
   res.status(500).json({ error: 'internal', message: 'Lỗi server không mong đợi.' });
 });

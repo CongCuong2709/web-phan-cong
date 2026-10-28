@@ -139,8 +139,11 @@ export interface TierItem extends Omit<Task, 'status' | 'priority' | 'ownerUserI
   };
   // Status / Priority giữ lại dạng Tiếng Việt để UI không phải refactor.
   /** 1:1 với 5 trạng thái của state machine — xem STATUS_VI trong lib/transforms.ts. */
-  status: 'Chuẩn bị' | 'Đang chạy' | 'Chờ duyệt' | 'Điểm nghẽn' | 'Đã xong';
-  priority: 'Cao (Critical Path)' | 'Trung bình' | 'Thấp';
+  status: 'Chưa bắt đầu' | 'Đang làm' | 'Chờ duyệt' | 'Đang vướng' | 'Đã xong';
+  /** Enum DB; nhãn tiếng Việt ở PRIORITY_VI (lib/transforms.ts). Chỉ T4 có cột này. */
+  priority: TaskPriority;
+  /** Thời điểm tạo (UTC từ SQLite) — với T4 là ngày giao việc. */
+  createdAt?: string;
   statusBadgeColor?: string;
   ownerUsername?: string;
   ownerUserId?: string;
@@ -171,7 +174,9 @@ export interface TeamLeadTask {
   updatedAt: string;
   deadline?: string;
   status: 'not_started' | 'in_progress' | 'pending_approval' | 'need_help' | 'done';
-  priority: TierItem['priority'];
+  priority: TaskPriority;
+  /** Vướng mắc NV đã báo mà TP chưa gỡ. */
+  openBlockerCount: number;
   /** NV viết "đang vướng ở đâu / cần hỗ trợ gì" — Manager xem khi mở task. */
   blockerNote?: string;
   /** Cần Trưởng phòng hỗ trợ: đang `blocked` HOẶC NV đã ghi vướng mắc (blocker_note không đổi status). */
@@ -190,13 +195,27 @@ export interface EmployeeTask {
   code: string;
   bundleName: string;
   title: string;
+  /** Chỉ thị / mô tả của người giao (tasks.description) — không phải nhật ký. */
   description: string;
+  /** Mô tả trong nhật ký hôm nay (daily_log.description), '' nếu chưa ghi. */
+  logDescription: string;
   /** Text kết quả bàn giao inline — sync với daily_log.result hôm nay. */
   currentDeliverable: string;
   lastUpdated: string;
   deadline: string;
   /** Enum DB nguyên bản — không gộp trạng thái. */
   status: 'pending' | 'doing' | 'pending_approval' | 'blocked' | 'done';
+  priority: TaskPriority;
+  startDate: string;
+  /** Người giao, khi khác chính người làm (việc tự tạo thì không có). */
+  assignedByName?: string;
+  /** Số lần báo vướng mắc / số còn chưa gỡ / số tin trao đổi / số tệp của task. */
+  blockerCount: number;
+  openBlockerCount: number;
+  /** Thời điểm (UTC từ server) vướng mắc chưa gỡ gần nhất được gửi. */
+  openBlockerAt?: string;
+  messageCount: number;
+  attachmentCount: number;
   /**
    * Tiến độ (%) — baseline cho slider: daily_log.progress hôm nay nếu có,
    * ngược lại tasks.progress (xem buildEmployeeTasks).
@@ -265,6 +284,9 @@ export interface HistoryEntry {
   username: string;
   userName: string;
   createdAt: string;
+  /** Có khi dòng này là một lần đổi trạng thái (enum DB). */
+  fromStatus?: TaskStatus;
+  toStatus?: TaskStatus;
 }
 
 export type ActiveAppTab = 'cay-gantt-4-tang' | 'giao-viec-nhom' | 'viec-cua-toi' | 'bao-cao';

@@ -14,6 +14,8 @@
  */
 
 import type {
+  TaskPriority,
+  TaskStatus,
   TierItem,
   TierLevel,
   TeamLeadTask,
@@ -24,6 +26,7 @@ import type {
 } from '../types';
 import type {
   TaskApiRowDto,
+  TaskMessageKind,
   TeamMemberDto,
   DailyLogRowDto,
   HistoryEntryDto,
@@ -121,8 +124,10 @@ export function apiToTierItem(api: TaskApiRowDto): TierItem {
     daysRemaining,
     progress: api.progress_rollup ?? api.progress ?? 0,
     status: statusEnumToVi(api.status),
-    // Map priority từ enum sang tiếng Việt. Chỉ T4 có cột priority.
-    priority: priorityEnumToVi(api.priority) as TierItem['priority'],
+    priority: toPriority(api.priority),
+    createdAt: api.created_at,
+    assignedByFullname: api.assigned_by_fullname ?? null,
+    assignedByUserId: api.assigned_by_user_id != null ? String(api.assigned_by_user_id) : null,
     description: api.description,
     managementNotes: api.management_notes ?? '',
     blockerAlert: api.blocker_alert ?? undefined,
@@ -144,17 +149,17 @@ export function apiToTierItem(api: TaskApiRowDto): TierItem {
  * chỉ có một tên trên toàn bộ UI.
  */
 const STATUS_VI: Record<string, TierItem['status']> = {
-  pending: 'Chuẩn bị',
-  doing: 'Đang chạy',
+  pending: 'Chưa bắt đầu',
+  doing: 'Đang làm',
   pending_approval: 'Chờ duyệt',
-  blocked: 'Điểm nghẽn',
+  blocked: 'Đang vướng',
   done: 'Đã xong',
 };
 
 export const TIER_STATUS_OPTIONS = Object.values(STATUS_VI);
 
-function statusEnumToVi(s: string | null | undefined): TierItem['status'] {
-  return STATUS_VI[String(s)] ?? 'Chuẩn bị';
+export function statusEnumToVi(s: string | null | undefined): TierItem['status'] {
+  return STATUS_VI[String(s)] ?? 'Chưa bắt đầu';
 }
 
 /**
@@ -189,23 +194,69 @@ export function viStatusToEnum(s: TierItem['status']): string {
   return Object.keys(STATUS_VI).find((k) => STATUS_VI[k] === s) ?? 'pending';
 }
 
-export function viPriorityToEnum(p: TierItem['priority'] | undefined): string {
-  switch (p) {
-    case 'Cao (Critical Path)': return 'critical';
-    case 'Thấp': return 'low';
-    default: return 'normal';
-  }
+/** 4 mức ưu tiên, từ cao xuống thấp — nhãn 1:1 với enum DB `tasks.priority`. */
+export const PRIORITY_OPTIONS: readonly TaskPriority[] = ['critical', 'high', 'normal', 'low'];
+
+export const PRIORITY_VI: Record<TaskPriority, string> = {
+  critical: 'Khẩn cấp',
+  high: 'Cao',
+  normal: 'Bình thường',
+  low: 'Thấp',
+};
+
+/** Hạng để sắp xếp: số nhỏ = gấp hơn. */
+export const PRIORITY_RANK: Record<TaskPriority, number> = { critical: 0, high: 1, normal: 2, low: 3 };
+
+export function isPriority(p: unknown): p is TaskPriority {
+  return typeof p === 'string' && (PRIORITY_OPTIONS as readonly string[]).includes(p);
 }
 
-/** Convert priority enum DB → Tiếng Việt. */
-function priorityEnumToVi(p: string | null | undefined): string {
-  switch (String(p)) {
-    case 'critical':
-    case 'high': return 'Cao (Critical Path)';
-    case 'low': return 'Thấp';
-    case 'normal':
-    default: return 'Trung bình';
-  }
+/** Giá trị lạ / thiếu (T1–T3 không có cột priority) → 'normal'. */
+export function toPriority(p: unknown): TaskPriority {
+  return isPriority(p) ? p : 'normal';
+}
+
+/** Nhãn tiếng Việt cho từng loại tin trong luồng trao đổi. */
+export const MESSAGE_KIND_VI: Record<TaskMessageKind, string> = {
+  note: 'Ghi chú',
+  blocker: 'Vướng mắc',
+  start: 'Bắt đầu',
+  submit: 'Báo xong',
+  approve: 'Hoàn thành',
+  return: 'Trả về làm lại',
+  unblock: 'Gỡ vướng mắc',
+};
+
+/**
+ * Thời điểm từ server ("YYYY-MM-DD HH:MM:SS" của SQLite `datetime('now')`) là giờ UTC
+ * không ghi múi giờ. Đọc thẳng bằng `new Date()` sẽ lệch 7 tiếng — luôn đi qua hàm này.
+ */
+export function parseServerTime(s: string | null | undefined): Date | null {
+  if (!s) return null;
+  const iso = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(s) ? `${s.replace(' ', 'T')}Z` : s;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** "dd/MM/yyyy HH:mm" theo giờ máy người xem. */
+export function formatDateTime(s: string | null | undefined): string {
+  const d = parseServerTime(s);
+  if (!d) return s || '—';
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+/** Ngày (YYYY-MM-DD) theo giờ máy người xem của một thời điểm server. */
+export function serverTimeToLocalDate(s: string | null | undefined): string {
+  const d = parseServerTime(s);
+  return d ? `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}` : '';
+}
+
+/** "2026-10-26" → "26/10/2026"; giá trị khác giữ nguyên. */
+export function formatIsoDate(iso: string | null | undefined): string {
+  const m = iso ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso) : null;
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso || '—';
 }
 
 /**
@@ -252,7 +303,8 @@ export function apiToTeamLeadTask(api: TaskApiRowDto): TeamLeadTask {
     updatedAt: api.updated_at,
     deadline: api.end_date ?? undefined,
     status: statusMap[api.status] ?? 'in_progress',
-    priority: priorityEnumToVi(api.priority) as TeamLeadTask['priority'],
+    priority: toPriority(api.priority),
+    openBlockerCount: api.open_blocker_count ?? 0,
     blockerNote: api.blocker_note ?? '',
     needsHelp: api.status === 'blocked' || !!api.blocker_note?.trim(),
     progress: api.progress ?? 0,
@@ -281,11 +333,23 @@ export function apiToEmployeeTask(api: TaskApiRowDto): EmployeeTask {
     bundleName: api.bundle_name ?? 'Việc cá nhân',
     title: api.title,
     description: api.description,
-    // currentDeliverable fill từ daily_log.result hôm nay qua useEffect (xem ViecCuaToiView).
+    // logDescription / currentDeliverable lấy từ nhật ký hôm nay ở `buildEmployeeTasks`.
+    logDescription: '',
     currentDeliverable: '',
     lastUpdated: api.updated_at,
     deadline: api.end_date ?? '',
+    startDate: api.start_date ?? '',
     status,
+    priority: toPriority(api.priority),
+    assignedByName:
+      api.assigned_by_user_id && api.assigned_by_user_id !== api.owner_user_id
+        ? api.assigned_by_fullname ?? undefined
+        : undefined,
+    blockerCount: api.blocker_count ?? 0,
+    openBlockerCount: api.open_blocker_count ?? 0,
+    openBlockerAt: api.open_blocker_at ?? undefined,
+    messageCount: api.message_count ?? 0,
+    attachmentCount: api.attachment_count ?? 0,
     // Manager = assigned_by (người giao task).
     manager: {
       name: api.assigned_by_fullname ?? api.owner_fullname ?? '—',
@@ -325,7 +389,7 @@ export function buildEmployeeTasks(rows: TaskApiRowDto[], logs: DailyLogRowDto[]
       return {
         ...base,
         currentDeliverable: log.result ?? '',
-        description: log.description?.trim() ? log.description : base.description,
+        logDescription: log.description ?? '',
         lastUpdated: 'Hôm nay',
         progress: log.progress ?? base.progress,
       };
@@ -400,6 +464,8 @@ function describeAudit(api: HistoryEntryDto, oldV: Record<string, unknown>, newV
   if (api.entity_type === 'task_help_message') {
     return api.action === 'resolve' ? 'Đã xử lý vướng mắc' : `Báo vướng mắc: ${newV.body ?? ''}`;
   }
+  if (newV.attachment_added) return `Đính kèm tệp: ${newV.attachment_added}`;
+  if (newV.attachment_removed) return `Xoá tệp đính kèm: ${newV.attachment_removed}`;
   if (newV.archived === true) return 'Lưu trữ';
   if (newV.archived === false) return 'Khôi phục từ lưu trữ';
   if (newV.unblocked) return `Gỡ vướng mắc${newV.note ? `: ${newV.note}` : ''}`;
@@ -438,6 +504,9 @@ export function apiToHistoryEntry(api: HistoryEntryDto): HistoryEntry {
     username,
     userName: api.author_fullname_str ?? username,
     createdAt: api.created_at,
+    ...(newV.status && newV.status !== oldV.status
+      ? { fromStatus: oldV.status as TaskStatus | undefined, toStatus: newV.status as TaskStatus }
+      : {}),
   };
 }
 

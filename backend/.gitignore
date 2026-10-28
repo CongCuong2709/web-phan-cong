@@ -18,3 +18,5 @@ vitest.config.ts
 # Logs & text output files
 *.log
 *.txt
+# Tệp đính kèm lưu nội bộ (lib/attachments.js)
+uploads/
