@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Avatar } from './ui/Brand';
 import { isTierItemOverdue, PRIORITY_VI } from '../lib/transforms';
 import { TierItem, User } from '../types';
+import { creatableTiers } from '../auth/permissions';
 
 interface Gantt4TangViewProps {
   tierItems: TierItem[];
@@ -13,7 +14,7 @@ interface Gantt4TangViewProps {
   onMonthChange: (month: string | null) => void;
   /** Đang hiện cả mục lưu trữ (mục có `archived`) trong cây. */
   showArchived?: boolean;
-  /** Bật/tắt xem mục lưu trữ — chỉ truyền khi người dùng được lưu trữ (admin / BGĐ). */
+  /** Bật/tắt xem mục lưu trữ — chỉ truyền khi người dùng được lưu trữ (admin / HĐQT / Điều hành). */
   onToggleArchived?: () => void;
 }
 
@@ -192,14 +193,14 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
   const t4Count = tierItems.filter((i) => i.tier === 4).length;
 
   // Read-only context: T1 project mà currentUser không thể edit.
-  // - Admin/director: không bao giờ read-only (full quyền)
+  // - Admin, HĐQT, Điều hành: không bao giờ read-only
   // - Manager: T1 ngoài dept của mình → read-only
   // - Employee: TẤT CẢ T1 đều read-only (chỉ xem để biết project context)
   const userDepts = currentUser?.departments ?? [];
   const isReadOnlyContext = (item: TierItem): boolean => {
     if (item.tier !== 1) return false;
     const role = currentUser?.role;
-    if (role === 'admin' || role === 'director') return false;
+    if (role === 'admin' || role === 'board' || role === 'director') return false;
     if (role === 'employee') return true; // mọi T1 đều read-only
     // manager
     if (!item.department) return false;
@@ -312,6 +313,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
               </button>
             )}
 
+            {currentUser && creatableTiers(currentUser.role).length > 0 && (
             <button
               onClick={onOpenNewModal}
               className="h-8 px-3.5 bg-primary hover:bg-primary-container text-white text-xs font-semibold rounded flex items-center gap-1.5 shadow-sm transition-all active:scale-[0.98]"
@@ -320,6 +322,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
               <span aria-hidden="true" className="material-symbols-outlined [--icon-size:17px]">add</span>
               <span>Thêm mới</span>
             </button>
+            )}
           </div>
         </div>
       </div>

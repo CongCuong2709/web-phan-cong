@@ -30,7 +30,6 @@ interface ViecCuaToiViewProps {
   onOpenTask: (taskId: string, tab?: 'trao-doi' | 'lich-su') => void;
   /** Lưu nhật ký; resolve danh sách taskId đã lưu thành công. */
   onSaveLogs: (entries: SaveLogEntry[]) => Promise<string[]>;
-  onOpenNewPersonalTaskModal: () => void;
   /** Bộ lọc lưu trên URL (?loc=due); giá trị lạ coi như 'open'. */
   filter?: string;
   onFilterChange: (filter: Filter) => void;
@@ -97,7 +96,6 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
   onAdvanceTask,
   onOpenTask,
   onSaveLogs,
-  onOpenNewPersonalTaskModal,
   filter: filterParam,
   onFilterChange: setFilter,
   priorityFilter,
@@ -152,7 +150,7 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
   const awaitingCount = count('awaiting');
   const doneCount = count('done');
 
-  const isManager = currentUser.role === 'manager' || currentUser.role === 'director';
+  const isManager = currentUser.role === 'manager';
 
   /** Nháp của 1 task; chưa gõ gì thì lấy nhật ký đã lưu hôm nay (không phải chỉ thị của người giao). */
   const getDraft = (task: EmployeeTask): LogDraft =>
@@ -280,21 +278,11 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
 
           {/* Action buttons */}
           <div className="flex flex-wrap items-center gap-2.5 self-start lg:self-center">
-            <button
-              onClick={onOpenNewPersonalTaskModal}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-surface-container-low hover:bg-surface-container-high text-on-surface text-sm font-semibold transition-colors shadow-sm"
-              type="button"
-            >
-              <span aria-hidden="true" className="material-symbols-outlined [--icon-size:18px] text-primary">
-                add_circle
-              </span>
-              <span>Tự tạo thêm việc cá nhân</span>
-            </button>
             {/* Escalation qua tasks.blocker_note (NV ghi 1 dòng qua modal "Báo cáo vướng mắc" trên từng task). */}
             {isManager && (
               <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-surface-container-low text-on-surface-variant text-xs">
                 <span aria-hidden="true" className="material-symbols-outlined [--icon-size:16px]">info</span>
-                <span>Bạn là cấp quản lý — hỗ trợ nhân viên ở tab "Giao việc nhóm".</span>
+                <span>Tạo đầu việc và hỗ trợ nhân viên ở tab "Giao việc nhóm".</span>
               </span>
             )}
           </div>

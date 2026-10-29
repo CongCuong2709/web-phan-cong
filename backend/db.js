@@ -53,32 +53,18 @@ if (isFreshDb) {
 }
 
 /**
- * Nâng cấp idempotent cho DB đã tồn tại (schema.sql chỉ chạy với DB mới).
- * Chạy mỗi lần khởi động, trước khi prepare statement. Giữ khớp với schema.sql.
+ * DB tạo trước mô hình phụ trách HĐQT → Điều hành → Trưởng phòng không nâng cấp
+ * được tại chỗ (CHECK role, bundles.department_code, đính kèm 4 tầng). Dừng sớm
+ * với hướng dẫn rõ ràng thay vì lỗi SQL khó hiểu ở request đầu tiên.
  */
 function hasColumn(table, column) {
   return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
 }
-if (!hasColumn('task_help_messages', 'kind')) {
-  db.exec(`ALTER TABLE task_help_messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'blocker'
-    CHECK (kind IN ('note','blocker','start','submit','approve','return','unblock'))`);
-  console.log('[db] Đã thêm cột task_help_messages.kind.');
-}
-db.exec(`
-  CREATE TABLE IF NOT EXISTS task_attachments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    message_id INTEGER REFERENCES task_help_messages(id) ON DELETE CASCADE,
-    original_name TEXT NOT NULL,
-    stored_name TEXT NOT NULL UNIQUE,
-    mime TEXT NOT NULL,
-    size_bytes INTEGER NOT NULL CHECK (size_bytes > 0),
-    uploaded_by_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+if (!hasColumn('bundles', 'department_code') || !hasColumn('task_attachments', 'project_id')) {
+  throw new Error(
+    `[db] ${DB_PATH} dùng schema cũ. Xoá database.db* (reset-db.ps1) rồi chạy lại "npm run seed".`,
   );
-  CREATE INDEX IF NOT EXISTS idx_attachments_task ON task_attachments(task_id);
-  CREATE INDEX IF NOT EXISTS idx_attachments_message ON task_attachments(message_id);
-`);
+}
 
 /**
  * Manual transaction wrapper. node:sqlite không có `db.transaction()` built-in.
@@ -132,13 +118,17 @@ export const stmt = {
   ),
 
   // --- Projects (Tier 1) ---
+  // Mọi tầng có project_owner_user_id (Điều hành phụ trách dự án) — policy dùng chung.
   listProjects: db.prepare(`
-    SELECT p.*, u.username AS owner_username_str, u.fullname AS owner_fullname
+    SELECT p.*, u.username AS owner_username_str, u.fullname AS owner_fullname,
+      p.owner_user_id AS project_owner_user_id,
+      (SELECT COUNT(*) FROM task_attachments f WHERE f.project_id = p.id) AS attachment_count
     FROM projects p LEFT JOIN users u ON u.id = p.owner_user_id
     ORDER BY p.code
   `),
   getProject: db.prepare(`
-    SELECT p.*, u.username AS owner_username_str, u.fullname AS owner_fullname
+    SELECT p.*, u.username AS owner_username_str, u.fullname AS owner_fullname,
+      p.owner_user_id AS project_owner_user_id
     FROM projects p LEFT JOIN users u ON u.id = p.owner_user_id
     WHERE p.id = ?
   `),
@@ -162,8 +152,12 @@ export const stmt = {
 
   // --- Phases (Tier 2) ---
   listPhases: db.prepare(`
-    SELECT ph.*, u.username AS owner_username_str, u.fullname AS owner_fullname
-    FROM phases ph LEFT JOIN users u ON u.id = ph.owner_user_id
+    SELECT ph.*, u.username AS owner_username_str, u.fullname AS owner_fullname,
+      p.owner_user_id AS project_owner_user_id,
+      (SELECT COUNT(*) FROM task_attachments f WHERE f.phase_id = ph.id) AS attachment_count
+    FROM phases ph
+      LEFT JOIN users u ON u.id = ph.owner_user_id
+      JOIN projects p ON p.id = ph.project_id
     ORDER BY ph.code
   `),
   getPhasesByProject: db.prepare(`
@@ -172,10 +166,15 @@ export const stmt = {
     WHERE ph.project_id = ? ORDER BY ph.code
   `),
   getPhase: db.prepare(`
-    SELECT ph.*, u.username AS owner_username_str, u.fullname AS owner_fullname
-    FROM phases ph LEFT JOIN users u ON u.id = ph.owner_user_id
+    SELECT ph.*, u.username AS owner_username_str, u.fullname AS owner_fullname,
+      p.owner_user_id AS project_owner_user_id
+    FROM phases ph
+      LEFT JOIN users u ON u.id = ph.owner_user_id
+      JOIN projects p ON p.id = ph.project_id
     WHERE ph.id = ?
   `),
+  /** Đổi Điều hành phụ trách dự án → mọi giai đoạn của dự án đổi theo. */
+  setPhaseOwnersOfProject: db.prepare('UPDATE phases SET owner_user_id = ? WHERE project_id = ?'),
   // Audit columns: created_by_user_id
   insertPhase: db.prepare(`
     INSERT INTO phases (project_id, code, title, description, owner_user_id, created_by_user_id,
@@ -197,10 +196,12 @@ export const stmt = {
   // --- Bundles (Tier 3) ---
   listBundles: db.prepare(`
     SELECT b.*, u.username AS owner_username_str, u.fullname AS owner_fullname,
-      ph.project_id AS project_id
+      ph.project_id AS project_id, p.owner_user_id AS project_owner_user_id,
+      (SELECT COUNT(*) FROM task_attachments f WHERE f.bundle_id = b.id) AS attachment_count
     FROM bundles b
       LEFT JOIN users u ON u.id = b.owner_user_id
-      LEFT JOIN phases ph ON ph.id = b.phase_id
+      JOIN phases ph ON ph.id = b.phase_id
+      JOIN projects p ON p.id = ph.project_id
     ORDER BY b.code
   `),
   getBundlesByPhase: db.prepare(`
@@ -209,15 +210,19 @@ export const stmt = {
     WHERE b.phase_id = ? ORDER BY b.code
   `),
   getBundle: db.prepare(`
-    SELECT b.*, u.username AS owner_username_str, u.fullname AS owner_fullname
-    FROM bundles b LEFT JOIN users u ON u.id = b.owner_user_id
+    SELECT b.*, u.username AS owner_username_str, u.fullname AS owner_fullname,
+      ph.project_id AS project_id, p.owner_user_id AS project_owner_user_id
+    FROM bundles b
+      LEFT JOIN users u ON u.id = b.owner_user_id
+      JOIN phases ph ON ph.id = b.phase_id
+      JOIN projects p ON p.id = ph.project_id
     WHERE b.id = ?
   `),
   // Audit columns: created_by_user_id
   insertBundle: db.prepare(`
     INSERT INTO bundles (phase_id, code, title, description, owner_user_id, created_by_user_id,
-      start_date, end_date, status, collapsed)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      department_code, start_date, end_date, status, collapsed)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
   updateBundle: db.prepare(`
     UPDATE bundles SET
@@ -235,6 +240,7 @@ export const stmt = {
       a.username AS assigned_by_username_str, a.fullname AS assigned_by_fullname,
       b.title AS bundle_name,
       b.phase_id AS phase_id, ph.project_id AS project_id,
+      b.owner_user_id AS bundle_owner_user_id, p.owner_user_id AS project_owner_user_id,
       (SELECT COUNT(*) FROM task_help_messages m WHERE m.task_id = t.id) AS message_count,
       (SELECT COUNT(*) FROM task_help_messages m WHERE m.task_id = t.id AND m.kind = 'blocker') AS blocker_count,
       (SELECT COUNT(*) FROM task_help_messages m
@@ -245,8 +251,9 @@ export const stmt = {
     FROM tasks t
       LEFT JOIN users u ON u.id = t.owner_user_id
       LEFT JOIN users a ON a.id = t.assigned_by_user_id
-      LEFT JOIN bundles b ON b.id = t.bundle_id
-      LEFT JOIN phases ph ON ph.id = b.phase_id
+      JOIN bundles b ON b.id = t.bundle_id
+      JOIN phases ph ON ph.id = b.phase_id
+      JOIN projects p ON p.id = ph.project_id
     ORDER BY t.code
   `),
   getTask: db.prepare(`
@@ -254,12 +261,14 @@ export const stmt = {
       u.username AS owner_username_str, u.fullname AS owner_fullname,
       a.username AS assigned_by_username_str, a.fullname AS assigned_by_fullname,
       b.title AS bundle_name,
-      b.phase_id AS phase_id, ph.project_id AS project_id
+      b.phase_id AS phase_id, ph.project_id AS project_id,
+      b.owner_user_id AS bundle_owner_user_id, p.owner_user_id AS project_owner_user_id
     FROM tasks t
       LEFT JOIN users u ON u.id = t.owner_user_id
       LEFT JOIN users a ON a.id = t.assigned_by_user_id
-      LEFT JOIN bundles b ON b.id = t.bundle_id
-      LEFT JOIN phases ph ON ph.id = b.phase_id
+      JOIN bundles b ON b.id = t.bundle_id
+      JOIN phases ph ON ph.id = b.phase_id
+      JOIN projects p ON p.id = ph.project_id
     WHERE t.id = ?
   `),
   getTasksByBundle: db.prepare(`
@@ -356,16 +365,26 @@ export const stmt = {
       AND created_at >= datetime('now', '-10 minutes')
   `),
 
-  // --- Task attachments ---
+  // --- Tệp đính kèm (đúng 1 trong project_id | phase_id | bundle_id | task_id) ---
   insertAttachment: db.prepare(`
-    INSERT INTO task_attachments (task_id, message_id, original_name, stored_name, mime, size_bytes, uploaded_by_user_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO task_attachments (project_id, phase_id, bundle_id, task_id, message_id,
+      original_name, stored_name, mime, size_bytes, uploaded_by_user_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
   listAttachmentsByTask: db.prepare(`
     SELECT f.id, f.task_id, f.message_id, f.original_name, f.mime, f.size_bytes,
       f.uploaded_by_user_id, f.created_at, u.fullname AS uploader_fullname
     FROM task_attachments f LEFT JOIN users u ON u.id = f.uploaded_by_user_id
     WHERE f.task_id = ?
+    ORDER BY f.created_at ASC, f.id ASC
+  `),
+  /** Tệp của 1 mục bất kỳ tầng: .all(tier, id). */
+  listAttachmentsByItem: db.prepare(`
+    SELECT f.id, f.task_id, f.message_id, f.original_name, f.mime, f.size_bytes,
+      f.uploaded_by_user_id, f.created_at, u.fullname AS uploader_fullname
+    FROM task_attachments f LEFT JOIN users u ON u.id = f.uploaded_by_user_id
+    WHERE (?1 = 1 AND f.project_id = ?2) OR (?1 = 2 AND f.phase_id = ?2)
+       OR (?1 = 3 AND f.bundle_id = ?2) OR (?1 = 4 AND f.task_id = ?2)
     ORDER BY f.created_at ASC, f.id ASC
   `),
   getAttachment: db.prepare('SELECT * FROM task_attachments WHERE id = ?'),
@@ -400,8 +419,8 @@ export const stmt = {
     ORDER BY created_at DESC LIMIT 100
   `),
 
-  // --- Weekly reports (Ponytail: 1 bảng, rows lưu JSON) ---
-  // UPSERT theo (user_id, week_start). Mỗi NV 1 row / tuần.
+  // --- Weekly reports (1 bảng, rows lưu JSON) ---
+  // UPSERT theo (user_id, week_start). Mỗi người viết 1 row / tuần.
   upsertWeeklyReport: db.prepare(`
     INSERT INTO weekly_reports (user_id, week_start, week_end, rows_json, updated_at)
     VALUES (?, ?, ?, ?, datetime('now'))
@@ -411,18 +430,8 @@ export const stmt = {
       updated_at = datetime('now')
   `),
   getWeeklyReport: db.prepare(`
-    SELECT user_id, week_start, week_end, rows_json, manager_note,
-           ack_user_id, ack_at, updated_at
+    SELECT user_id, week_start, week_end, rows_json, updated_at
     FROM weekly_reports WHERE user_id = ? AND week_start = ?
-  `),
-  // Manager review: ghi riêng phản hồi (rows_json đã merge ở routes) + nhận xét
-  // chung + cờ "đã xem". KHÔNG dùng upsertWeeklyReport ở đây — upsert đó của
-  // nhân viên, sẽ đè mất manager_note/ack_* nếu chạy lại.
-  saveWeeklyReportReview: db.prepare(`
-    UPDATE weekly_reports
-       SET rows_json = ?, manager_note = ?, ack_user_id = ?, ack_at = ?,
-           updated_at = datetime('now')
-     WHERE user_id = ? AND week_start = ?
   `),
 };
 

@@ -44,7 +44,9 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL CHECK (length(password_hash) >= 20),
   fullname TEXT NOT NULL,
   email TEXT,
-  role TEXT NOT NULL CHECK (role IN ('admin','director','manager','employee')),
+  -- board = HĐQT (tạo dự án, xem tất cả), director = Điều hành (phụ trách dự án),
+  -- manager = Trưởng phòng (phụ trách hạng mục), employee = Nhân viên.
+  role TEXT NOT NULL CHECK (role IN ('admin','board','director','manager','employee')),
   initial TEXT,
   avatar_url TEXT,
   is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0,1)),
@@ -74,9 +76,14 @@ CREATE INDEX IF NOT EXISTS idx_user_dept_dept ON user_departments(department_cod
 -- Tier 3 = bundles     (Hạng mục)      — có phase_id
 -- Tier 4 = tasks       (Đầu việc)      — có bundle_id, is_today_date
 --
--- Phase G3: tất cả 4 tier có created_by_user_id (người tạo) — khác với
---   owner_user_id (người chịu trách nhiệm hiện tại). tasks còn có
---   assigned_by_user_id (người giao việc).
+-- owner_user_id = người phụ trách, là gốc của phân quyền (lib/policies.js):
+--   projects → 1 Điều hành (director), do HĐQT chọn khi tạo dự án
+--   phases   → Điều hành phụ trách dự án (tạo giai đoạn)
+--   bundles  → 1 Trưởng phòng (manager); bundles.department_code = phòng của hạng mục
+--   tasks    → người làm: chính Trưởng phòng đó hoặc nhân viên cùng phòng
+-- created_by_user_id = người tạo. tasks còn có assigned_by_user_id (người giao).
+-- Mọi đầu việc thuộc 1 hạng mục (tasks.bundle_id NOT NULL).
+-- Ngày của mục con nằm trong khoảng ngày của mục cha (kiểm tra ở routes/tasks.js).
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS projects (
@@ -136,6 +143,7 @@ CREATE TABLE IF NOT EXISTS bundles (
   description TEXT NOT NULL DEFAULT '',
   owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   created_by_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  department_code TEXT NOT NULL REFERENCES departments(code) ON DELETE RESTRICT,
   start_date TEXT CHECK (start_date IS NULL OR start_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
   end_date TEXT CHECK (end_date IS NULL OR end_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
   status TEXT NOT NULL DEFAULT 'pending'
@@ -149,10 +157,11 @@ CREATE TABLE IF NOT EXISTS bundles (
 CREATE INDEX IF NOT EXISTS idx_bundles_phase ON bundles(phase_id);
 CREATE INDEX IF NOT EXISTS idx_bundles_owner ON bundles(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_bundles_creator ON bundles(created_by_user_id);
+CREATE INDEX IF NOT EXISTS idx_bundles_dept ON bundles(department_code);
 
 CREATE TABLE IF NOT EXISTS tasks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  bundle_id INTEGER REFERENCES bundles(id) ON DELETE CASCADE,
+  bundle_id INTEGER NOT NULL REFERENCES bundles(id) ON DELETE CASCADE,
   code TEXT NOT NULL,
   title TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
@@ -261,25 +270,34 @@ CREATE INDEX IF NOT EXISTS idx_help_msg_task ON task_help_messages(task_id);
 CREATE INDEX IF NOT EXISTS idx_help_msg_unresolved ON task_help_messages(task_id, is_resolved);
 
 -- ============================================================================
--- 4b. Tệp đính kèm của task (lưu nội bộ trên máy chủ)
+-- 4b. Tệp đính kèm (lưu nội bộ trên máy chủ) — cả 4 tầng
 -- ============================================================================
 --
--- message_id NULL  = tệp gắn khi giao việc / bổ sung cho task (người tải lên hoặc admin xoá được).
--- message_id có giá trị = tệp gắn trong 1 tin trao đổi (không xoá được, như tin nhắn).
+-- Mỗi tệp thuộc đúng 1 mục: project_id | phase_id | bundle_id | task_id (CHECK bên dưới).
+-- message_id chỉ có với tệp của đầu việc: tệp gắn trong 1 tin trao đổi (không xoá được).
+-- message_id NULL = tệp gắn khi tạo / giao việc (người tải lên hoặc admin xoá được).
 -- Nội dung tệp nằm ở thư mục UPLOAD_DIR (mặc định backend/uploads) dưới tên `stored_name`
--- ngẫu nhiên; `original_name` chỉ dùng khi tải xuống. Giữ khớp với bước nâng cấp trong db.js.
+-- ngẫu nhiên; `original_name` chỉ dùng khi tải xuống.
 
 CREATE TABLE IF NOT EXISTS task_attachments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  phase_id INTEGER REFERENCES phases(id) ON DELETE CASCADE,
+  bundle_id INTEGER REFERENCES bundles(id) ON DELETE CASCADE,
+  task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
   message_id INTEGER REFERENCES task_help_messages(id) ON DELETE CASCADE,
   original_name TEXT NOT NULL,
   stored_name TEXT NOT NULL UNIQUE,
   mime TEXT NOT NULL,
   size_bytes INTEGER NOT NULL CHECK (size_bytes > 0),
   uploaded_by_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  CHECK ((project_id IS NOT NULL) + (phase_id IS NOT NULL) + (bundle_id IS NOT NULL) + (task_id IS NOT NULL) = 1),
+  CHECK (message_id IS NULL OR task_id IS NOT NULL)
 );
+CREATE INDEX IF NOT EXISTS idx_attachments_project ON task_attachments(project_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_phase ON task_attachments(phase_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_bundle ON task_attachments(bundle_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_task ON task_attachments(task_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_message ON task_attachments(message_id);
 
@@ -332,30 +350,21 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 -- dạng JSON thay vì bảng con — không cần chuẩn hoá hoá vì không có truy vấn
 -- theo row (chỉ đọc/cập nhật cả report 1 lần).
 --
--- Composite PK (user_id, week_start) = đúng 1 report / (nhân viên, tuần).
+-- Composite PK (user_id, week_start) = đúng 1 report / (người viết, tuần).
 --
 -- KHÔNG có FK tới projects/tasks — đặc tả nghiệp vụ cố ý cho phép nhân viên
 -- tự do nhập đầu việc KHÔNG gắn mã công việc gốc.
 --
--- Cột phản hồi của quản lý:
---   manager_note — Nhận xét chung cho cả tuần (1 ô dưới bảng).
---   ack_*       — Cờ "quản lý đã xem" (KHÔNG phải duyệt/approval: không có
---                 trạng thái từ chối, NV vẫn sửa báo cáo tuần này bình thường).
---   mgr_comment — nằm trong từng phần tử của rows_json (chỉ đạo của QL theo
---                 từng dòng). Backend bảo toàn field này khi NV lưu.
+-- Nhân viên và Trưởng phòng viết; không có bước duyệt / phản hồi.
 CREATE TABLE IF NOT EXISTS weekly_reports (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   week_start TEXT NOT NULL,                    -- YYYY-MM-DD (thứ 2 của tuần)
   week_end TEXT NOT NULL,                      -- YYYY-MM-DD (chủ nhật)
   rows_json TEXT NOT NULL DEFAULT '[]',
-  manager_note TEXT,                           -- nhận xét chung của QL
-  ack_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  ack_at TEXT,                                 -- lúc QL bấm "Xác nhận đã xem"
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (user_id, week_start)
 );
 CREATE INDEX IF NOT EXISTS idx_wr_user ON weekly_reports(user_id, week_start DESC);
-CREATE INDEX IF NOT EXISTS idx_wr_ack ON weekly_reports(ack_at) WHERE ack_at IS NOT NULL;
 
 -- ============================================================================
 -- 8. Triggers (auto-update updated_at)

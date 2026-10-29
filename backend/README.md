@@ -97,41 +97,49 @@ Một endpoint duy nhất `/api/tasks`, dispatch theo `tier`:
 | `/api/tasks/:taskId/logs` | POST | `daily_log:create` |
 | `/api/daily-logs` | GET | All authed (cho Báo cáo) |
 | `/api/daily-logs/:id` | DELETE | admin/manager |
-| `/api/users` | GET | `user:list` (admin/manager) |
+| `/api/users` | GET | `user:list` (mọi vai trò trừ employee) |
 | `/api/users/:username` | GET | `user:read` |
 | `/api/team-members` | GET | All authed (derived workload) |
-| `/api/history` | GET | `history:read_all` (admin/director) hoặc truy vấn theo `entity_type`+`entity_id` |
+| `/api/history` | GET | `history:read_all` (admin/board/director) hoặc truy vấn theo `entity_type`+`entity_id` |
 
 ## 🔐 Phân quyền — nguồn chuẩn duy nhất
 
 `lib/policies.js` là **nguồn chuẩn duy nhất** cho mọi quyết định RBAC.
 Route handler gọi `authorize(action, user, ctx)` — không viết check role rải rác.
 
+Phân quyền theo **người phụ trách** (`owner_user_id`) của từng tầng, không theo phòng ban.
+Mỗi row trả về mang sẵn `project_owner_user_id` (mọi tầng) và `bundle_owner_user_id` (T4).
+
 | Action | Quy tắc |
 |---|---|
-| `task:create` | admin: T1–T4 · director: T1–T2 · manager: T3–T4 (cùng phòng) · employee: T4 |
-| `task:edit` | admin: tất cả · director: không · manager: cùng phòng · employee: T4 của mình |
+| `task:create` | T1: board (HĐQT) · T2, T3: Điều hành phụ trách dự án · T4: Trưởng phòng phụ trách hạng mục |
+| `task:assign` | T1 → 1 director · T3 → 1 manager thuộc phòng của hạng mục · T4 → chính TP phụ trách hoặc employee cùng phòng |
+| `task:reassign` | T1: board · T3: Điều hành phụ trách · T4: TP phụ trách · T2 đi theo dự án |
+| `task:edit` | T1: board, Điều hành phụ trách · T2, T3: Điều hành phụ trách · T4: TP phụ trách, người làm |
+| `task:close` | T3: TP phụ trách · T2, T1: Điều hành phụ trách |
+| `task:approve` | TP phụ trách hạng mục chứa việc |
+| `task:archive` | T1: board, Điều hành phụ trách · T2: Điều hành phụ trách |
+| `task:attach` | T1–T3: như `task:edit` · T4: người giao, TP phụ trách |
 | `task:delete` | admin only |
-| `task:approve` | admin + manager (cùng phòng) |
-| `task:toggle` | owner hoặc admin |
-| `task:read` | admin/director: tất cả · manager: cùng phòng (+ T1 read-only) · employee: T4 của mình |
-| `daily_log:create` | owner task, hoặc manager trong phòng |
-| `user:list` / `user:read` | admin/director tất cả · manager trong phòng · employee: không |
-| `history:read_all` | admin/director |
+| `task:toggle` | người làm hoặc admin |
+| `task:read` | board/director: tất cả · manager: T1–T3 tất cả, T4 trong hạng mục / phòng mình / của mình · employee: T4 của mình |
+| `daily_log:create` | người làm, TP phụ trách |
+| `user:list` / `user:read` | board/director tất cả · manager trong phòng · employee: không |
+| `history:read_all` | admin/board/director |
+| `weekly_report:write` | employee, manager |
+| `weekly_report:read` | board/director tất cả · manager cùng phòng · chính mình |
 
-State machine (`lib/stateMachine.js`) là ranh giới riêng cho **status**:
-`done` là terminal, `blocked` chỉ manager/admin gỡ được, employee chỉ được
-`pending→doing`, `doing→pending_approval`, `doing→blocked`, `blocked→pending`.
-
-> `utils/permissions.js` chỉ còn là shim re-export. Import mới phải trỏ thẳng
-> về `lib/policies.js`.
+admin luôn được phép. State machine (`lib/stateMachine.js`) là ranh giới riêng cho **status**:
+`done` là terminal; admin, Điều hành phụ trách (T1–T3), TP phụ trách (T3, T4) đổi tự do;
+người làm chỉ được `pending→doing`, `doing→pending_approval`, `doing→blocked`, `blocked→pending`.
 
 ## 🔐 Tài khoản demo (sau khi seed)
 
 | Username | Password | Role | Phòng ban |
 |---|---|---|---|
 | `admin` | `admin123` | admin | Tất cả |
-| `khanh` / `nam` | `123456` | director | ĐH |
+| `son` / `lan` | `123456` | board (HĐQT) | ĐH |
+| `khanh` / `nam` | `123456` | director (Điều hành; phụ trách DA-68 / DA-69) | ĐH |
 | `hung` | `123456` | manager | QLDA |
 | `cuong` | `123456` | manager | KTTC |
 | `thanh` | `123456` | manager | TC |

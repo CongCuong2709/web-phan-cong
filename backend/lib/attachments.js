@@ -99,14 +99,25 @@ export function removeStoredFiles(storedNames) {
 }
 
 /** Tên lưu của mọi tệp thuộc mục (và các mục con) — gọi TRƯỚC khi xoá CASCADE. */
-const STORED_UNDER = {
-  4: 'SELECT stored_name FROM task_attachments WHERE task_id = ?',
-  3: `SELECT f.stored_name FROM task_attachments f JOIN tasks t ON t.id = f.task_id WHERE t.bundle_id = ?`,
-  2: `SELECT f.stored_name FROM task_attachments f JOIN tasks t ON t.id = f.task_id
-        JOIN bundles b ON b.id = t.bundle_id WHERE b.phase_id = ?`,
-  1: `SELECT f.stored_name FROM task_attachments f JOIN tasks t ON t.id = f.task_id
-        JOIN bundles b ON b.id = t.bundle_id JOIN phases ph ON ph.id = b.phase_id WHERE ph.project_id = ?`,
+const TASKS_UNDER = {
+  4: 'SELECT ?1 AS id',
+  3: 'SELECT id FROM tasks WHERE bundle_id = ?1',
+  2: 'SELECT t.id FROM tasks t JOIN bundles b ON b.id = t.bundle_id WHERE b.phase_id = ?1',
+  1: `SELECT t.id FROM tasks t JOIN bundles b ON b.id = t.bundle_id
+        JOIN phases ph ON ph.id = b.phase_id WHERE ph.project_id = ?1`,
 };
+const BUNDLES_UNDER = {
+  3: 'SELECT ?1 AS id',
+  2: 'SELECT id FROM bundles WHERE phase_id = ?1',
+  1: 'SELECT b.id FROM bundles b JOIN phases ph ON ph.id = b.phase_id WHERE ph.project_id = ?1',
+};
+const PHASES_UNDER = { 2: 'SELECT ?1 AS id', 1: 'SELECT id FROM phases WHERE project_id = ?1' };
+const STORED_UNDER = Object.fromEntries([1, 2, 3, 4].map((tier) => [tier, [
+  `SELECT stored_name FROM task_attachments WHERE task_id IN (${TASKS_UNDER[tier]})`,
+  BUNDLES_UNDER[tier] && `SELECT stored_name FROM task_attachments WHERE bundle_id IN (${BUNDLES_UNDER[tier]})`,
+  PHASES_UNDER[tier] && `SELECT stored_name FROM task_attachments WHERE phase_id IN (${PHASES_UNDER[tier]})`,
+  tier === 1 && 'SELECT stored_name FROM task_attachments WHERE project_id = ?1',
+].filter(Boolean).join(' UNION ALL ')]));
 export function storedNamesUnder(tier, id) {
   return db.prepare(STORED_UNDER[Number(tier)]).all(Number(id)).map((r) => r.stored_name);
 }

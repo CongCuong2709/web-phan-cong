@@ -11,7 +11,8 @@ export type TierLevel = 1 | 2 | 3 | 4;
 /**
  * === MVP Identity & Access ===
  */
-export type Role = 'admin' | 'director' | 'manager' | 'employee';
+/** board = HĐQT, director = Điều hành, manager = Trưởng phòng, employee = Nhân viên. */
+export type Role = 'admin' | 'board' | 'director' | 'manager' | 'employee';
 
 /**
  * 4 organizational departments (phòng ban) used by 4-Tier Enterprise MVP.
@@ -42,6 +43,7 @@ export const DEPARTMENT_LABEL: Record<Department, string> = {
 
 export const ROLE_LABEL: Record<Role, string> = {
   admin: 'Quản trị hệ thống',
+  board: 'Hội đồng quản trị',
   director: 'Điều hành',
   manager: 'Trưởng phòng',
   employee: 'Nhân viên',
@@ -148,6 +150,12 @@ export interface TierItem extends Omit<Task, 'status' | 'priority' | 'ownerUserI
   ownerUsername?: string;
   ownerUserId?: string;
   ownerFullname?: string;
+  /** Điều hành phụ trách dự án chứa mục này (T1: chính owner). */
+  projectOwnerUserId: string;
+  /** Chỉ T4: Trưởng phòng phụ trách hạng mục chứa đầu việc. */
+  bundleOwnerUserId?: string;
+  /** Số tệp đính kèm khi tạo / giao việc. */
+  attachmentCount: number;
   // Tiến độ task tính từ MAX(daily_logs.progress).
   /** Thuộc nhánh đã lưu trữ (chính nó hoặc dự án / giai đoạn chứa nó). */
   archived: boolean;
@@ -168,6 +176,10 @@ export interface TeamLeadTask {
   ownerAvatar?: string;
   ownerUsername?: string;
   department?: Department;
+  /** Trưởng phòng phụ trách hạng mục chứa việc (người duyệt). */
+  bundleOwnerUserId: string;
+  /** Id hạng mục chứa việc — để lọc người nhận khi giao lại. */
+  bundleId: string;
   /** Ngày giao việc (created_at). */
   submittedAt: string;
   /** Lần cập nhật gần nhất — với việc chờ duyệt là lúc NV báo xong. */
@@ -230,6 +242,8 @@ export interface EmployeeTask {
   ownerUsername?: string;
   /** Department for manager cross-check. */
   department?: Department;
+  /** Trưởng phòng phụ trách hạng mục chứa việc (người duyệt). */
+  bundleOwnerUserId: string;
   /** NV viết "đang vướng ở đâu" — Manager xem khi mở task. */
   blockerNote?: string;
 }

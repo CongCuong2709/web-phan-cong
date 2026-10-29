@@ -8,23 +8,23 @@
  *
  * Vì sao vẫn còn file mirror ở frontend:
  *   Component render đồng bộ, không thể chờ round-trip API trước mỗi lần quyết
- *   định hiển thị. Nhưng để tránh lệch logic, các quy tắc ở đây chỉ mô tả
- *   *hành vi hiện tại* và được ghi chú rõ policy backend tương ứng.
- *   Khi đổi quyền, đổi `backend/lib/policies.js` TRƯỚC, rồi cập nhật ở đây.
+ *   định hiển thị. Các quy tắc ở đây chỉ mô tả *hành vi hiện tại* và ghi rõ
+ *   policy backend tương ứng. Khi đổi quyền, đổi `backend/lib/policies.js` TRƯỚC.
  *
- * Quy tắc nghiệp vụ (đã thống nhất với BGĐ — nguồn: policies.js):
+ * Mô hình phụ trách theo tầng (nguồn: policies.js):
  *
- *   admin     : full quyền (đọc + sửa + tạo) trên mọi phòng ban.
- *   director  : làm chủ dự án — tạo / sửa / lưu trữ T1 (Dự án) và T2 (Giai đoạn),
- *               nghiệm thu T1/T2. Chỉ đọc với T3/T4.
- *   manager   : chỉ trong phòng ban mình. Tạo T3 + T4.
- *   employee  : chỉ T4 của chính mình. Chỉ ghi nhật ký của task mình được giao.
+ *   board (HĐQT)       : xem tất cả, tạo dự án và chọn 1 Điều hành phụ trách.
+ *   director (Điều hành): xem tất cả; trong dự án mình phụ trách — tạo / sửa giai đoạn,
+ *                         tạo hạng mục giao Trưởng phòng, nghiệm thu giai đoạn / dự án.
+ *   manager (Trưởng phòng): trong hạng mục mình phụ trách — tạo đầu việc cho mình hoặc
+ *                         nhân viên cùng phòng, duyệt, nghiệm thu hạng mục.
+ *   employee (Nhân viên): làm đầu việc của mình.
+ *   admin              : toàn quyền.
  */
 
 import type {
   ActiveAppTab,
   Department,
-  TeamLeadTask,
   TierItem,
   TierLevel,
   User,
@@ -37,7 +37,7 @@ import type {
 /**
  * Kiểm tra user có "thấy" item thuộc phòng ban `department` không.
  * Mirror: policies.js `inDepartment`.
- * - Item không gắn department → ai cũng thấy (T2/T3 là org-level).
+ * - Item không gắn department → ai cũng thấy.
  * - Admin sentinel (departments rỗng) → all-access.
  */
 export function inDepartment(user: User, department?: Department | string): boolean {
@@ -46,38 +46,50 @@ export function inDepartment(user: User, department?: Department | string): bool
   return user.departments.includes(department as Department);
 }
 
-/** Tạo ID an toàn — không bao giờ trùng trong cùng 1 tick (dùng khi cần unique). */
-let __idCounter = 0;
-export function uid(prefix = 'id'): string {
-  __idCounter += 1;
-  return `${prefix}-${Date.now().toString(36)}-${__idCounter.toString(36)}`;
+/** Điều hành phụ trách dự án chứa `item`. Mirror: policies.js `isProjectLead`. */
+export function isProjectLead(user: User, item: Pick<TierItem, 'projectOwnerUserId'>): boolean {
+  return user.role === 'director' && item.projectOwnerUserId === user.id;
+}
+
+/** Trưởng phòng phụ trách hạng mục (T3) hoặc hạng mục chứa đầu việc (T4). Mirror: `isBundleLead`. */
+export function isBundleLead(user: User, item: Pick<TierItem, 'tier' | 'ownerUserId' | 'bundleOwnerUserId'>): boolean {
+  if (user.role !== 'manager') return false;
+  if (item.tier === 3) return item.ownerUserId === user.id;
+  if (item.tier === 4) return item.bundleOwnerUserId === user.id;
+  return false;
 }
 
 // ---------------------------------------------------------------------------
 // TierItem (cây 4 tầng)
 // ---------------------------------------------------------------------------
 
-/**
- * Tầng user được phép tạo mới trên Gantt.
- * Mirror: policies.js `canCreateTiers` (dùng bởi policy `task:create`).
- */
-export function canCreateTiers(role: User['role']): TierLevel[] {
+/** Tầng user có thể tạo (khi đã chọn đúng mục cha mình phụ trách). */
+export function creatableTiers(role: User['role']): TierLevel[] {
   switch (role) {
-    case 'admin':
-      return [1, 2, 3, 4];
-    case 'director':
-      return [1, 2];
-    case 'manager':
-      return [3, 4];
-    case 'employee':
-    default:
-      return [4];
+    case 'admin': return [1, 2, 3, 4];
+    case 'board': return [1];
+    case 'director': return [2, 3];
+    case 'manager': return [4];
+    default: return [];
   }
 }
 
 /**
- * Quyết định user có sửa được 1 TierItem cụ thể không (để bật/tắt nút Sửa).
- * Mirror: policies.js `canEditTask` (dùng bởi policy `task:edit`).
+ * Được tạo mục con tầng `tier` dưới `parent` không (null với dự án).
+ * Mirror: policies.js `task:create`.
+ */
+export function canCreateUnder(user: User, tier: TierLevel, parent: TierItem | null): boolean {
+  if (parent?.archived) return false;
+  if (user.role === 'admin') return tier === 1 || !!parent;
+  if (tier === 1) return user.role === 'board';
+  if (!parent) return false;
+  if (tier === 2 || tier === 3) return isProjectLead(user, parent);
+  return isBundleLead(user, parent);
+}
+
+/**
+ * Sửa thông tin mục. Mirror: policies.js `task:edit`.
+ * T1: HĐQT, Điều hành phụ trách. T2, T3: Điều hành phụ trách. T4: Trưởng phòng phụ trách, người làm.
  */
 export function canEditTierItem(
   user: User | null | undefined,
@@ -86,59 +98,64 @@ export function canEditTierItem(
   if (!user || !item) return false;
   if (item.archived) return false; // nhánh lưu trữ là chỉ đọc (server trả 409)
   if (user.role === 'admin') return true;
-  if (user.role === 'director') return item.tier === 1 || item.tier === 2;
-  if (user.role === 'manager') {
-    return inDepartment(user, item.department);
-  }
-  // employee: chỉ T4 của chính mình
-  return item.tier === 4 && item.ownerUsername === user.username;
+  if (item.tier === 1 && user.role === 'board') return true;
+  if (item.tier <= 3) return isProjectLead(user, item);
+  return isBundleLead(user, item) || item.ownerUserId === user.id;
+}
+
+/**
+ * Đổi người phụ trách. Mirror: policies.js `task:reassign`.
+ * T1: HĐQT. T3: Điều hành phụ trách dự án. T4: Trưởng phòng phụ trách hạng mục. T2 đi theo dự án.
+ */
+export function canReassignTierItem(user: User | null | undefined, item: TierItem | null | undefined): boolean {
+  if (!user || !item || item.archived || item.tier === 2) return false;
+  if (user.role === 'admin') return true;
+  if (item.tier === 1) return user.role === 'board';
+  if (item.tier === 3) return isProjectLead(user, item);
+  return isBundleLead(user, item);
 }
 
 /**
  * Lưu trữ / khôi phục dự án (T1), giai đoạn (T2).
- * Mirror: policies.js policy `task:archive` (admin, BGĐ).
+ * Mirror: policies.js `task:archive` (Điều hành phụ trách; HĐQT với dự án).
  */
 export function canArchiveTierItem(
   user: User | null | undefined,
   item: TierItem | null | undefined
 ): boolean {
   if (!user || !item || (item.tier !== 1 && item.tier !== 2)) return false;
-  return user.role === 'admin' || user.role === 'director';
+  if (user.role === 'admin' || isProjectLead(user, item)) return true;
+  return item.tier === 1 && user.role === 'board';
 }
 
 /**
- * Thêm / xoá tệp "khi giao việc" của T4 — khớp policy `task:attach` ở backend:
- * người giao, Trưởng phòng phụ trách, admin. Kết quả của người làm gửi qua Trao đổi.
+ * Thêm / xoá tệp "khi tạo / giao việc". Mirror: policies.js `task:attach`.
+ * T1–T3: ai sửa được mục đó. T4: người giao, Trưởng phòng phụ trách.
+ * Kết quả của người làm gửi qua Trao đổi.
  */
 export function canAttachToTask(
   user: User | null | undefined,
   item: TierItem | null | undefined
 ): boolean {
-  if (!user || !item || item.tier !== 4 || item.archived) return false;
+  if (!user || !item || item.archived) return false;
+  if (item.tier < 4) return canEditTierItem(user, item);
   if (user.role === 'admin') return true;
   if (item.assignedByUserId && item.assignedByUserId === user.id) return true;
-  return user.role === 'manager' && inDepartment(user, item.department);
+  return isBundleLead(user, item);
 }
 
-/** Cho phép đổi trạng thái (status dropdown) — cùng guard với edit. */
-export const canChangeStatus = canEditTierItem;
-
 /**
- * Nghiệm thu / đóng mục cha — khớp policy `task:close` ở backend:
- * T3 hạng mục: admin, hoặc manager quản lý mọi phòng ban của các đầu việc con
- * (`childDepartments`); T2, T1: admin hoặc BGĐ.
+ * Nghiệm thu / đóng mục cha. Mirror: policies.js `task:close`.
+ * T3: Trưởng phòng phụ trách hạng mục. T2, T1: Điều hành phụ trách dự án.
  */
 export function canAcceptTierItem(
   user: User | null | undefined,
   item: TierItem | null | undefined,
-  childDepartments: (string | undefined)[] = [],
 ): boolean {
   if (!user || !item || item.tier === 4) return false;
   if (user.role === 'admin') return true;
-  if (item.tier === 3) {
-    return user.role === 'manager' && childDepartments.every((d) => !d || inDepartment(user, d as Department));
-  }
-  return user.role === 'director';
+  if (item.tier === 3) return isBundleLead(user, item);
+  return isProjectLead(user, item);
 }
 
 // ---------------------------------------------------------------------------
@@ -146,14 +163,8 @@ export function canAcceptTierItem(
 // ---------------------------------------------------------------------------
 
 /**
- * Quyền hiện nút "Ghi nhật ký".
- * Mirror: policies.js `canAddDailyLog` (dùng bởi policy `daily_log:create`).
- *
- * Quy tắc:
- *   - admin: luôn được
- *   - director: read-only (không ghi log)
- *   - manager: cùng phòng ban với task
- *   - employee: chỉ owner của task
+ * Quyền hiện nút "Ghi nhật ký". Mirror: policies.js `daily_log:create`
+ * (admin, người làm, Trưởng phòng phụ trách hạng mục).
  */
 export function canAddDailyLog(
   user: User | null | undefined,
@@ -161,60 +172,36 @@ export function canAddDailyLog(
 ): boolean {
   if (!user || !task) return false;
   if (user.role === 'admin') return true;
-  if (user.role === 'director') return false;
-  if (user.role === 'manager') {
-    return inDepartment(user, task.department);
-  }
-  // employee: chỉ owner của task
-  return task.ownerUsername === user.username;
+  return task.ownerUserId === user.id || isBundleLead(user, task);
 }
 
 // ---------------------------------------------------------------------------
-// TeamLeadTask (giao việc nhóm)
+// Đầu việc (giao việc nhóm, việc của tôi)
 // ---------------------------------------------------------------------------
 
 /**
- * Quyền hiện nút nghiệm thu.
- * Mirror: policies.js policy `task:approve`.
+ * Duyệt / trả về / gỡ vướng đầu việc. Mirror: policies.js `task:approve`
+ * (Trưởng phòng phụ trách hạng mục chứa việc, admin).
  */
 export function canApproveTask(
   user: User | null | undefined,
-  task?: Pick<TeamLeadTask, 'department'>
+  task: { bundleOwnerUserId?: string }
 ): boolean {
   if (!user) return false;
   if (user.role === 'admin') return true;
-  if (user.role === 'director') return false; // không có tab giao việc nhóm
-  if (user.role === 'manager') {
-    if (!task) return true;
-    return inDepartment(user, task.department);
-  }
-  return false;
+  return user.role === 'manager' && !!task.bundleOwnerUserId && task.bundleOwnerUserId === user.id;
 }
 
 /** Quyền xử lý yêu cầu trợ giúp — alias của canApproveTask (cùng quy tắc). */
 export const canResolveHelp = canApproveTask;
 
 // ---------------------------------------------------------------------------
-// Misc
+// Báo cáo tuần + trang
 // ---------------------------------------------------------------------------
 
-/**
- * Tìm manager đầu tiên của user — dùng để hiển thị "Trưởng phòng giao" đúng người
- * thay vì chính employee.
- *
- * Đây là tra cứu dữ liệu thuần túy (hiển thị tên), KHÔNG phải kiểm tra quyền —
- * không cần mirror sang backend.
- */
-export function findManagerOf(
-  user: User,
-  allUsers: User[]
-): User | undefined {
-  if (user.role === 'manager' || user.role === 'director') return undefined;
-  return allUsers.find(
-    (u) =>
-      u.role === 'manager' &&
-      u.departments.some((d) => user.departments.includes(d))
-  );
+/** Nhân viên và Trưởng phòng viết báo cáo tuần. Mirror: policies.js `weekly_report:write`. */
+export function writesWeeklyReport(user: User | null | undefined): boolean {
+  return user?.role === 'employee' || user?.role === 'manager';
 }
 
 /** Các trang chính mỗi vai trò được xem — App dùng để chặn URL không hợp lệ, Header để hiện tab. */
@@ -222,19 +209,15 @@ export function visibleTabsFor(user: User | null): ActiveAppTab[] {
   if (!user) return [];
   switch (user.role) {
     case 'admin':
-      return ['cay-gantt-4-tang', 'giao-viec-nhom', 'viec-cua-toi', 'bao-cao'];
-    case 'director':
-      // BGĐ: chỉ cần executive overview (cây Gantt toàn hệ thống + báo cáo tổng hợp).
-      // Không vào giao việc nhóm hay việc cá nhân.
-      return ['cay-gantt-4-tang', 'bao-cao'];
     case 'manager':
       return ['cay-gantt-4-tang', 'giao-viec-nhom', 'viec-cua-toi', 'bao-cao'];
+    case 'board':
+    case 'director':
+      // HĐQT, Điều hành: cây công việc toàn hệ thống + báo cáo. Không làm đầu việc.
+      return ['cay-gantt-4-tang', 'bao-cao'];
     case 'employee':
     default:
-      // Employee xem 'cay-gantt-4-tang' dạng read-only context chain (parent T4 của mình),
-      // giống pattern Jira/Linear/Asana — chỉ thấy T1/T2/T3 cha của task mình.
-      // 'bao-cao' = Báo cáo tuần (WeeklyReportView) — Ponytail: employee tự viết báo cáo.
+      // Nhân viên xem cây dạng ngữ cảnh chỉ đọc (chuỗi cha của việc mình) + báo cáo tuần của mình.
       return ['viec-cua-toi', 'cay-gantt-4-tang', 'bao-cao'];
   }
 }
-

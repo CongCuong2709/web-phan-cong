@@ -14,8 +14,8 @@ Hệ thống công việc và báo cáo TAG — điều phối công việc nhó
 |---|---|---|---|
 | T1 | `projects` | Dự án | Root, owner + dates |
 | T2 | `phases` | Giai đoạn | `project_id`, `management_notes`, `blocker_alert` |
-| T3 | `bundles` | Hạng mục | `phase_id` |
-| T4 | `tasks` | Đầu việc (leaf) | `bundle_id` (nullable), `is_today`, owner = NV |
+| T3 | `bundles` | Hạng mục | `phase_id`, `department_code`, owner = Trưởng phòng |
+| T4 | `tasks` | Đầu việc (leaf) | `bundle_id` (bắt buộc), owner = TP phụ trách hoặc NV cùng phòng |
 
 Mỗi bảng hierarchy có `progress_rollup`, tính ở JS qua `recomputeRollup`
 (trigger SQLite chỉ cập nhật `updated_at`).
@@ -48,13 +48,15 @@ Xoá T4 sẽ snapshot `daily_logs` + `task_help_messages` vào audit trước kh
 
 | Role | Quyền |
 |---|---|
-| `admin` | Toàn quyền mọi phòng ban |
-| `director` | Chỉ đọc; tạo được T1/T2 |
-| `manager` | Trong phòng ban mình; tạo T3/T4; duyệt nghiệm thu |
-| `employee` | Chỉ T4 của mình; ghi nhật ký task mình được giao |
+| `admin` | Toàn quyền |
+| `board` (HĐQT) | Xem tất cả; tạo dự án và chọn 1 Điều hành phụ trách |
+| `director` (Điều hành) | Xem tất cả; trong dự án mình phụ trách: tạo giai đoạn, tạo hạng mục giao Trưởng phòng, nghiệm thu giai đoạn / dự án |
+| `manager` (Trưởng phòng) | Trong hạng mục mình phụ trách: tạo đầu việc cho mình hoặc NV cùng phòng, duyệt, nghiệm thu hạng mục; viết báo cáo tuần |
+| `employee` | Làm đầu việc của mình; viết báo cáo tuần |
+
+Báo cáo tuần không có bước duyệt. Cả 4 tầng đính kèm được tệp / ảnh.
 
 > `src/auth/permissions.ts` chỉ dùng để **ẩn/hiện UI**, không phải boundary bảo mật.
-> `backend/utils/permissions.js` là shim deprecated trỏ về `lib/policies.js`.
 
 ## 🚀 Chạy nhanh
 

@@ -25,6 +25,11 @@
  *   POST   /api/tasks/4/:id/messages — Gửi ghi chú / vướng mắc ({ body, kind: 'note'|'blocker', with_files? })
  *   POST   /api/tasks/:tier/:id/archive|unarchive — Lưu trữ / khôi phục dự án (T1), giai đoạn (T2)
  *
+ * Người phụ trách (owner_user_id) theo tầng — xem lib/policies.js:
+ *   T1 dự án: 1 Điều hành, do HĐQT chọn. T2 giai đoạn: luôn là Điều hành phụ trách dự án.
+ *   T3 hạng mục: 1 Trưởng phòng + phòng của hạng mục. T4 đầu việc: Trưởng phòng đó hoặc NV cùng phòng.
+ * Ngày của mục con nằm trong khoảng ngày của mục cha; sửa ngày mục cha không được làm con lọt ra ngoài.
+ *
  * Ghi chú kèm thao tác: nếu có `note` (hoặc `with_files: true` để gắn tệp ngay sau đó),
  * server tạo 1 tin trong luồng trao đổi và trả `message_id` — client tải tệp lên với id đó
  * (xem routes/attachments.js).
@@ -32,13 +37,12 @@
  * Lưu ý:
  *   - recomputeRollup dùng subquery UPDATE single-statement (atomic).
  *   - DELETE T4 snapshot daily_logs + help_messages vào audit_log trước khi CASCADE xoá.
- *   - canSee T2/T3 giữ nguyên "org-level" (xem CHÍNH SÁCH ở policies.js).
  */
 
 import { Router } from 'express';
 import { db, stmt, tx } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
-import { authorize, inDepartment, uid } from '../lib/policies.js';
+import { authorize, uid } from '../lib/policies.js';
 import { canTransition } from '../lib/stateMachine.js';
 import { today } from '../lib/dates.js';
 import { recomputeRollup, rollupFrom } from '../lib/rollup.js';
@@ -46,13 +50,6 @@ import { removeStoredFiles, storedNamesUnder } from '../lib/attachments.js';
 
 const router = Router();
 router.use(requireAuth);
-
-/** Trừ N ngày từ ISO date. */
-function dateMinusDays(isoDate, days) {
-  const d = new Date(isoDate + 'T00:00:00');
-  d.setDate(d.getDate() - days);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
 
 /** Validate YYYY-MM-DD. Return true nếu hợp lệ hoặc null/undefined. */
 function isIsoDate(s) {
@@ -81,25 +78,13 @@ function normalizePriority(p) {
   return 'normal';
 }
 
-/**
- * canSee: filter theo role + dept.
- *
- *   - T1 (project) là BGĐ-owned → admin/director/manager thấy hết (không gắn department_code).
- *   - T2/T3 (phase/bundle) KHÔNG có department_code → "org-level" theo thiết kế.
- *     policies.js:task:read xử lý: manager cùng dept nào cũng thấy (vì
- *     inDepartment(user, null) = true). Đây là policy hiện tại, không phải bug.
- *   - T4 (task) có department_code → manager phải cùng phòng ban.
- */
+/** Xem được mục này không — cùng luật với policy `task:read`. */
 function canSee(user, item) {
-  if (user.role === 'admin' || user.role === 'director') return true;
-  if (user.role === 'manager') {
-    if (item.tier === 1) return true; // BGĐ-owned project
-    return inDepartment(user, item.department_code);
-  }
-  // Employee
-  if (item.tier === 4) return item.owner_username_str === user.username;
-  return true;
+  return authorize('task:read', user, { task: item }).ok;
 }
+
+const TIER_LABEL = { 1: 'dự án', 2: 'giai đoạn', 3: 'hạng mục', 4: 'đầu việc' };
+const TIER_ENTITY = { 1: 'project', 2: 'phase', 3: 'bundle', 4: 'task' };
 
 /** Bảng con trực tiếp của mục cha (T1–T3) — dùng khi nghiệm thu. */
 const CHILDREN_OF = {
@@ -151,39 +136,64 @@ export const ARCHIVED_ERROR = {
   message: 'Mục này thuộc dự án / giai đoạn đã lưu trữ — khôi phục trước khi chỉnh sửa.',
 };
 
-/** Helper: thêm tier + parent_ids vào row để canSee + transform xử lý. */
+/** Helper: thêm tier vào row để policy + transform xử lý. */
 function enrichWithTier(row, tier) {
   if (!row) return null;
   return { ...row, tier: Number(tier) };
 }
 
-/** Resolve owner_user_id. */
-function resolveOwner(req) {
-  const body = req.body || {};
-  if (body.owner_user_id && Number.isFinite(Number(body.owner_user_id))) {
-    return { ownerId: Number(body.owner_user_id), source: 'user_id' };
-  }
-  if (body.owner_username && typeof body.owner_username === 'string') {
-    const u = db.prepare(
-      'SELECT id FROM users WHERE username = ? COLLATE NOCASE AND is_active = 1'
-    ).get(body.owner_username.trim());
-    if (!u) return { ownerId: null, source: 'username_not_found', username: body.owner_username };
-    return { ownerId: u.id, source: 'username' };
-  }
-  return { ownerId: req.user.id, source: 'fallback' };
+/** Mục theo tier + id, đã gắn `tier` (null nếu không có). */
+export function loadTierItem(tier, id) {
+  return enrichWithTier(loadItem(tier, id), tier);
 }
 
 /**
- * Resolve created_by_user_id. Mặc định = req.user.id (người tạo request).
- * Cho phép override qua body.created_by_user_id (chỉ admin mới nên — caller
- * kiểm tra authorize 'task:create' đã cover).
+ * Người được chọn làm phụ trách (body.owner_user_id hoặc body.owner_username), kèm phòng ban.
+ * undefined = body không chỉ định; null = không tìm thấy user đang hoạt động.
  */
-function resolveCreatedBy(req) {
-  const body = req.body || {};
-  if (body.created_by_user_id && Number.isFinite(Number(body.created_by_user_id))) {
-    return Number(body.created_by_user_id);
+function loadAssignee(body) {
+  let row;
+  if (body.owner_user_id != null && body.owner_user_id !== '') {
+    row = db.prepare('SELECT id, role, fullname FROM users WHERE id = ? AND is_active = 1').get(Number(body.owner_user_id));
+  } else if (typeof body.owner_username === 'string' && body.owner_username.trim()) {
+    row = db.prepare('SELECT id, role, fullname FROM users WHERE username = ? COLLATE NOCASE AND is_active = 1')
+      .get(body.owner_username.trim());
+  } else {
+    return undefined;
   }
-  return req.user.id;
+  if (!row) return null;
+  return { ...row, departments: stmt.getUserDepartments.all(row.id).map((d) => d.department_code) };
+}
+
+/** dd/mm/yyyy cho thông báo lỗi. */
+function viDate(iso) {
+  return iso ? iso.split('-').reverse().join('/') : '';
+}
+
+/**
+ * Ngày [start, end] của mục tầng `tier` phải nằm trong mục cha `parent`, và (khi sửa mục
+ * `id` đã có) vẫn chứa mọi mục con trực tiếp. Trả `{ error, message }` hoặc null.
+ */
+function checkDateBounds(tier, parent, start, end, id) {
+  if (parent && ((parent.start_date && start < parent.start_date) || (parent.end_date && end > parent.end_date))) {
+    return {
+      error: 'outside_parent_range',
+      message: `Thời gian phải nằm trong ${TIER_LABEL[tier - 1]} cấp trên (${viDate(parent.start_date)} – ${viDate(parent.end_date)}).`,
+    };
+  }
+  const child = id ? CHILDREN_OF[tier] : null;
+  if (child) {
+    const r = db.prepare(
+      `SELECT MIN(start_date) AS s, MAX(end_date) AS e FROM ${child.table} WHERE ${child.fk} = ?`,
+    ).get(id);
+    if ((r.s && start > r.s) || (r.e && end < r.e)) {
+      return {
+        error: 'children_outside_range',
+        message: `Các ${child.label} bên trong đang kéo dài ${viDate(r.s)} – ${viDate(r.e)}; thời gian mới phải bao trọn khoảng này.`,
+      };
+    }
+  }
+  return null;
 }
 
 /** Audit log helper. */
@@ -269,28 +279,18 @@ router.get('/:tier(\\d+)/:id(\\d+)', (req, res) => {
   return res.json({ item: enriched });
 });
 
-/** POST /api/tasks — Tạo mới. */
+/**
+ * POST /api/tasks — Tạo mới.
+ * Body: { tier, parent_id (T2–T4), title, owner_user_id | owner_username, department_code (T3), ... }
+ *   T1: owner bắt buộc, là 1 Điều hành. T2: owner = Điều hành phụ trách dự án (bỏ qua body).
+ *   T3: owner bắt buộc, là Trưởng phòng; department_code mặc định = phòng đầu tiên của người đó.
+ *   T4: owner mặc định = người tạo; phòng ban = phòng của hạng mục.
+ */
 router.post('/', (req, res) => {
   const body = req.body || {};
   const tierNum = Number(body.tier);
   if (!Number.isInteger(tierNum) || tierNum < 1 || tierNum > 4) {
     return res.status(400).json({ error: 'invalid_tier' });
-  }
-  const authz = authorize('task:create', req.user, { tier: tierNum, targetDept: body.department_code });
-  if (!authz.ok) return res.status(authz.status).json(authz);
-
-  const ownerResult = resolveOwner(req);
-  if (ownerResult.source === 'username_not_found') {
-    return res.status(404).json({ error: 'owner_username_not_found', message: `Không tìm thấy user '${ownerResult.username}'.` });
-  }
-  const createdById = resolveCreatedBy(req);
-
-  // Validate dates
-  if (!isIsoDate(body.start_date) || !isIsoDate(body.end_date)) {
-    return res.status(400).json({ error: 'invalid_date', message: 'start_date và end_date phải có format YYYY-MM-DD.' });
-  }
-  if (body.start_date > body.end_date) {
-    return res.status(400).json({ error: 'invalid_date_range', message: 'Ngày bắt đầu phải trước hoặc bằng hạn chót.' });
   }
 
   // ============================================================
@@ -300,17 +300,57 @@ router.post('/', (req, res) => {
   // ERR_HTTP_HEADERS_SENT. Move validation OUT of tx() below.
   // ============================================================
 
-  // Validate parent_id (early return BEFORE tx() to avoid double-response)
-  if (tierNum === 2 && !(body.parent_id && Number(body.parent_id))) {
-    return res.status(400).json({ error: 'parent_id_required', message: 'Phase phải thuộc 1 project.' });
+  let parent = null;
+  if (tierNum > 1) {
+    if (!(body.parent_id && Number(body.parent_id))) {
+      return res.status(400).json({ error: 'parent_id_required', message: `Cần chọn ${TIER_LABEL[tierNum - 1]} cấp trên.` });
+    }
+    parent = enrichWithTier(loadItem(tierNum - 1, body.parent_id), tierNum - 1);
+    if (!parent) return res.status(404).json({ error: 'parent_not_found', message: `Không tìm thấy ${TIER_LABEL[tierNum - 1]} cấp trên.` });
   }
-  if (tierNum === 3 && !(body.parent_id && Number(body.parent_id))) {
-    return res.status(400).json({ error: 'parent_id_required', message: 'Bundle phải thuộc 1 phase.' });
-  }
-
-  if (tierNum > 1 && body.parent_id && isInArchive(tierNum - 1, body.parent_id)) {
+  const authz = authorize('task:create', req.user, { tier: tierNum, parent });
+  if (!authz.ok) return res.status(authz.status).json(authz);
+  if (parent && isInArchive(tierNum - 1, parent.id)) {
     return res.status(409).json(ARCHIVED_ERROR);
   }
+
+  // Người phụ trách theo tầng.
+  let assignee = loadAssignee(body);
+  if (assignee === null) {
+    return res.status(404).json({ error: 'owner_not_found', message: 'Không tìm thấy người được giao.' });
+  }
+  if (tierNum === 1 || tierNum === 3) {
+    if (!assignee) {
+      return res.status(400).json({
+        error: 'owner_required',
+        message: tierNum === 1 ? 'Cần chọn Điều hành phụ trách dự án.' : 'Cần chọn Trưởng phòng phụ trách hạng mục.',
+      });
+    }
+  }
+  if (tierNum === 4 && !assignee) {
+    assignee = { id: req.user.id, role: req.user.role, departments: req.user.departments };
+  }
+  const department = tierNum === 3
+    ? (body.department_code || assignee.departments[0] || null)
+    : tierNum === 4 ? parent.department_code : null;
+  const ownerId = tierNum === 2 ? parent.owner_user_id : assignee.id;
+  if (tierNum !== 2) {
+    const ok = authorize('task:assign', req.user, { tier: tierNum, assignee, department, bundle: parent });
+    if (!ok.ok) return res.status(ok.status).json(ok);
+  }
+
+  // Ngày: mặc định theo mục cha; luôn nằm trong khoảng của mục cha.
+  if (!isIsoDate(body.start_date) || !isIsoDate(body.end_date)) {
+    return res.status(400).json({ error: 'invalid_date', message: 'start_date và end_date phải có format YYYY-MM-DD.' });
+  }
+  const startDate = body.start_date
+    || (parent?.start_date && parent.start_date > today() ? parent.start_date : today());
+  const endDate = body.end_date || parent?.end_date || '2099-12-31';
+  if (startDate > endDate) {
+    return res.status(400).json({ error: 'invalid_date_range', message: 'Ngày bắt đầu phải trước hoặc bằng hạn chót.' });
+  }
+  const bounds = checkDateBounds(tierNum, parent, startDate, endDate, null);
+  if (bounds) return res.status(400).json(bounds);
 
   // Validate is_today_date format for T4
   if (tierNum === 4 && body.is_today_date && !isIsoDate(body.is_today_date)) {
@@ -318,71 +358,58 @@ router.post('/', (req, res) => {
   }
 
   let lastId = 0;
-  let entityType = '';
   tx(() => {
     const code = body.code || `NEW-${uid().slice(-6).toUpperCase()}`;
     const title = String(body.title || '').trim() || 'Chưa đặt tên';
-    const startDate = body.start_date
-      || (body.end_date ? dateMinusDays(body.end_date, 14) : null)
-      || today();
-    const endDate = body.end_date || '2099-12-31';
     const status = normalizeStatus(body.status);
     const priority = normalizePriority(body.priority);
 
     if (tierNum === 1) {
       const info = stmt.insertProject.run(
         code, title, body.description || '',
-        ownerResult.ownerId, createdById,
+        ownerId, req.user.id,
         startDate, endDate, status,
         body.collapsed ? 1 : 0,
       );
       lastId = Number(info.lastInsertRowid);
-      entityType = 'project';
     } else if (tierNum === 2) {
-      const projectId = Number(body.parent_id);
       const info = stmt.insertPhase.run(
-        projectId, code, title, body.description || '',
-        ownerResult.ownerId, createdById,
+        parent.id, code, title, body.description || '',
+        ownerId, req.user.id,
         startDate, endDate, status,
         body.management_notes || '',
         body.blocker_alert || null,
         body.collapsed ? 1 : 0,
       );
       lastId = Number(info.lastInsertRowid);
-      entityType = 'phase';
     } else if (tierNum === 3) {
-      const phaseId = Number(body.parent_id);
       const info = stmt.insertBundle.run(
-        phaseId, code, title, body.description || '',
-        ownerResult.ownerId, createdById,
+        parent.id, code, title, body.description || '',
+        ownerId, req.user.id, department,
         startDate, endDate, status,
         body.collapsed ? 1 : 0,
       );
       lastId = Number(info.lastInsertRowid);
-      entityType = 'bundle';
     } else { // tier 4
-      const bundleId = body.parent_id ? Number(body.parent_id) : null; // null OK (standalone)
       // is_today_date mặc định = hôm nay nếu is_today=1, else null.
       const isToday = body.is_today ? 1 : 0;
       const isTodayDate = isToday
         ? (body.is_today_date ?? today())
         : null;
       const info = stmt.insertTask.run(
-        bundleId, code, title, body.description || '',
-        ownerResult.ownerId, createdById,
-        body.assigned_by_user_id ? Number(body.assigned_by_user_id) : req.user.id,
-        body.department_code ?? null,
+        parent.id, code, title, body.description || '',
+        ownerId, req.user.id, req.user.id,
+        department,
         startDate, endDate,
         Number(body.progress ?? 0), status, priority,
         isToday, isTodayDate,
         body.collapsed ? 1 : 0,
       );
       lastId = Number(info.lastInsertRowid);
-      entityType = 'task';
     }
-    logAudit(entityType, lastId, 'create', null, { code, title }, req);
+    logAudit(TIER_ENTITY[tierNum], lastId, 'create', null, { code, title, owner_user_id: ownerId }, req);
     // Mục cha có thêm 1 con (0%) → tính lại tiến độ.
-    if (tierNum > 1 && body.parent_id) rollupFrom(tierNum - 1, Number(body.parent_id));
+    if (parent) rollupFrom(tierNum - 1, parent.id);
   });
 
   const created = loadItem(tierNum, lastId);
@@ -419,6 +446,27 @@ router.patch('/:tier(\\d+)/:id(\\d+)', (req, res) => {
   if (nextStart && nextEnd && nextStart > nextEnd) {
     return res.status(400).json({ error: 'invalid_date_range', message: 'Ngày bắt đầu phải trước hoặc bằng hạn chót.' });
   }
+  if (body.start_date !== undefined || body.end_date !== undefined) {
+    const parentRef = PARENT_OF[tier];
+    const parent = parentRef ? loadItem(parentRef.tier, item[parentRef.fk]) : null;
+    const bounds = checkDateBounds(tier, parent, nextStart, nextEnd, id);
+    if (bounds) return res.status(400).json(bounds);
+  }
+
+  // Đổi người phụ trách: cần quyền `task:reassign`, người mới phải hợp lệ với tầng (`task:assign`).
+  let nextOwnerId = item.owner_user_id;
+  const assignee = loadAssignee(body);
+  if (assignee === null) {
+    return res.status(404).json({ error: 'owner_not_found', message: 'Không tìm thấy người được giao.' });
+  }
+  if (assignee && assignee.id !== item.owner_user_id) {
+    const can = authorize('task:reassign', req.user, { task: enriched });
+    if (!can.ok) return res.status(can.status).json(can);
+    const bundle = tier === 4 ? stmt.getBundle.get(item.bundle_id) : null;
+    const ok = authorize('task:assign', req.user, { tier, assignee, department: item.department_code, bundle });
+    if (!ok.ok) return res.status(ok.status).json(ok);
+    nextOwnerId = assignee.id;
+  }
 
   const oldValues = { ...item };
 
@@ -449,19 +497,21 @@ router.patch('/:tier(\\d+)/:id(\\d+)', (req, res) => {
       stmt.updateProject.run(
         body.title ?? item.title,
         body.description ?? item.description,
-        body.owner_user_id ? Number(body.owner_user_id) : item.owner_user_id,
+        nextOwnerId,
         body.start_date ?? item.start_date,
         body.end_date ?? item.end_date,
         body.status ?? item.status,
         body.collapsed !== undefined ? (body.collapsed ? 1 : 0) : item.collapsed,
         id,
       );
+      // Giai đoạn luôn do Điều hành phụ trách dự án quản lý.
+      if (nextOwnerId !== item.owner_user_id) stmt.setPhaseOwnersOfProject.run(nextOwnerId, id);
       updated = stmt.getProject.get(id);
     } else if (tier === 2) {
       stmt.updatePhase.run(
         body.title ?? item.title,
         body.description ?? item.description,
-        body.owner_user_id ? Number(body.owner_user_id) : item.owner_user_id,
+        nextOwnerId,
         body.start_date ?? item.start_date,
         body.end_date ?? item.end_date,
         body.status ?? item.status,
@@ -475,7 +525,7 @@ router.patch('/:tier(\\d+)/:id(\\d+)', (req, res) => {
       stmt.updateBundle.run(
         body.title ?? item.title,
         body.description ?? item.description,
-        body.owner_user_id ? Number(body.owner_user_id) : item.owner_user_id,
+        nextOwnerId,
         body.start_date ?? item.start_date,
         body.end_date ?? item.end_date,
         body.status ?? item.status,
@@ -503,11 +553,10 @@ router.patch('/:tier(\\d+)/:id(\\d+)', (req, res) => {
       stmt.updateTask.run(
         body.title ?? item.title,
         body.description ?? item.description,
-        body.owner_user_id ? Number(body.owner_user_id) : item.owner_user_id,
-        body.assigned_by_user_id !== undefined
-          ? (body.assigned_by_user_id ? Number(body.assigned_by_user_id) : null)
-          : item.assigned_by_user_id,
-        body.department_code ?? item.department_code,
+        nextOwnerId,
+        // Giao lại cho người khác → người giao là người vừa đổi.
+        nextOwnerId !== item.owner_user_id ? req.user.id : item.assigned_by_user_id,
+        item.department_code,
         body.start_date ?? item.start_date,
         body.end_date ?? item.end_date,
         newProgress,
@@ -524,14 +573,7 @@ router.patch('/:tier(\\d+)/:id(\\d+)', (req, res) => {
         recomputeRollup(id);
       }
     }
-    logAudit(
-      tier === 1 ? 'project' : tier === 2 ? 'phase' : tier === 3 ? 'bundle' : 'task',
-      id,
-      'update',
-      oldValues,
-      body,
-      req,
-    );
+    logAudit(TIER_ENTITY[tier], id, 'update', oldValues, body, req);
   });
 
   return res.json({ item: enrichWithTier(updated, tier) });
@@ -567,7 +609,7 @@ router.delete('/:tier(\\d+)/:id(\\d+)', (req, res) => {
     } else {
       // T1/T2/T3: ghi log cascade metadata
       logAudit(
-        tier === 1 ? 'project' : tier === 2 ? 'phase' : 'bundle',
+        TIER_ENTITY[tier],
         id, 'delete', { ...item, _cascade_note: 'Children records (phases/bundles/tasks/daily_logs/help_messages) cascaded.' }, null, req,
       );
     }
@@ -590,7 +632,7 @@ router.delete('/:tier(\\d+)/:id(\\d+)', (req, res) => {
 /**
  * POST /api/tasks/:tier/:id/archive | unarchive — Lưu trữ / khôi phục dự án (T1) hoặc giai đoạn (T2).
  * Lưu trữ thay cho xoá: dữ liệu giữ nguyên, cả nhánh con ẩn khỏi app (GET trả `archived = 1`).
- * Quyền: `task:archive` (admin, BGĐ).
+ * Quyền: `task:archive` (Điều hành phụ trách; HĐQT với dự án; admin).
  */
 router.post('/:tier(\\d+)/:id(\\d+)/:op(archive|unarchive)', (req, res) => {
   const tier = Number(req.params.tier);
@@ -690,11 +732,7 @@ router.post('/:tier(\\d+)/:id(\\d+)/approve', (req, res) => {
   if (isInArchive(tier, id)) return res.status(409).json(ARCHIVED_ERROR);
 
   if (tier < 4) {
-    const childDepartments = tier === 3
-      ? db.prepare('SELECT DISTINCT department_code AS d FROM tasks WHERE bundle_id = ? AND department_code IS NOT NULL')
-        .all(id).map((r) => r.d)
-      : [];
-    const authz = authorize('task:close', req.user, { task: enriched, childDepartments });
+    const authz = authorize('task:close', req.user, { task: enriched });
     if (!authz.ok) return res.status(authz.status).json(authz);
     const child = CHILDREN_OF[tier];
     const { n } = db.prepare(
@@ -737,10 +775,7 @@ router.post('/:tier(\\d+)/:id(\\d+)/approve', (req, res) => {
         item.blocker_note || '', id,
       );
     }
-    logAudit(
-      tier === 1 ? 'project' : tier === 2 ? 'phase' : tier === 3 ? 'bundle' : 'task',
-      id, 'status_change', { status: item.status }, { status: 'done' }, req,
-    );
+    logAudit(TIER_ENTITY[tier], id, 'status_change', { status: item.status }, { status: 'done' }, req);
     if (tier === 4) {
       messageId = addActionNote(id, 'approve', req);
       recomputeRollup(id);
@@ -873,9 +908,8 @@ router.post('/:tier(\\d+)/:id(\\d+)/help-messages/:msgId(\\d+)/resolve', (req, r
   if (!task) return res.status(404).json({ error: 'task_not_found' });
   const authz = authorize('task:edit', req.user, { task: { ...task, tier: 4 } });
   if (!authz.ok) return res.status(authz.status).json(authz);
-  if (!['admin', 'manager'].includes(req.user.role)) {
-    return res.status(403).json({ error: 'forbidden', message: 'Chỉ admin/manager mới resolve help message.' });
-  }
+  const can = authorize('task:approve', req.user, { task: { ...task, tier: 4 } });
+  if (!can.ok) return res.status(can.status).json(can);
   let resolved = false;
   tx(() => {
     const result = stmt.resolveHelpMessage.run(req.user.id, msgId, id);
@@ -907,7 +941,7 @@ router.post('/:tier(\\d+)/:id(\\d+)/toggle', (req, res) => {
    * Toggle semantics — nhất quán với state machine (lib/stateMachine.js):
    *   pending          → doing            (bắt đầu)
    *   doing            → pending_approval (owner tick xong, chờ manager duyệt)
-   *                      → done              nếu chính owner có quyền duyệt (TP phòng đó / admin)
+   *                      → done              nếu chính owner có quyền duyệt (TP phụ trách hạng mục / admin)
    *   pending_approval → doing            (manager/admin trả về)
    *   blocked          → doing            (gỡ nghẽn)
    *   done             → KHÔNG toggle (terminal)

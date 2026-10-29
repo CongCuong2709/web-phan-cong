@@ -13,7 +13,7 @@
  *
  * Transition rules:
  *   - Done là terminal (không ai được đổi nữa, kể cả admin).
- *   - Blocked chỉ được gỡ bởi manager/admin.
+ *   - Blocked chỉ được gỡ bởi Trưởng phòng phụ trách / admin.
  *   - Pending_approval → doing (manager trả về) hoặc done (manager duyệt).
  *
  * Sử dụng:
@@ -22,7 +22,7 @@
  *   }
  */
 
-import { inDepartment } from './policies.js';
+import { isBundleLead, isProjectLead } from './policies.js';
 
 /** Transition table: from -> [allowed to]. */
 const TRANSITIONS = {
@@ -34,27 +34,12 @@ const TRANSITIONS = {
 };
 
 /**
- * Roles được phép thực hiện transition (mặc định).
- * Transition cụ thể có thể override trong `canTransition` bên dưới.
- */
-const TRANSITION_ROLES = {
-  // Pending → doing: chính owner hoặc manager/admin trong cùng dept
-  // Pending → blocked: chính owner hoặc bất kỳ ai thấy task
-  // Doing → pending_approval: chính owner tick
-  // Doing → blocked: owner hoặc manager/admin
-  // Doing → pending: rollback (manager/admin only)
-  // Pending_approval → done: manager/admin only (duyệt)
-  // Pending_approval → doing: manager/admin only (từ chối, trả về)
-  // Blocked → doing/pending: manager/admin only (gỡ nghẽn)
-};
-
-/**
  * Kiểm tra 1 user có được phép thực hiện transition `from` → `to` không.
  *
  * @param {string} from     - status hiện tại
  * @param {string} to       - status mong muốn
  * @param {object} user     - req.user (đã có role, departments, id, username)
- * @param {object} task     - row tasks (đã có owner_user_id, department_code)
+ * @param {object} task     - row có tier, owner_user_id, project_owner_user_id, bundle_owner_user_id
  * @returns {{ok: boolean, reason?: string}}
  */
 export function canTransition(from, to, user, task) {
@@ -69,55 +54,32 @@ export function canTransition(from, to, user, task) {
     };
   }
 
-  // Admin: full quyền (trừ khi task đã done).
-  if (user.role === 'admin') {
-    if (from === 'done') return { ok: false, reason: 'Task đã done, không thể chỉnh sửa.' };
-    return { ok: true };
-  }
+  if (from === 'done') return { ok: false, reason: 'Mục đã đóng, không thể đổi trạng thái.' };
 
-  // Director: chỉ dự án (T1) / giai đoạn (T2). Đóng (done) vẫn đi qua Nghiệm thu.
-  if (user.role === 'director') {
-    if (task.tier !== 1 && task.tier !== 2) {
-      return { ok: false, reason: 'BGĐ chỉ đổi trạng thái dự án / giai đoạn.' };
-    }
-    if (from === 'done') return { ok: false, reason: 'Mục đã đóng, không thể đổi trạng thái.' };
-    return { ok: true };
-  }
+  // Admin, Điều hành phụ trách dự án (T1–T3), Trưởng phòng phụ trách hạng mục (T3, T4):
+  // đổi tự do theo bảng transition. Đóng T1–T3 (done) vẫn đi qua Nghiệm thu.
+  if (user.role === 'admin') return { ok: true };
+  if (task.tier < 4 && isProjectLead(user, task)) return { ok: true };
+  if (isBundleLead(user, task)) return { ok: true };
 
-  // Employee: chỉ T4 của chính mình.
-  if (user.role === 'employee') {
-    if (task.tier !== 4) {
-      return { ok: false, reason: 'Employee chỉ có thể thao tác trên T4.' };
-    }
-    if (task.owner_user_id !== user.id) {
-      return { ok: false, reason: 'Employee chỉ có thể thao tác trên task của mình.' };
-    }
-    // Employee được phép: doing→pending_approval (tick xong),
-    // pending→doing (bắt đầu), doing/blocked→blocked (xin help), blocked→pending (bỏ help).
-    const EMPLOYEE_OK = new Set([
+  // Người làm đầu việc (nhân viên, hoặc Trưởng phòng làm việc không thuộc hạng mục mình).
+  if (task.tier === 4 && task.owner_user_id === user.id) {
+    // Được phép: pending→doing (bắt đầu), doing→pending_approval (báo xong),
+    // doing→blocked (xin hỗ trợ), blocked→pending (bỏ yêu cầu hỗ trợ).
+    const OWNER_OK = new Set([
       'pending→doing',
       'doing→pending_approval',
       'doing→blocked',
       'blocked→pending',
     ]);
     const key = `${from}→${to}`;
-    if (!EMPLOYEE_OK.has(key)) {
-      return { ok: false, reason: `Employee không được chuyển '${key}'.` };
+    if (!OWNER_OK.has(key)) {
+      return { ok: false, reason: `Người làm không được chuyển '${key}'.` };
     }
     return { ok: true };
   }
 
-  // Manager: phải cùng department.
-  if (user.role === 'manager') {
-    if (!inDepartment(user, task.department_code)) {
-      return { ok: false, reason: 'Manager phải cùng phòng ban với task.' };
-    }
-    // Manager full quyền transition (trong phòng ban của mình).
-    if (from === 'done') return { ok: false, reason: 'Task đã done.' };
-    return { ok: true };
-  }
-
-  return { ok: false, reason: 'Role không xác định.' };
+  return { ok: false, reason: 'Không có quyền đổi trạng thái mục này.' };
 }
 
 /** Lấy danh sách transitions hợp lệ (dùng cho UI dropdown). */

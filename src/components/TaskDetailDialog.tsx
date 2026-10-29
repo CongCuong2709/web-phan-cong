@@ -57,7 +57,7 @@ interface TaskDetailDialogProps {
   onSetArchived?: (itemId: string, archived: boolean) => Promise<boolean>;
   /** T4: gửi ghi chú / vướng mắc vào luồng trao đổi (kèm tệp). Resolve true khi đã lưu. */
   onPostMessage?: (itemId: string, body: string, kind: 'note' | 'blocker', files: File[]) => Promise<boolean>;
-  /** T4: thêm tệp khi giao việc. */
+  /** Thêm tệp đính kèm cho mục (mọi tầng). */
   onUploadFiles?: (itemId: string, files: File[]) => Promise<boolean>;
   onDeleteAttachment?: (attachmentId: number) => Promise<boolean>;
 }
@@ -110,7 +110,7 @@ const Field: React.FC<{ label: string; children: React.ReactNode }> = ({ label, 
 
 /**
  * Chi tiết 1 mục công việc: hộp thoại lớn 2 cột (toàn màn hình trên điện thoại).
- *   - Cột trái: chỉ thị / mô tả, tệp khi giao việc, rồi tab Trao đổi | Lịch sử (T4).
+ *   - Cột trái: chỉ thị / mô tả, tệp đính kèm, rồi tab Trao đổi | Lịch sử (T4).
  *   - Cột phải: trạng thái + nút thao tác, ưu tiên, người, ngày, tiến độ — luôn trong tầm mắt
  *     để đọc xong trao đổi là duyệt / trả về / báo xong được ngay.
  * Mục đang mở nằm trên URL (?muc=4-12&tab=trao-doi).
@@ -171,17 +171,19 @@ export const TaskDetailDialog: React.FC<TaskDetailDialogProps> = ({
     return () => { cancelled = true; };
   }, [item]);
 
-  // T4: luồng trao đổi + tệp của việc, cũng tải lại mỗi khi dữ liệu item đổi (sau mỗi lần ghi).
+  // Tệp của mục (mọi tầng) + luồng trao đổi (chỉ T4); tải lại mỗi khi dữ liệu item đổi (sau mỗi lần ghi).
   useEffect(() => {
-    if (!item || item.tier !== 4) return;
+    if (!item) return;
     let cancelled = false;
     const num = extractBackendId(item.id);
     setMessages(null);
     setTaskFiles(null);
-    api.listMessages(num).then((r) => {
-      if (!cancelled) setMessages(r.ok ? r.data.items : []);
-    });
-    api.listAttachments(num).then((r) => {
+    if (item.tier === 4) {
+      api.listMessages(num).then((r) => {
+        if (!cancelled) setMessages(r.ok ? r.data.items : []);
+      });
+    }
+    api.listAttachments(item.tier, num).then((r) => {
       if (!cancelled) setTaskFiles(r.ok ? r.data.items.filter((f) => f.message_id === null) : []);
     });
     return () => { cancelled = true; };
@@ -218,8 +220,8 @@ export const TaskDetailDialog: React.FC<TaskDetailDialogProps> = ({
 
   // Thao tác theo vai trò (server kiểm tra lại bằng policies + state machine).
   const live = !item.archived;
-  const isOwner = !!currentUser && item.ownerUsername === currentUser.username;
-  const canApprove = isLeaf && live && canApproveTask(currentUser, { department: item.department });
+  const isOwner = !!currentUser && item.ownerUserId === currentUser.id;
+  const canApprove = isLeaf && live && canApproveTask(currentUser, { bundleOwnerUserId: item.bundleOwnerUserId });
   const selfClose = isOwner && canApprove;
   const leafActions = {
     start: isLeaf && live && isOwner && item.status === 'Chưa bắt đầu' && !!onAdvance,
@@ -657,9 +659,6 @@ ${what[0].toUpperCase()}${what.slice(1)} và toàn bộ mục con sẽ ẩn kh�
           <div className="flex flex-col gap-3 min-w-0 order-2 md:order-1">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs font-bold px-2 py-0.5 bg-primary text-on-primary rounded">{formData.tierName}</span>
-              {isLeaf && formData.parentId === undefined && (
-                <span className="text-xs text-secondary">Việc không thuộc hạng mục nào</span>
-              )}
             </div>
 
             {item.archived && (
@@ -691,8 +690,9 @@ ${what[0].toUpperCase()}${what.slice(1)} và toàn bộ mục con sẽ ẩn kh�
               )}
             </Block>
 
-            {isLeaf && (
+            {(isLeaf || taskFiles === null || taskFiles.length > 0 || canAttachToTask(currentUser, item)) && (
               <TaskFilesSection
+                leaf={isLeaf}
                 files={taskFiles}
                 canUpload={!!onUploadFiles && canAttachToTask(currentUser, item)}
                 canDelete={(a) =>
@@ -812,7 +812,7 @@ ${what[0].toUpperCase()}${what.slice(1)} và toàn bộ mục con sẽ ẩn kh�
               <span className="text-xs text-secondary italic px-3">
                 {item.archived
                   ? 'Đã lưu trữ — chỉ đọc'
-                  : currentUser?.role === 'director'
+                  : currentUser?.role === 'board' || currentUser?.role === 'director'
                     ? 'Chế độ chỉ đọc'
                     : 'Bạn không có quyền chỉnh sửa mục này'}
               </span>

@@ -400,15 +400,20 @@ const timeOf = (d: Date) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 // Tệp của task
 // ─────────────────────────────────────────────────────────────────────
 
-/** Tệp khi giao việc (không gồm tệp trong tin trao đổi — kết quả của người làm gửi qua Trao đổi). */
+/**
+ * Tệp đính kèm của mục. Với đầu việc là tệp khi giao việc (không gồm tệp trong tin
+ * trao đổi — kết quả của người làm gửi qua Trao đổi).
+ */
 export const TaskFilesSection: React.FC<{
+  /** true = đầu việc (tiêu đề "Tệp khi giao việc"). */
+  leaf: boolean;
   files: AttachmentDto[] | null;
   canUpload: boolean;
   /** Xoá được: người tải lên hoặc admin. */
   canDelete: (a: AttachmentDto) => boolean;
   onUpload: (files: File[]) => Promise<boolean>;
   onDelete: (a: AttachmentDto) => Promise<boolean>;
-}> = ({ files, canUpload, canDelete, onUpload, onDelete }) => {
+}> = ({ leaf, files, canUpload, canDelete, onUpload, onDelete }) => {
   const [picked, setPicked] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
 
@@ -424,12 +429,12 @@ export const TaskFilesSection: React.FC<{
   return (
     <section className="bg-white p-3.5 rounded-lg border border-surface-container">
       <h3 className="text-xs font-semibold text-secondary uppercase tracking-wider mb-1.5">
-        Tệp khi giao việc {files && <span className="normal-case font-normal">({files.length})</span>}
+        {leaf ? 'Tệp khi giao việc' : 'Tệp đính kèm'} {files && <span className="normal-case font-normal">({files.length})</span>}
       </h3>
       {files === null ? (
         <p role="status" className="text-xs text-outline">Đang tải tệp…</p>
       ) : files.length === 0 ? (
-        <p className="text-xs text-outline italic">Người giao chưa đính kèm tệp nào.</p>
+        <p className="text-xs text-outline italic">{leaf ? 'Người giao chưa đính kèm tệp nào.' : 'Chưa có tệp đính kèm.'}</p>
       ) : (
         <AttachmentList items={files} showMeta canDelete={canDelete} onDelete={onDelete} />
       )}

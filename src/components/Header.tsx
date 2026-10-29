@@ -13,6 +13,7 @@ interface HeaderProps {
 
 const ROLE_BADGE_COLOR: Record<User['role'], string> = {
   admin: 'bg-error-container text-on-error-container',
+  board: 'bg-primary text-on-primary',
   director: 'bg-on-surface text-white',
   manager: 'bg-surface-container-high text-primary',
   employee: 'bg-tertiary-fixed/40 text-tertiary',

@@ -32,9 +32,9 @@ router.get('/', (req, res) => {
   const allT4 = db.prepare(`
     SELECT t.id, t.owner_user_id, t.department_code, t.status, t.progress, t.end_date, t.blocker_note
     FROM tasks t
-      LEFT JOIN bundles b ON b.id = t.bundle_id
-      LEFT JOIN phases ph ON ph.id = b.phase_id
-      LEFT JOIN projects p ON p.id = ph.project_id
+      JOIN bundles b ON b.id = t.bundle_id
+      JOIN phases ph ON ph.id = b.phase_id
+      JOIN projects p ON p.id = ph.project_id
     WHERE ph.archived_at IS NULL AND p.archived_at IS NULL
   `).all();
   const todayStr = today();
@@ -42,8 +42,8 @@ router.get('/', (req, res) => {
   const members = [];
 
   for (const u of allUsers) {
-    // Admin/Director: bỏ qua — không phải task input
-    if (u.role === 'admin' || u.role === 'director') continue;
+    // Chỉ người làm đầu việc (Trưởng phòng, Nhân viên) có trong danh sách thành viên.
+    if (u.role !== 'manager' && u.role !== 'employee') continue;
 
     if (req.user.role === 'employee') continue; // employee chỉ xem chính mình ở view khác
     // Manager: chỉ người có ít nhất 1 phòng ban chung (người chưa gán phòng không hiện).

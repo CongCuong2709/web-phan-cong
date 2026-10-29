@@ -12,13 +12,16 @@
 const API_BASE = (import.meta.env.VITE_API_URL as string) || 'http://localhost:3001';
 const TOKEN_KEY = 'mvp_token';
 
+/** board = HĐQT, director = Điều hành, manager = Trưởng phòng, employee = Nhân viên. */
+export type UserRole = 'admin' | 'board' | 'director' | 'manager' | 'employee';
+
 /** User object trả về từ /api/auth/me (subset đủ dùng để restore session). */
 export interface MeUser {
   id: number;
   username: string;
   fullname: string;
   email?: string;
-  role: 'admin' | 'director' | 'manager' | 'employee';
+  role: UserRole;
   departments: string[];
   avatar_url?: string;
 }
@@ -144,7 +147,7 @@ export interface LoginResponse {
     username: string;
     fullname: string;
     email?: string | null;
-    role: 'admin' | 'director' | 'manager' | 'employee';
+    role: UserRole;
     departments?: string[] | string | null;
     initial?: string | null;
     avatar_url?: string | null;
@@ -183,6 +186,12 @@ export interface TaskApiRowDto {
   owner_username_str: string | null;
   owner_fullname: string | null;
 
+  // ── Người phụ trách của chuỗi cha (dùng cho phân quyền phía UI) ──
+  /** Điều hành phụ trách dự án chứa mục này (với T1 = chính owner). */
+  project_owner_user_id: number;
+  /** Chỉ T4: Trưởng phòng phụ trách hạng mục chứa đầu việc. */
+  bundle_owner_user_id?: number;
+
   // ── T1 project ──
   // (project là root, không có parent FK)
 
@@ -194,6 +203,7 @@ export interface TaskApiRowDto {
 
   // ── T4 task ──
   bundle_id: number | null;
+  /** T3: phòng của hạng mục. T4: phòng của đầu việc (= phòng của hạng mục). */
   assigned_by_user_id?: number | null;
   department_code: string | null;
   priority: 'low' | 'normal' | 'high' | 'critical';
@@ -217,7 +227,7 @@ export interface TaskApiRowDto {
   open_blocker_count?: number;
   /** Thời điểm (UTC) của vướng mắc chưa gỡ gần nhất. */
   open_blocker_at?: string | null;
-  /** Số tệp đính kèm của task (không tính tệp trong tin trao đổi). */
+  /** Số tệp đính kèm khi tạo / giao việc (không tính tệp trong tin trao đổi). */
   attachment_count?: number;
 
   // ── Lưu trữ ──
@@ -243,12 +253,13 @@ export interface TierItemDto {
   /**
    * Id của cha theo tier (T2→project_id, T3→phase_id, T4→bundle_id).
    * Backend nhận đúng tên `parent_id` và dispatch theo `tier`
-   * (xem routes/tasks.js POST). Bắt buộc với T2/T3; T4 có thể null.
+   * (xem routes/tasks.js POST). Bắt buộc với T2–T4.
    */
   parent_id?: number | null;
-  /** Backend nhận `owner_username` và tự tra `owner_user_id`. */
+  /** Người phụ trách: T1 = Điều hành, T3 = Trưởng phòng, T4 = người làm. T2 bỏ qua. */
   owner_username?: string | null;
   owner_user_id?: number | null;
+  /** Chỉ T3: phòng của hạng mục (mặc định = phòng đầu tiên của Trưởng phòng). */
   department_code?: string | null;
   start_date?: string | null;
   end_date?: string | null;
@@ -328,10 +339,11 @@ export interface HistoryEntryDto {
 /** Loại tin trong luồng trao đổi — khớp CHECK `task_help_messages.kind` (backend/sql/schema.sql). */
 export type TaskMessageKind = 'note' | 'blocker' | 'start' | 'submit' | 'approve' | 'return' | 'unblock';
 
-/** 1 tệp đính kèm (GET /api/tasks/4/:id/attachments, hoặc `attachments` của 1 tin). */
+/** 1 tệp đính kèm (GET /api/tasks/:tier/:id/attachments, hoặc `attachments` của 1 tin). */
 export interface AttachmentDto {
   id: number;
-  task_id: number;
+  /** null với tệp của dự án / giai đoạn / hạng mục. */
+  task_id: number | null;
   /** null = tệp của task; có giá trị = tệp gắn trong tin trao đổi đó. */
   message_id: number | null;
   original_name: string;
@@ -479,7 +491,7 @@ export const api = {
     return request<{ item: TaskApiRowDto } & WithMessageId>('POST', `/api/tasks/${tier}/${id}/toggle`, note);
   },
 
-  // --- Trao đổi + tệp đính kèm (chỉ T4) ---
+  // --- Trao đổi (chỉ T4) + tệp đính kèm (mọi tầng) ---
   /** GET /api/tasks/4/:id/messages — luồng trao đổi, cũ → mới, kèm tệp của từng tin. */
   async listMessages(taskId: number) {
     return request<{ items: TaskMessageDto[] }>('GET', `/api/tasks/4/${taskId}/messages`);
@@ -490,16 +502,16 @@ export const api = {
       'POST', `/api/tasks/4/${taskId}/messages`, { body, kind, with_files: withFiles }
     );
   },
-  /** GET /api/tasks/4/:id/attachments — mọi tệp của task (kể cả tệp trong tin, có message_id). */
-  async listAttachments(taskId: number) {
-    return request<{ items: AttachmentDto[] }>('GET', `/api/tasks/4/${taskId}/attachments`);
+  /** GET /api/tasks/:tier/:id/attachments — mọi tệp của mục (với đầu việc: kể cả tệp trong tin, có message_id). */
+  async listAttachments(tier: number, id: number) {
+    return request<{ items: AttachmentDto[] }>('GET', `/api/tasks/${tier}/${id}/attachments`);
   },
-  /** POST /api/tasks/4/:id/attachments — 1 tệp mỗi lần; `messageId` để gắn vào tin vừa gửi. */
-  async uploadAttachment(taskId: number, file: File, messageId?: number | null) {
+  /** POST /api/tasks/:tier/:id/attachments — 1 tệp mỗi lần; `messageId` (chỉ T4) để gắn vào tin vừa gửi. */
+  async uploadAttachment(tier: number, id: number, file: File, messageId?: number | null) {
     const qs = new URLSearchParams({ name: file.name });
     if (messageId) qs.set('message_id', String(messageId));
     return request<{ item: AttachmentDto }>(
-      'POST', `/api/tasks/4/${taskId}/attachments?${qs}`, undefined, { raw: file, timeoutMs: 120_000 }
+      'POST', `/api/tasks/${tier}/${id}/attachments?${qs}`, undefined, { raw: file, timeoutMs: 120_000 }
     );
   },
   /** GET /api/attachments/:id — nội dung tệp (cần token nên không dùng link trực tiếp). */
@@ -522,8 +534,8 @@ export const api = {
 
   // --- Users (dropdown người phụ trách trong NewItemModal) ---
   /**
-   * GET /api/users — admin thấy tất cả, manager thấy users trong cùng department.
-   * (xem routes/users.js:19-43). Employee bị 403, không dùng được từ client.
+   * GET /api/users — danh bạ để chọn người phụ trách (HĐQT chọn Điều hành, Điều hành chọn
+   * Trưởng phòng, Trưởng phòng chọn nhân viên). Nhân viên bị 403.
    */
   async listUsers(department?: string) {
     const qs = department ? `?department=${encodeURIComponent(department)}` : '';
@@ -533,7 +545,7 @@ export const api = {
         username: string;
         fullname: string;
         email?: string | null;
-        role: 'admin' | 'director' | 'manager' | 'employee';
+        role: UserRole;
         departments?: string | null;
         initial?: string | null;
         avatar_url?: string | null;
@@ -564,7 +576,7 @@ export const api = {
     return request<{ items: HistoryEntryDto[] }>('GET', `/api/history?${qs}`);
   },
 
-  // --- Weekly reports (Ponytail: 4 endpoints) ---
+  // --- Weekly reports (không có bước duyệt) ---
   /** GET /api/weekly-reports?week=YYYY-MM-DD[&user=<id>] — item null = chưa có report. */
   async getWeeklyReport(week: string, userId?: number) {
     const qs = new URLSearchParams({ week });
@@ -585,31 +597,11 @@ export const api = {
       'GET', `/api/weekly-reports/history?limit=${limit}`
     );
   },
-  /** GET /api/weekly-reports/team?week= — aggregate theo phòng ban (manager+). */
+  /** GET /api/weekly-reports/team?week= — tổng hợp người viết (NV + TP) trong phạm vi được xem. */
   async getWeeklyReportTeam(week: string) {
     return request<{ items: WeeklyTeamMemberDto[]; week: string }>(
       'GET', `/api/weekly-reports/team?week=${encodeURIComponent(week)}`
     );
-  },
-  /**
-   * POST /api/weekly-reports/:userId/review — QL ghi phản hồi.
-   * Chỉ ghi mgr_comment + manager_note + ack; không đụng nội dung NV.
-   */
-  async reviewWeeklyReport(
-    userId: number,
-    body: {
-      week_start: string;
-      manager_note?: string;
-      ack?: boolean;
-      rows?: Array<{ id: string; mgr_comment?: string }>;
-    }
-  ) {
-    return request<{
-      ok: boolean;
-      rows: WeeklyReportRowDto[];
-      manager_note: string;
-      ack_at: string | null;
-    }>('POST', `/api/weekly-reports/${userId}/review`, body);
   },
 };
 
@@ -627,15 +619,12 @@ export interface WeeklyTeamMemberDto {
   user_id: number;
   username: string;
   fullname: string;
+  role: 'manager' | 'employee';
   departments: string[];
   row_count: number;
   blocked_count: number;
   updated_at: string | null;
   submitted: boolean;
-  /** Thời điểm QL bấm "Xác nhận đã xem" (null = chưa xem). */
-  ack_at: string | null;
-  /** QL đã viết nhận xét chung cho tuần này. */
-  has_note: boolean;
 }
 
 export interface WeeklyReportRowDto {
@@ -644,8 +633,6 @@ export interface WeeklyReportRowDto {
   result: string;
   status: 'Hoàn thành' | 'Đang làm' | 'Chưa bắt đầu' | 'Vướng mắc';
   blocker: string;
-  /** Chỉ đạo của QL cho dòng này (chỉ có khi QL đã phản hồi). */
-  mgr_comment?: string;
 }
 
 export interface WeeklyReportDto {
@@ -653,11 +640,6 @@ export interface WeeklyReportDto {
   week_start: string;
   week_end: string;
   rows: WeeklyReportRowDto[];
-  /** Nhận xét chung của QL cho cả tuần (NV cũng đọc được). */
-  manager_note?: string | null;
-  ack_user_id?: number | null;
-  /** Lúc QL xác nhận đã xem — null = chưa xem. */
-  ack_at?: string | null;
   updated_at: string;
 }
 

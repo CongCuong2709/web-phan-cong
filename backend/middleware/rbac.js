@@ -1,15 +1,13 @@
 /**
  * middleware/rbac.js — Role-based authorization helpers.
  *
- * Luật RBAC nằm ở `lib/policies.js` (nguồn chuẩn duy nhất). File này chỉ bọc
- * thành middleware — không chứa luật riêng.
+ * Chặn thô theo role ở tầng route. Luật chi tiết (theo người phụ trách) nằm ở
+ * `lib/policies.js` — nguồn chuẩn duy nhất.
  *
  * Usage:
  *   router.post('/admin-only', requireRole('admin'), handler)
  *   router.delete('/users/:id', requireRole('admin', 'director'), handler)
  */
-
-import { authorize } from '../lib/policies.js';
 
 export function requireRole(...allowedRoles) {
   return (req, res, next) => {
@@ -24,15 +22,4 @@ export function requireRole(...allowedRoles) {
     }
     next();
   };
-}
-
-/** Middleware đặc biệt cho tier create: delegate sang policy `task:create`. */
-export function requireTierCreatePermission(req, res, next) {
-  const tier = Number(req.body?.tier);
-  const authz = authorize('task:create', req.user, {
-    tier,
-    targetDept: req.body?.department_code ?? null,
-  });
-  if (!authz.ok) return res.status(authz.status).json(authz);
-  next();
 }

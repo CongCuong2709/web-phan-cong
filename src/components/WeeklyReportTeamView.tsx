@@ -1,14 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { User } from '../types';
+import { ROLE_LABEL, User } from '../types';
 import { api, WeeklyTeamMemberDto } from '../lib/apiClient';
 import { WeeklyReportView, fmtStamp } from './WeeklyReportView';
 
 // =============================================================================
-// WeeklyReportTeamView — P1: Quản lý xem tổng hợp báo cáo tuần phòng ban.
+// WeeklyReportTeamView — tổng hợp báo cáo tuần của người viết (Trưởng phòng + Nhân viên).
 //
-// Ponytail: không có component con. 1 bảng danh sách NV + drill-down bằng cách
-// tái sử dụng WeeklyReportView với `readOnly` (không viết lại markup bảng).
-// Backend đã lọc theo departments của manager → FE không cần lọc lại.
+// 1 bảng danh sách + drill-down bằng WeeklyReportView mode='review' (chỉ đọc).
+// Phạm vi do backend lọc: Trưởng phòng = phòng mình; HĐQT, Điều hành = toàn công ty.
+// Không có bước duyệt / xác nhận.
 // =============================================================================
 
 interface Props {
@@ -41,7 +41,7 @@ function initialOf(name: string): string {
   return (parts[parts.length - 1] || name).charAt(0).toUpperCase();
 }
 /** "2026-10-22 07:35:00" (UTC) → "22/10 14:35" (giờ VN). */
-function fmtAck(sqlStamp: string): string {
+function fmtShort(sqlStamp: string): string {
   return fmtStamp(sqlStamp).replace(/^(\d{2}\/\d{2})\/\d{4}/, '$1');
 }
 
@@ -49,7 +49,7 @@ export const WeeklyReportTeamView: React.FC<Props> = ({ currentUser, onToast }) 
   const [weekStart, setWeekStart] = useState<string>(() => weekStartOf());
   const [items, setItems] = useState<WeeklyTeamMemberDto[]>([]);
   const [loading, setLoading] = useState(true);
-  /** NV đang drill-down; null = đang ở danh sách. */
+  /** Người đang drill-down; null = đang ở danh sách. */
   const [openUser, setOpenUser] = useState<WeeklyTeamMemberDto | null>(null);
 
   const load = useCallback((week: string) => {
@@ -58,7 +58,7 @@ export const WeeklyReportTeamView: React.FC<Props> = ({ currentUser, onToast }) 
       if (r.ok) setItems(r.data.items);
       else {
         setItems([]);
-        onToast?.(r.error.message || 'Không tải được tổng hợp phòng ban.', 'error');
+        onToast?.(r.error.message || 'Không tải được tổng hợp báo cáo tuần.', 'error');
       }
       setLoading(false);
     });
@@ -69,13 +69,13 @@ export const WeeklyReportTeamView: React.FC<Props> = ({ currentUser, onToast }) 
   const weekEnd = addDays(weekStart, 6);
   const canGoNext = weekEnd < weekStartOf();
 
-  // Stats nhẹ — chỉ đủ để QL biết "còn ai chưa nộp / có vướng gì không".
+  // Stats nhẹ — chỉ đủ để biết "còn ai chưa nộp / có vướng gì không".
   const submitted = items.filter((i) => i.submitted).length;
   const pending = items.length - submitted;
   const totalBlocked = items.reduce((s, i) => s + i.blocked_count, 0);
-  const ackedCount = items.filter((i) => i.ack_at).length;
+  const scope = currentUser.role === 'manager' ? 'phòng ban' : 'toàn công ty';
 
-  // ── Drill-down: tái dùng WeeklyReportView ở chế độ review (QL ghi phản hồi) ──
+  // ── Drill-down: tái dùng WeeklyReportView ở chế độ review (chỉ đọc) ──
 if (openUser) {
     return (
       <WeeklyReportView
@@ -101,7 +101,7 @@ if (openUser) {
       <div className="flex items-center justify-between gap-3 mb-3 print:hidden">
         <div className="flex items-center gap-3 min-w-0">
           <h1 className="text-lg font-semibold tracking-tight whitespace-nowrap">
-            Báo cáo tuần phòng ban
+            Báo cáo tuần {scope}
             <span className="text-secondary font-normal"> ({fmtDateVI(weekStart)} – {fmtDateVI(weekEnd)})</span>
           </h1>
           <div className="flex items-center">
@@ -130,7 +130,7 @@ if (openUser) {
           <div>
             <div className="text-sm font-bold uppercase">Báo cáo công việc tuần — {currentUser.fullname}</div>
             <div className="text-xs text-secondary mt-0.5">
-              {fmtDateVI(weekStart)} – {fmtDateVI(weekEnd)} · {submitted}/{items.length} nhân viên đã lập
+              {fmtDateVI(weekStart)} – {fmtDateVI(weekEnd)} · {submitted}/{items.length} người đã lập
             </div>
           </div>
           <div className="text-right text-xs text-secondary">In ngày {fmtDateVI(weekStartOf())}</div>
@@ -148,7 +148,6 @@ if (openUser) {
               {totalBlocked} vướng mắc
             </span>
           )}
-          <span className="text-tertiary">{ackedCount}/{submitted} đã xác nhận</span>
         </div>
       )}
 
@@ -168,19 +167,19 @@ if (openUser) {
             <thead>
               <tr className="bg-surface text-left">
                 <th className="text-center font-semibold text-xs text-secondary py-2 px-3 border-b border-r border-surface-container">#</th>
-                <th className="font-semibold text-xs text-secondary py-2 px-3 border-b border-r border-surface-container">Nhân viên</th>
+                <th className="font-semibold text-xs text-secondary py-2 px-3 border-b border-r border-surface-container">Người viết</th>
                 <th className="font-semibold text-xs text-secondary py-2 px-3 border-b border-r border-surface-container">Phòng ban</th>
                 <th className="text-center font-semibold text-xs text-secondary py-2 px-3 border-b border-r border-surface-container">Số đầu việc</th>
                 <th className="text-center font-semibold text-xs text-secondary py-2 px-3 border-b border-r border-surface-container">Vướng mắc</th>
                 <th className="font-semibold text-xs text-secondary py-2 px-3 border-b border-r border-surface-container">Báo cáo</th>
-                <th className="font-semibold text-xs text-secondary py-2 px-3 border-b border-surface-container">QL đã xem</th>
+                <th className="font-semibold text-xs text-secondary py-2 px-3 border-b border-surface-container">Cập nhật</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr><td colSpan={7} className="text-center text-xs text-outline py-8">Đang tải…</td></tr>
               ) : items.length === 0 ? (
-                <tr><td colSpan={7} className="text-center text-xs text-outline py-8">Phòng ban chưa có nhân viên</td></tr>
+                <tr><td colSpan={7} className="text-center text-xs text-outline py-8">Chưa có ai trong phạm vi xem</td></tr>
               ) : (
                 items.map((m, idx) => (
                   <tr
@@ -196,6 +195,9 @@ if (openUser) {
                           {initialOf(m.fullname)}
                         </div>
                         <span className={m.submitted ? 'font-medium' : 'text-secondary'}>{m.fullname}</span>
+                        {m.role === 'manager' && (
+                          <span className="text-xs text-primary bg-surface-container-low rounded px-1.5">{ROLE_LABEL.manager}</span>
+                        )}
                       </div>
                     </td>
                     <td className="px-3 py-2 text-secondary text-xs border-r border-surface-container">{m.departments.join(', ') || '—'}</td>
@@ -223,10 +225,8 @@ if (openUser) {
                       )}
                     </td>
                     <td className="px-3 py-2">
-                      {m.ack_at ? (
-                        <span className="text-xs text-tertiary">{fmtAck(m.ack_at)}</span>
-                      ) : m.submitted ? (
-                        <span className="text-xs text-warning">Chưa xem</span>
+                      {m.updated_at ? (
+                        <span className="text-xs text-secondary">{fmtShort(m.updated_at)}</span>
                       ) : (
                         <span className="text-xs text-outline-variant">—</span>
                       )}

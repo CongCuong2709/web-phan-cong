@@ -167,7 +167,7 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
   }, [tierItems]);
   const [showAllAttention, setShowAllAttention] = useState(false);
 
-  // ── Theo phòng ban (admin / BGĐ) ──
+  // ── Theo phòng ban (admin / HĐQT / Điều hành) ──
   const isManagerView = currentUser?.role === 'manager';
   const [weekly, setWeekly] = useState<WeeklyTeamMemberDto[]>([]);
   const [weeklyStatus, setWeeklyStatus] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -711,7 +711,7 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
           </div>
         </div>
 
-        {/* Tải công việc: quản lý xem từng người trong phòng; admin/BGĐ xem theo phòng ban. */}
+        {/* Tải công việc: quản lý xem từng người trong phòng; admin, HĐQT, Điều hành xem theo phòng ban. */}
         {isManagerView ? (
           <div className="bg-white p-5 rounded-xl border border-surface-container shadow-sm flex flex-col gap-4">
             <h3 className="text-base font-bold text-on-surface">Tải công việc đội ngũ</h3>
@@ -815,7 +815,7 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
           </div>
         )}
 
-        {/* Hoạt động hôm nay — quản lý xem từng người; admin/BGĐ xem theo phòng. */}
+        {/* Hoạt động hôm nay — quản lý xem từng người; admin, HĐQT, Điều hành xem theo phòng. */}
         {isManagerView ? (
           <div className="bg-white p-5 rounded-xl border border-surface-container shadow-sm flex flex-col gap-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -882,7 +882,7 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
             )}
           </div>
         ) : (
-          /* Admin / BGĐ: thu gọn theo phòng — bấm 1 phòng mới xem từng người. */
+          /* Admin, HĐQT, Điều hành: thu gọn theo phòng — bấm 1 phòng mới xem từng người. */
           <div className="bg-white p-5 rounded-xl border border-surface-container shadow-sm flex flex-col gap-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div className="flex items-center gap-2">

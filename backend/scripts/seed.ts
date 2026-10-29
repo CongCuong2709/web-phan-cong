@@ -2,17 +2,17 @@
  * seed.ts — Dữ liệu seed: Dự án "Hồ sơ hoàn công dự án 68"
  *
  * Cấu trúc:
- *   - 4 departments (ĐH, QLDA, KTTC, TC) — giữ nguyên dàn nhân sự cũ
- *   - 11 users (admin + 2 directors + 4 managers + 6 employees)
- *   - 1 project "Hồ sơ hoàn công dự án 68"
- *   - 7 phases (mỗi giai đoạn ứng với 1 phase, owner là trưởng phòng phụ trách)
- *   - 1 bundle / phase → Tổng cộng 7 bundles
- *   - 50 tasks (mỗi "Công việc" trong bảng là 1 task trong bundle của giai đoạn tương ứng)
+ *   - 4 departments (ĐH, QLDA, KTTC, TC)
+ *   - 13 users: admin, 2 HĐQT (son, lan), 2 Điều hành (khanh, nam), 3 Trưởng phòng, 5 Nhân viên
+ *   - Dự án "DA-68" do HĐQT Sơn tạo, Điều hành Khánh phụ trách:
+ *       7 giai đoạn (Khánh tạo) → hạng mục theo phòng (Khánh tạo, giao Trưởng phòng)
+ *       → 50 đầu việc (Trưởng phòng tạo, cho chính mình hoặc nhân viên cùng phòng)
+ *   - Dự án "DA-69" do HĐQT Lan tạo, Điều hành Nam phụ trách: mới có 1 giai đoạn, chưa có hạng mục
  *
- * Phân công "Chủ trì" theo từng task:
- *   - QLDA → manager Hung (TP.QLDA) là owner; NV. Hong tham gia hỗ trợ khi phase QLDA-driven
- *   - KTTC → manager Cuong (TP.KTTC); NV. Nguyệt / Hằng / Tú thực thi
- *   - TC   → manager Thành (TP.TC); NV. Ngọc thực thi
+ * Người làm đầu việc theo phòng:
+ *   - QLDA → TP Hùng hoặc NV Hồng
+ *   - KTTC → TP Cường hoặc NV Nguyệt / Hằng / Tú
+ *   - TC   → TP Thành hoặc NV Ngọc
  */
 
 import bcrypt from 'bcryptjs';
@@ -90,6 +90,7 @@ console.log(`📅 Timeline: dịch ${DAY_SHIFT >= 0 ? '+' : ''}${DAY_SHIFT} ngà
 console.log('🗑️  Clearing existing data…');
 db.exec(`
   DELETE FROM audit_log;
+  DELETE FROM task_attachments;
   DELETE FROM daily_logs;
   DELETE FROM task_help_messages;
   DELETE FROM weekly_reports;
@@ -121,7 +122,7 @@ const insertDept = db.prepare(
 for (const d of departments) insertDept.run(d.code, d.name, d.sort_order);
 
 // ============================================================================
-// 2. Users (giữ nguyên dàn nhân sự cũ)
+// 2. Users
 // ============================================================================
 
 console.log('👥 Inserting users…');
@@ -130,8 +131,10 @@ const passwordAdmin = bcrypt.hashSync('admin123', 10);
 
 const users = [
   { username: 'admin',  fullname: 'Quản trị hệ thống', role: 'admin',    depts: ['ĐH','QLDA','KTTC','TC'] },
-  { username: 'khanh',  fullname: 'Khánh — BGĐ',        role: 'director', depts: ['ĐH'] },
-  { username: 'nam',    fullname: 'Nam — BGĐ',          role: 'director', depts: ['ĐH'] },
+  { username: 'son',    fullname: 'Sơn — HĐQT',         role: 'board',    depts: ['ĐH'] },
+  { username: 'lan',    fullname: 'Lan — HĐQT',         role: 'board',    depts: ['ĐH'] },
+  { username: 'khanh',  fullname: 'Khánh — Điều hành',  role: 'director', depts: ['ĐH'] },
+  { username: 'nam',    fullname: 'Nam — Điều hành',    role: 'director', depts: ['ĐH'] },
   { username: 'hung',   fullname: 'Hùng — TP.QLDA',     role: 'manager',  depts: ['QLDA'] },
   { username: 'cuong',  fullname: 'Cường — TP.KTTC',    role: 'manager',  depts: ['KTTC'] },
   { username: 'thanh',  fullname: 'Thành — TP.TC',      role: 'manager',  depts: ['TC'] },
@@ -202,7 +205,7 @@ const phases: Phase[] = [
     description: 'Khảo sát, lập nhiệm vụ thiết kế, thiết kế kỹ thuật, thẩm tra và phê duyệt dự toán.',
     owner: 'hung',  dept: 'QLDA',
     start: '2026-10-10', end: '2026-10-13',
-    management_notes: 'Phối hợp chặt với đơn vị tư vấn thiết kế; cần BGĐ phê duyệt dự toán trước khi chốt GĐ1.',
+    management_notes: 'Phối hợp chặt với đơn vị tư vấn thiết kế; cần Điều hành phê duyệt dự toán trước khi chốt GĐ1.',
     tasks: [
       { code: 'T1-01', title: 'Khảo sát địa chất, địa hình bổ sung (nếu cần)', dept: 'QLDA', owner: 'hung',
         start: '2026-10-10', end: '2026-10-11', deliverable: 'Báo cáo khảo sát đã nghiệm thu', priority: 'high' },
@@ -389,8 +392,8 @@ const projectInfo = db.prepare(`
   'DA-68',
   'Hồ sơ hoàn công dự án 68',
   'Dự án trọng điểm khối 68: từ thiết kế & pháp lý → lựa chọn nhà thầu → chuẩn bị khởi công → thi công → nghiệm thu hoàn công → bàn giao → thanh quyết toán.',
-  userIds['hung'],
-  userIds['admin'],  // created_by_user_id
+  userIds['khanh'],  // Điều hành phụ trách
+  userIds['son'],    // HĐQT tạo
   d('2026-10-10'),
   d('2026-10-29'),
   'doing',
@@ -407,8 +410,8 @@ const insertPhase = db.prepare(`
 // --- Tier 3: Bundles ---
 const insertBundle = db.prepare(`
   INSERT INTO bundles (phase_id, code, title, description, owner_user_id, created_by_user_id,
-    start_date, end_date, status)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    department_code, start_date, end_date, status)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 // --- Tier 4: Tasks ---
@@ -512,8 +515,8 @@ for (const p of phases) {
     p.code,
     p.title,
     p.description,
-    userIds[p.owner],
-    userIds[p.owner],  // created_by = owner (manager tự tạo phase của mình)
+    userIds['khanh'],  // giai đoạn luôn do Điều hành phụ trách dự án quản lý
+    userIds['khanh'],
     p.start && d(p.start),
     p.end && d(p.end),
     'doing',
@@ -529,7 +532,7 @@ for (const p of phases) {
     tasksByDept.get(t.dept)!.push(t);
   }
 
-  // Bundle owner: manager của phòng ban đó (nếu có), fallback về owner của phase
+  // Hạng mục của mỗi phòng giao cho Trưởng phòng phòng đó.
   const deptManager: Record<string, string> = {
     QLDA: 'hung',
     KTTC: 'cuong',
@@ -537,11 +540,10 @@ for (const p of phases) {
   };
 
   for (const [dept, deptTaskList] of tasksByDept) {
-    const bundleOwner = deptManager[dept] ?? p.owner;
+    const bundleOwner = deptManager[dept];
     // Trong cùng phase + dept: ngày bắt đầu sớm nhất, ngày kết thúc muộn nhất
-    const sortedDates = [...deptTaskList].sort((a, b) => a.start.localeCompare(b.start));
-    const bStartDate = d(sortedDates[0].start);
-    const bEndDate = d(sortedDates[sortedDates.length - 1].end);
+    const bStartDate = d(deptTaskList.map((t) => t.start).sort()[0]);
+    const bEndDate = d(deptTaskList.map((t) => t.end).sort().at(-1)!);
 
     const nameInfo = bundleNames[`${p.code}|${dept}`] ?? {
       title: `${p.title} — phòng ${dept}`,
@@ -553,8 +555,9 @@ for (const p of phases) {
       `${p.code}-${dept}`,                          // bundle code: GD-01-QLDA
       nameInfo.title,                                // bundle title (theo bảng trên)
       nameInfo.description,                          // banner cho hạng mục
-      userIds[bundleOwner],
-      userIds[bundleOwner],                          // created_by
+      userIds[bundleOwner],                          // Trưởng phòng phụ trách
+      userIds['khanh'],                              // Điều hành tạo hạng mục
+      dept,
       bStartDate,
       bEndDate,
       'doing',
@@ -562,6 +565,10 @@ for (const p of phases) {
     const bundleId = Number(bundleInfo.lastInsertRowid);
 
     for (const t of deptTaskList) {
+      const owner = users.find((u) => u.username === t.owner)!;
+      if (t.owner !== bundleOwner && !(owner.role === 'employee' && owner.depts.includes(dept))) {
+        throw new Error(`${t.code}: ${t.owner} không làm được đầu việc của hạng mục phòng ${dept}.`);
+      }
       const info = insertTask.run(
         bundleId,                                            // 1. bundle_id
         t.code,                                              // 2. code
@@ -583,6 +590,42 @@ for (const p of phases) {
     }
   }
 }
+
+// Ngày của mục con phải nằm trong mục cha (cùng luật với routes/tasks.js).
+const outOfRange = db.prepare(`
+  SELECT 'giai đoạn ' || ph.code AS what FROM phases ph JOIN projects p ON p.id = ph.project_id
+   WHERE ph.start_date < p.start_date OR ph.end_date > p.end_date
+  UNION ALL
+  SELECT 'hạng mục ' || b.code FROM bundles b JOIN phases ph ON ph.id = b.phase_id
+   WHERE b.start_date < ph.start_date OR b.end_date > ph.end_date
+  UNION ALL
+  SELECT 'đầu việc ' || t.code FROM tasks t JOIN bundles b ON b.id = t.bundle_id
+   WHERE t.start_date < b.start_date OR t.end_date > b.end_date
+`).all() as { what: string }[];
+if (outOfRange.length) {
+  throw new Error(`Ngày nằm ngoài mục cha: ${outOfRange.map((r) => r.what).join(', ')}`);
+}
+
+// Dự án thứ 2: HĐQT Lan tạo, Điều hành Nam phụ trách — mới lập 1 giai đoạn.
+const project2Id = Number(db.prepare(`
+  INSERT INTO projects (code, title, description, owner_user_id, created_by_user_id,
+    start_date, end_date, status)
+  VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+`).run(
+  'DA-69',
+  'Cải tạo văn phòng trụ sở',
+  'Cải tạo tầng 3–5 trụ sở chính: thiết kế lại mặt bằng làm việc, hệ thống điện nhẹ và PCCC.',
+  userIds['nam'],
+  userIds['lan'],
+  d('2026-10-20'),
+  d('2026-12-31'),
+).lastInsertRowid);
+insertPhase.run(
+  project2Id, 'GD-01', 'Giai đoạn 1: Khảo sát và thiết kế',
+  'Khảo sát hiện trạng, lập phương án mặt bằng và dự toán sơ bộ.',
+  userIds['nam'], userIds['nam'],
+  d('2026-10-20'), d('2026-11-15'), 'pending', '', null,
+);
 
 const taskCount = insertedTasks.length;
 const totalTasksExpected = phases.reduce((acc, p) => acc + p.tasks.length, 0);
@@ -626,8 +669,8 @@ if (t1_05) {
   insertLog.run(
     t1_05,
     dPast('2026-10-12'),
-    'Tổng hợp dự toán các gói thầu, trình BGĐ phê duyệt',
-    'Đã trình BGĐ, kỳ vọng phê duyệt sớm trong tuần này',
+    'Tổng hợp dự toán các gói thầu, trình Điều hành phê duyệt',
+    'Đã trình Điều hành, kỳ vọng phê duyệt sớm trong tuần này',
     '',
     40,
     userIds['hung'],
@@ -653,7 +696,7 @@ console.log('📝 Inserting demo blocker_note on T2-04…');
 const t2_04 = findTaskByCode('T2-04');
 if (t2_04) {
   db.prepare(`UPDATE tasks SET blocker_note = ? WHERE id = ?`).run(
-    'Cần BGĐ xác nhận ngân hàng bảo lãnh trước khi phát hành thư bảo lãnh.',
+    'Cần Điều hành xác nhận ngân hàng bảo lãnh trước khi phát hành thư bảo lãnh.',
     t2_04,
   );
 }
@@ -671,7 +714,7 @@ if (t2_04) {
   // Cùng nội dung với blocker_note hiện tại, để demo flow
   insertHelp.run(
     t2_04,
-    'Cần BGĐ xác nhận ngân hàng bảo lãnh trước khi phát hành thư bảo lãnh.',
+    'Cần Điều hành xác nhận ngân hàng bảo lãnh trước khi phát hành thư bảo lãnh.',
     userIds['cuong'],  // manager KTTC gửi
   );
   // Một message nữa của admin resolve
@@ -698,7 +741,7 @@ db.prepare(`
 `).run(
   'project', projectId, 'create',
   JSON.stringify({ code: 'DA-68', title: 'Hồ sơ hoàn công dự án 68' }),
-  userIds['hung'], 'hung', '127.0.0.1',
+  userIds['son'], 'son', '127.0.0.1',
 );
 
 // Phase IDs đã insert: xếp theo thứ tự phases[] nên phase đầu = 1 (vừa insert)
@@ -713,7 +756,7 @@ if (firstPhaseId) {
   `).run(
     'phase', firstPhaseId.id, 'create',
     JSON.stringify({ code: 'GD-01', title: phases[0].title }),
-    userIds['hung'], 'hung', '127.0.0.1',
+    userIds['khanh'], 'khanh', '127.0.0.1',
   );
 }
 
@@ -737,9 +780,8 @@ if (firstTaskId) {
 // tự nhập tay. Bỏ khối này nếu chỉ cần dữ liệu dự án — không entity nào khác
 // phụ thuộc vào nó.
 //
-// Dữ liệu cố tình để "vừa bắt đầu": NV mới có 2-3 dòng, 1 dòng vướng mắc,
-// QL đã phản hồi 1 NV (chỉ đạo + nhận xét + xác nhận) → đủ để demo cả 2 vế
-// (NV đọc phản hồi / QL xem và phản hồi).
+// Dữ liệu cố tình để "vừa bắt đầu": mỗi người mới có 1-3 dòng, 1 dòng vướng mắc.
+// Có cả báo cáo của Trưởng phòng (TP cũng viết báo cáo tuần); không có bước duyệt.
 
 console.log('📋 Inserting weekly report demo…');
 const thisWeek = weekStartOf(TODAY);
@@ -750,17 +792,11 @@ const nextWeekEndDate = (() => {
 })();
 
 const insertWeeklyReport = db.prepare(`
-  INSERT INTO weekly_reports
-    (user_id, week_start, week_end, rows_json, manager_note, ack_user_id, ack_at, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  INSERT INTO weekly_reports (user_id, week_start, week_end, rows_json, updated_at)
+  VALUES (?, ?, ?, ?, datetime('now'))
 `);
 
-const weeklyDemo: Array<{
-  who: string;
-  rows: unknown[];
-  note?: string;
-  ackBy?: string;
-}> = [
+const weeklyDemo: Array<{ who: string; rows: unknown[] }> = [
   {
     who: 'hong',
     rows: [
@@ -768,8 +804,13 @@ const weeklyDemo: Array<{
       { id: 'w2', name: 'Lập nhiệm vụ thiết kế', result: 'Dự thảo nhiệm vụ thiết kế đã xong 80%, chờ rà soát nội bộ.', status: 'Đang làm', blocker: '' },
       { id: 'w3', name: 'Thẩm tra thiết kế, dự toán', result: 'Chưa bắt đầu — chờ có bản vẽ thiết kế.', status: 'Chưa bắt đầu', blocker: 'Cần bản vẽ thiết kế từ đơn vị tư vấn trước khi thẩm tra.' },
     ],
-    note: 'Tiến độ GĐ1 ổn. Chú ý thẩm tra dự toán phải có bản vẽ thiết kế trước khi tổng hợp.',
-    ackBy: 'hung',
+  },
+  {
+    who: 'hung',
+    rows: [
+      { id: 'w1', name: 'Thiết kế kỹ thuật / bản vẽ thi công', result: 'Kiến trúc xong 60%, MEP chờ tư vấn PCCC.', status: 'Đang làm', blocker: '' },
+      { id: 'w2', name: 'Lập và phê duyệt dự toán', result: 'Đã trình Điều hành dự toán 7 gói thầu.', status: 'Đang làm', blocker: '' },
+    ],
   },
   {
     who: 'nguyet',
@@ -795,9 +836,6 @@ for (const w of weeklyDemo) {
     thisWeek,
     nextWeekEndDate,
     JSON.stringify(w.rows),
-    w.note ?? null,
-    w.ackBy ? userIds[w.ackBy] : null,
-    w.ackBy ? new Date().toISOString().replace('T', ' ').slice(0, 19) : null,
   );
   weeklyInserted += 1;
 }
@@ -811,11 +849,12 @@ db.close();
 
 console.log('\n✅ Seed "Hồ sơ hoàn công dự án 68" complete!');
 console.log(`   - Timeline: ${toISO(DESIRED_START)} → ${d('2026-10-29')} (dự án mới bắt đầu ${PROJECT_STARTED_DAYS_AGO} ngày)`);
-console.log('   - 4 departments, 11 users (giữ nguyên dàn nhân sự cũ)');
-console.log(`   - 1 project "DA-68" → 7 phases → ${totalBundles.c} bundles (chia theo phòng ban: QLDA/KTTC/TC) → ${taskCount} tasks`);
+console.log(`   - 4 departments, ${users.length} users`);
+console.log(`   - "DA-68" (Điều hành khanh) → 7 phases → ${totalBundles.c} bundles (theo phòng: QLDA/KTTC/TC) → ${taskCount} tasks`);
+console.log('   - "DA-69" (Điều hành nam) → 1 phase');
 console.log('   - 3 daily log demo + 1 blocker_note demo + 2 help_messages');
 console.log('   - 3 audit log entries');
-console.log(`   - ${weeklyInserted} báo cáo tuần (tuần ${thisWeek}), 1 NV đã được QL phản hồi`);
+console.log(`   - ${weeklyInserted} báo cáo tuần (tuần ${thisWeek})`);
 console.log('\n   Default password:');
 console.log('   - admin / admin123');
 console.log('   - all others / 123456');

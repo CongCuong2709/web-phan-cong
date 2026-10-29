@@ -206,7 +206,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const canSeeOwner = useCallback(
     (ownerUsername?: string) => {
       if (!user) return false;
-      if (user.role === 'admin' || user.role === 'director') return true;
+      if (user.role === 'admin' || user.role === 'board' || user.role === 'director') return true;
       if (user.role === 'manager') {
         if (!ownerUsername) return true;
         const owner = users.find((u) => u.username.toLowerCase() === ownerUsername.toLowerCase());

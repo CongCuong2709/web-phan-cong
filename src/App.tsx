@@ -10,7 +10,7 @@ import {
   DailyLog,
 } from './types';
 import { AuthProvider, useAuth } from './auth/AuthContext';
-import { canAcceptTierItem, canAddDailyLog, visibleTabsFor } from './auth/permissions';
+import { canAcceptTierItem, canAddDailyLog, visibleTabsFor, writesWeeklyReport } from './auth/permissions';
 import { api, describeApiError, type ApiResponse } from './lib/apiClient';
 import {
   apiToTierItem,
@@ -20,7 +20,6 @@ import {
   buildEmployeeTasks,
   extractBackendId,
   isPriority,
-  todayIso,
   viStatusToEnum,
 } from './lib/transforms';
 import { useWorkspaceData } from './lib/useWorkspaceData';
@@ -35,7 +34,6 @@ import { WeeklyReportView } from './components/WeeklyReportView';
 import { WeeklyReportTeamView } from './components/WeeklyReportTeamView';
 import { TaskDetailDialog, type DetailTab } from './components/TaskDetailDialog';
 import { NewItemModal } from './components/NewItemModal';
-import { NewPersonalTaskModal } from './components/NewPersonalTaskModal';
 import { ToastStack, useToasts } from './components/Toast';
 import LoginPage from './components/LoginPage';
 
@@ -103,8 +101,8 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   const dailyLogs = useMemo<DailyLog[]>(() => liveLogs.map(apiToDailyLog), [liveLogs]);
   const teamMembers = useMemo<TeamMember[]>(() => data.members.map(apiToTeamMember), [data.members]);
 
-  // Danh sách user từ backend (dropdown "Người phụ trách" trong NewItemModal).
-  // Admin thấy tất cả; Manager thấy user cùng phòng; Employee bị 403 (bỏ qua).
+  // Danh bạ từ backend để chọn người phụ trách: HĐQT chọn Điều hành, Điều hành chọn
+  // Trưởng phòng, Trưởng phòng chọn nhân viên cùng phòng. Nhân viên không cần (403).
   const [directoryUsers, setDirectoryUsers] = useState<User[]>(SEED_USERS);
 
   useEffect(() => {
@@ -132,22 +130,17 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     return () => { cancelled = true; };
   }, [user.id, user.role]);
 
-  // Người cùng phòng ban (admin — departments rỗng — thấy tất cả): ứng viên nhận việc.
-  const deptUsers = useMemo(
-    () => directoryUsers.filter((u) => user.departments.length === 0 || u.departments?.some((d) => user.departments.includes(d))),
-    [directoryUsers, user.departments],
-  );
+  // Chỉ người có id thật từ /api/users — danh bạ dự phòng (SEED_USERS) không có id dùng được.
+  const assignableUsers = useMemo(() => directoryUsers.filter((u) => /^\d+$/.test(u.id)), [directoryUsers]);
 
   // ---------------- Role-based data slicing ----------------
-  // Manager: thấy T2/T3/T4 thuộc phòng mình + chuỗi cha lên tới T1 làm ngữ cảnh chỉ đọc.
-  // Employee: chỉ T4 của chính mình + chuỗi cha (T3 → T2 → T1) làm ngữ cảnh chỉ đọc.
+  // Server đã lọc đầu việc theo quyền xem (policy `task:read`); dự án / giai đoạn / hạng mục
+  // ai cũng nhận được. HĐQT, Điều hành, Trưởng phòng xem cả cây.
+  // Nhân viên: chỉ T4 của chính mình + chuỗi cha (T3 → T2 → T1) làm ngữ cảnh chỉ đọc.
   const visibleTierItems = useMemo<TierItem[]>(() => {
-    if (user.role === 'admin' || user.role === 'director') return tierItems;
+    if (user.role !== 'employee') return tierItems;
     const byId = new Map(tierItems.map((t) => [t.id, t]));
-    const roots =
-      user.role === 'manager'
-        ? tierItems.filter((t) => t.tier >= 2 && (!t.department || user.departments.includes(t.department)))
-        : tierItems.filter((t) => t.tier === 4 && t.ownerUsername === user.username);
+    const roots = tierItems.filter((t) => t.tier === 4 && t.ownerUserId === user.id);
     const seen = new Set<string>();
     const result: TierItem[] = [];
     for (const r of roots) {
@@ -162,24 +155,23 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   }, [tierItems, user]);
 
   const visibleTeamMembers = useMemo<TeamMember[]>(() => {
-    if (user.role === 'admin' || user.role === 'director') return teamMembers;
+    if (user.role === 'admin' || user.role === 'board' || user.role === 'director') return teamMembers;
     if (user.role === 'manager') {
       return teamMembers.filter((m) => !m.department || user.departments.includes(m.department));
     }
     return [];
   }, [teamMembers, user]);
 
+  // "Giao việc nhóm": đầu việc trong các hạng mục mình phụ trách (cả việc mình tự làm).
   const visibleTeamTasks = useMemo<TeamLeadTask[]>(() => {
     if (user.role === 'admin') return teamTasks;
-    if (user.role === 'manager') {
-      return teamTasks.filter((t) => !t.department || user.departments.includes(t.department));
-    }
+    if (user.role === 'manager') return teamTasks.filter((t) => t.bundleOwnerUserId === user.id);
     return [];
   }, [teamTasks, user]);
 
-  // "Việc của tôi" luôn là việc mà chính user là owner — kể cả manager/admin.
+  // "Việc của tôi" luôn là việc mà chính user là owner — kể cả Trưởng phòng / admin.
   const visibleEmployeeTasks = useMemo<EmployeeTask[]>(() => {
-    if (user.role === 'director') return [];
+    if (user.role === 'board' || user.role === 'director') return [];
     const me = user.username.toLowerCase();
     return employeeTasks.filter((t) => t.ownerUsername?.toLowerCase() === me);
   }, [employeeTasks, user]);
@@ -187,8 +179,8 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   // ---------------- Modals & chi tiết công việc ----------------
   // Mục đang mở nằm trên URL (?muc=4-12&tab=trao-doi) → chia sẻ được link tới đúng 1 mục, đúng tab.
   const drawerItemId = route.params.muc ?? null;
-  // Xem mục lưu trữ trên Cây công việc: chỉ admin / BGĐ (người lưu trữ được).
-  const canViewArchive = user.role === 'admin' || user.role === 'director';
+  // Xem mục lưu trữ trên Cây công việc: admin, HĐQT, Điều hành (người lưu trữ được).
+  const canViewArchive = user.role === 'admin' || user.role === 'board' || user.role === 'director';
   const showArchived = canViewArchive && route.params.luutru === '1';
   const drawerItem = useMemo(
     () =>
@@ -224,31 +216,37 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     if (!drawerItem || drawerItem.tier === 4) return undefined;
     const children = tierItems.filter((t) => t.parentId === drawerItem.id);
     return {
-      allowed: canAcceptTierItem(user, drawerItem, children.map((c) => c.department)),
+      allowed: canAcceptTierItem(user, drawerItem),
       openChildren: children.filter((c) => c.status !== 'Đã xong').length,
       childLabel: drawerItem.tier === 1 ? 'giai đoạn' : drawerItem.tier === 2 ? 'hạng mục' : 'đầu việc',
       deniedReason:
         drawerItem.tier === 3
           ? 'Trưởng phòng phụ trách sẽ nghiệm thu hạng mục này.'
-          : 'Ban giám đốc sẽ nghiệm thu giai đoạn / dự án.',
+          : 'Điều hành phụ trách dự án sẽ nghiệm thu giai đoạn / dự án.',
     };
   }, [drawerItem, tierItems, user]);
-  const [isNewPersonalTaskOpen, setIsNewPersonalTaskOpen] = useState(false);
-  // URL không chỉ rõ tab con → BGĐ mở "Tổng quan", quản lý mở "Báo cáo tuần phòng ban".
-  const baoCaoSubTab: 'tong-quan' | 'tuan-phong-ban' =
-    route.sub === 'tong-quan' ? 'tong-quan'
-    : route.sub === 'tuan' ? 'tuan-phong-ban'
-    : user.role === 'director' ? 'tong-quan' : 'tuan-phong-ban';
+  // Tab con của Báo cáo: Tổng quan, Báo cáo tuần (tổng hợp), Báo cáo tuần của tôi (người viết báo cáo).
+  // URL không chỉ rõ → HĐQT / Điều hành mở "Tổng quan", Trưởng phòng mở "Báo cáo tuần".
+  type BaoCaoSub = 'tong-quan' | 'tuan' | 'cua-toi';
+  const baoCaoSubs: BaoCaoSub[] = writesWeeklyReport(user) ? ['tong-quan', 'tuan', 'cua-toi'] : ['tong-quan', 'tuan'];
+  const baoCaoSubTab: BaoCaoSub = baoCaoSubs.includes(route.sub as BaoCaoSub)
+    ? (route.sub as BaoCaoSub)
+    : user.role === 'manager' ? 'tuan' : 'tong-quan';
+  const BAO_CAO_LABEL: Record<BaoCaoSub, string> = {
+    'tong-quan': 'Tổng quan',
+    tuan: 'Báo cáo tuần',
+    'cua-toi': 'Báo cáo tuần của tôi',
+  };
 
   // Lọc mức ưu tiên dùng chung cho "Việc của tôi" và "Giao việc nhóm" (?uu=critical).
   const priorityFilter = isPriority(route.params.uu) ? route.params.uu : null;
 
   // ---------------- Ghi dữ liệu ----------------
-  /** Tải lần lượt từng tệp lên task (gắn vào tin `messageId` nếu có). Trả mô tả các tệp lỗi. */
-  async function uploadFiles(taskNum: number, files: File[], messageId?: number | null): Promise<string[]> {
+  /** Tải lần lượt từng tệp lên mục (đầu việc: gắn vào tin `messageId` nếu có). Trả mô tả các tệp lỗi. */
+  async function uploadFiles(tier: number, num: number, files: File[], messageId?: number | null): Promise<string[]> {
     const failed: string[] = [];
     for (const f of files) {
-      const r = await api.uploadAttachment(taskNum, f, messageId);
+      const r = await api.uploadAttachment(tier, num, f, messageId);
       if (!r.ok) failed.push(`${f.name} (${describeApiError(r)})`);
     }
     return failed;
@@ -259,13 +257,14 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
    * KHÔNG đổi gì trên UI; thành công thì tải lại dữ liệu thật rồi mới báo.
    *
    * `attach`: tệp tải lên SAU khi thao tác chính thành công — gắn vào tin trao đổi
-   * mà thao tác đó tạo (`message_id` trong response) nếu có, không thì gắn vào task.
+   * mà thao tác đó tạo (`message_id` trong response) nếu có, không thì gắn vào mục.
+   * `tier` mặc định 4 (đầu việc).
    * Tệp lỗi không huỷ thao tác chính (đã lưu) mà được báo riêng.
    */
   async function commit<T>(
     request: Promise<ApiResponse<T>>,
     successMessage?: string | ((data: T) => string),
-    attach?: { files: File[]; taskNum: number | ((data: T) => number) },
+    attach?: { files: File[]; taskNum: number | ((data: T) => number); tier?: number },
   ) {
     const r = await request;
     if (!r.ok) {
@@ -276,7 +275,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     if (attach && attach.files.length > 0) {
       const taskNum = typeof attach.taskNum === 'function' ? attach.taskNum(r.data) : attach.taskNum;
       const messageId = (r.data as { message_id?: number | null } | undefined)?.message_id ?? null;
-      failed = await uploadFiles(taskNum, attach.files, messageId);
+      failed = await uploadFiles(attach.tier ?? 4, taskNum, attach.files, messageId);
     }
     const refreshed = await reload();
     if (successMessage) {
@@ -323,25 +322,20 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     return saved !== null;
   };
 
+  /**
+   * Tạo mục mới. Người phụ trách: T1 Điều hành, T3 Trưởng phòng (+ phòng của hạng mục),
+   * T4 người làm; T2 luôn là Điều hành phụ trách dự án (server tự gán). Tệp gắn vào mục vừa tạo.
+   */
   const handleAddTierItem = async (item: Partial<TierItem>, files: File[] = []): Promise<boolean> => {
     const tier = item.tier ?? 4;
     const parent = item.parentId ? parseTaskId(item.parentId) : null;
-    // Phòng ban của việc = phòng của người được giao (ưu tiên phòng chung với người giao).
-    const owner = deptUsers.find((u) => u.username === item.ownerUsername);
-    const ownerDepts = owner?.departments ?? [];
-    const department =
-      item.department ??
-      ownerDepts.find((d) => user.departments.includes(d)) ??
-      ownerDepts[0] ??
-      user.departments[0] ??
-      null;
     const created = await commit(
       api.createTask({
         tier,
         title: item.title?.trim() || 'Đầu việc mới',
         parent_id: parent?.num ?? null,
-        department_code: department,
-        owner_username: item.ownerUsername || undefined,
+        department_code: tier === 3 ? item.department ?? null : null,
+        owner_user_id: tier === 2 || !item.ownerUserId ? null : Number(item.ownerUserId),
         progress: 0,
         status: 'pending',
         priority: item.priority ?? 'normal',
@@ -351,7 +345,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
         end_date: item.endDate,
       }),
       (res) => `Đã tạo ${res.item.code}: ${res.item.title}`,
-      tier === 4 ? { files, taskNum: (res) => res.item.id } : undefined,
+      { files, tier, taskNum: (res) => res.item.id },
     );
     return created !== null;
   };
@@ -425,11 +419,15 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     );
   };
 
-  /** Bổ sung tệp cho đầu việc (không gắn vào tin trao đổi). */
-  const handleUploadTaskFiles = async (taskId: string, files: File[]): Promise<boolean> => {
-    const ref = taskRef(taskId);
-    if (!ref || files.length === 0) return false;
-    const failed = await uploadFiles(ref.num, files);
+  /** Bổ sung tệp cho 1 mục bất kỳ tầng (không gắn vào tin trao đổi). */
+  const handleUploadTaskFiles = async (itemId: string, files: File[]): Promise<boolean> => {
+    const ref = parseTaskId(itemId);
+    if (!ref) {
+      showToast(STALE_ITEM_MESSAGE, 'error');
+      return false;
+    }
+    if (files.length === 0) return false;
+    const failed = await uploadFiles(ref.tier, ref.num, files);
     const refreshed = await reload();
     const done = files.length - failed.length;
     if (done > 0) showToast(`Đã tải lên ${done} tệp.`);
@@ -451,7 +449,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       showToast(STALE_ITEM_MESSAGE, 'error');
       return false;
     }
-    const newOwner = changes.ownerUserId ? deptUsers.find((u) => u.id === changes.ownerUserId) : undefined;
+    const newOwner = changes.ownerUserId ? assignableUsers.find((u) => u.id === changes.ownerUserId) : undefined;
     const message = [newOwner && `giao lại cho ${newOwner.fullname}`, changes.endDate && `dời hạn sang ${changes.endDate.split('-').reverse().join('/')}`]
       .filter(Boolean)
       .join(', ');
@@ -484,24 +482,6 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
       { files, taskNum: ref.num },
     );
     return res !== null;
-  };
-
-  const handleAddPersonalTask = async (title: string, endDate: string, notes: string): Promise<boolean> => {
-    const today = todayIso();
-    const created = await commit(
-      api.createTask({
-        tier: 4,
-        title: title.trim(),
-        description: notes.trim(),
-        start_date: today,
-        end_date: endDate,
-        priority: 'normal',
-        status: 'pending',
-        department_code: user.departments[0] ?? null,
-      }),
-      `Đã thêm việc cá nhân: "${title.trim()}"`,
-    );
-    return created !== null;
   };
 
   /**
@@ -591,16 +571,19 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
           />
         );
       case 'giao-viec-nhom':
-        return user.role === 'employee' || user.role === 'director' ? (
+        return !allowedTabs.includes('giao-viec-nhom') ? (
           <ForbiddenView role={user.role} />
         ) : (
           <GiaoViecNhomView
             teamMembers={visibleTeamMembers}
             tasks={visibleTeamTasks}
-            // Chỉ người có id thật từ /api/users — danh bạ dự phòng (SEED_USERS) không có id dùng được.
-            assignees={deptUsers
-              .filter((u) => /^\d+$/.test(u.id))
-              .map((u) => ({ id: u.id, username: u.username, fullname: u.fullname }))}
+            assignees={assignableUsers.map((u) => ({
+              id: u.id,
+              username: u.username,
+              fullname: u.fullname,
+              role: u.role,
+              departments: u.departments,
+            }))}
             onApproveTask={handleApproveTeamTask}
             onReturnTask={handleReturnTask}
             onUnblockTask={handleUnblockTask}
@@ -616,7 +599,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
           />
         );
       case 'viec-cua-toi':
-        return user.role === 'director' ? (
+        return !allowedTabs.includes('viec-cua-toi') ? (
           <ForbiddenView role={user.role} />
         ) : (
           <ViecCuaToiView
@@ -630,7 +613,6 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
             priorityFilter={priorityFilter}
             onPriorityFilterChange={(p) => setParam('uu', p)}
             onSaveLogs={handleSaveLogs}
-            onOpenNewPersonalTaskModal={() => setIsNewPersonalTaskOpen(true)}
           />
         );
       case 'bao-cao':
@@ -645,25 +627,27 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
                 aria-label="Loại báo cáo"
                 className="flex items-center gap-1 border-b border-surface-container"
               >
-                {(['tong-quan', 'tuan-phong-ban'] as const).map((k) => (
+                {baoCaoSubs.map((k) => (
                   <button
                     key={k}
                     type="button"
                     role="tab"
                     aria-selected={baoCaoSubTab === k}
-                    onClick={() => setSub(k === 'tong-quan' ? 'tong-quan' : 'tuan')}
+                    onClick={() => setSub(k)}
                     className={`px-3 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
                       baoCaoSubTab === k
                         ? 'border-primary text-primary'
                         : 'border-transparent text-on-surface-variant hover:text-on-surface'
                     }`}
                   >
-                    {k === 'tong-quan' ? 'Tổng quan' : 'Báo cáo tuần phòng ban'}
+                    {BAO_CAO_LABEL[k]}
                   </button>
                 ))}
               </div>
             </div>
-            {baoCaoSubTab === 'tuan-phong-ban' ? (
+            {baoCaoSubTab === 'cua-toi' ? (
+              <WeeklyReportView currentUser={user} mode="edit" onToast={showToast} />
+            ) : baoCaoSubTab === 'tuan' ? (
               <WeeklyReportTeamView currentUser={user} onToast={showToast} />
             ) : (
               <BaoCaoTongQuanView
@@ -721,17 +705,9 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
         mode={newItemMode ?? 'plan'}
         onClose={() => setNewItemMode(null)}
         onAddItem={handleAddTierItem}
-        parents={tierItems.map((i) => ({ id: i.id, title: i.title, tier: i.tier }))}
+        parents={tierItems}
         currentUser={user}
-        // Lọc theo phòng ban của user; admin (departments=[]) thấy hết.
-        deptUsers={deptUsers.map((u) => ({ username: u.username, fullname: u.fullname }))}
-      />
-
-      <NewPersonalTaskModal
-        isOpen={isNewPersonalTaskOpen}
-        onClose={() => setIsNewPersonalTaskOpen(false)}
-        onAdd={handleAddPersonalTask}
-        currentUser={user}
+        users={assignableUsers}
       />
 
       <ToastStack toasts={toast.toasts} onDismiss={toast.dismiss} />
@@ -783,9 +759,9 @@ const ForbiddenView: React.FC<{ role: User['role'] }> = ({ role }) => (
       <span aria-hidden="true" className="material-symbols-outlined [--icon-size:28px]">lock</span>
     </div>
     <h2 className="text-xl font-bold text-on-surface">Bạn không có quyền truy cập</h2>
-    {role === 'director' ? (
+    {role === 'board' || role === 'director' ? (
       <p className="text-sm text-secondary max-w-md leading-relaxed">
-        Vai trò BGĐ chỉ truy cập <span className="font-semibold text-primary">Cây công việc</span> và
+        Vai trò {ROLE_LABEL[role]} chỉ truy cập <span className="font-semibold text-primary">Cây công việc</span> và
         <span className="font-semibold text-primary"> Báo cáo</span>.
       </p>
     ) : (

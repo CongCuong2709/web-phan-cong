@@ -11,7 +11,7 @@ import {
   smallPrimaryButtonCls,
   textareaCls,
 } from './ui/Dialog';
-import { TaskPriority, TeamMember, TeamLeadTask } from '../types';
+import { TaskPriority, TeamMember, TeamLeadTask, User } from '../types';
 import { PRIORITY_OPTIONS, PRIORITY_RANK, PRIORITY_VI, serverTimeToLocalDate, todayIso } from '../lib/transforms';
 import { FilePicker } from './ui/FilePicker';
 import { PriorityBadge } from './ui/PriorityBadge';
@@ -20,12 +20,23 @@ export interface Assignee {
   id: string;
   username: string;
   fullname: string;
+  role: User['role'];
+  departments: User['departments'];
+}
+
+/** Người nhận được việc này: Trưởng phòng phụ trách hạng mục hoặc nhân viên phòng của việc (policy `task:assign`). */
+function eligibleFor(task: TeamLeadTask, assignees: Assignee[]): Assignee[] {
+  return assignees.filter(
+    (a) =>
+      a.id === task.bundleOwnerUserId ||
+      (a.role === 'employee' && !!task.department && a.departments.includes(task.department)),
+  );
 }
 
 interface GiaoViecNhomViewProps {
   teamMembers: TeamMember[];
   tasks: TeamLeadTask[];
-  /** Người có thể nhận việc (dùng khi đổi người làm). */
+  /** Danh bạ; khi đổi người làm chỉ hiện người hợp lệ với hạng mục của việc. */
   assignees: Assignee[];
   /** Các thao tác resolve true khi server đã lưu. Ghi chú + tệp thành 1 tin trong luồng trao đổi. */
   onApproveTask: (taskId: string, note: string, files: File[]) => Promise<boolean>;
@@ -535,7 +546,8 @@ const ActionDialog: React.FC<{
   busy: boolean;
   onClose: () => void;
   onSubmit: (action: Action, input: ActionInput) => void;
-}> = ({ action, assignees, busy, onClose, onSubmit }) => {
+}> = ({ action, assignees: allAssignees, busy, onClose, onSubmit }) => {
+  const assignees = action ? eligibleFor(action.task, allAssignees) : [];
   const [text, setText] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [owner, setOwner] = useState('');
