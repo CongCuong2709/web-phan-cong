@@ -2,19 +2,19 @@
  * stateMachine.js — Định nghĩa state machine cho status của task.
  *
  * Mục tiêu: thay thế việc gán `status` tự do trong code (Fix C9 — ghi đè status
- * của manager). Mọi mutation lên status phải đi qua `canTransition()`.
+ * của Trưởng phòng). Mọi mutation lên status phải đi qua `canTransition()`.
  *
  * States:
  *   pending           — khởi tạo, chưa làm gì
  *   doing             — đang thực hiện
- *   pending_approval  — owner tick "xong", chờ manager duyệt
- *   done              — manager đã duyệt (terminal)
+ *   pending_approval  — owner tick "xong", chờ Trưởng phòng duyệt
+ *   done              — Trưởng phòng đã duyệt (terminal)
  *   blocked           — bị nghẽn, cần trợ giúp
  *
  * Transition rules:
  *   - Done là terminal (không ai được đổi nữa, kể cả admin).
  *   - Blocked chỉ được gỡ bởi Trưởng phòng phụ trách / admin.
- *   - Pending_approval → doing (manager trả về) hoặc done (manager duyệt).
+ *   - Pending_approval → doing (Trưởng phòng trả về) hoặc done (Trưởng phòng duyệt).
  *
  * Sử dụng:
  *   if (!canTransition(currentStatus, newStatus, user, task).ok) {

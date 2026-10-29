@@ -4,14 +4,14 @@
  * Trước đây frontend hardcode CONSTRUCTION_TEAM_MEMBERS trong source — giờ lấy từ DB.
  * → "dữ liệu lạ" không khớp DB.
  *
- * Bây giờ: backend derive từ users (role employee/manager) + tier items (count tasks)
+ * Bây giờ: backend derive từ users (Nhân viên + Trưởng phòng) + tier items (count tasks)
  * → luôn khớp với DB.
  */
 
 import { Router } from 'express';
 import { db } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
-import { inDepartment, parseDepartments } from '../lib/policies.js';
+import { headOf, isHead, parseDepartments } from '../lib/policies.js';
 import { today } from '../lib/dates.js';
 
 const router = Router();
@@ -19,12 +19,15 @@ router.use(requireAuth);
 
 /** GET /api/team-members — List derived members cho current user. */
 router.get('/', (req, res) => {
-  // Lấy tất cả users (active) — manager/employee mới có trong team view
   const allUsers = db.prepare(`
     SELECT u.id, u.username, u.fullname, u.role, u.initial,
-      (SELECT GROUP_CONCAT(department_code, ',') FROM user_departments WHERE user_id = u.id) AS departments
+      (SELECT GROUP_CONCAT(department_code, ',') FROM user_departments WHERE user_id = u.id) AS departments,
+      (SELECT GROUP_CONCAT(department_code, ',') FROM user_departments WHERE user_id = u.id AND is_head = 1) AS head_of
     FROM users u WHERE u.is_active = 1
   `).all();
+  // Nhân viên thường không xem danh sách; Trưởng phòng (không thuộc HĐQT/Điều hành) chỉ xem phòng mình làm trưởng.
+  if (req.user.role === 'employee' && !isHead(req.user)) return res.json({ members: [] });
+  const scope = req.user.role === 'employee' ? headOf(req.user) : null;
 
   // Lấy tất cả T4 tasks (assignable to employees) + count theo owner
   // Status là enum `blocked`/`doing`/...; tier 4 có bundle_id optional.
@@ -42,14 +45,13 @@ router.get('/', (req, res) => {
   const members = [];
 
   for (const u of allUsers) {
-    // Chỉ người làm đầu việc (Trưởng phòng, Nhân viên) có trong danh sách thành viên.
-    if (u.role !== 'manager' && u.role !== 'employee') continue;
-
-    if (req.user.role === 'employee') continue; // employee chỉ xem chính mình ở view khác
-    // Manager: chỉ người có ít nhất 1 phòng ban chung (người chưa gán phòng không hiện).
-    const depts = parseDepartments(u.departments);
-    const shared = depts.filter((d) => inDepartment(req.user, d));
-    if (req.user.role === 'manager' && shared.length === 0) continue;
+    // Chỉ người làm đầu việc (Nhân viên, Trưởng phòng ở mọi cấp bậc) có trong danh sách.
+    const heads = parseDepartments(u.head_of);
+    if (u.role !== 'employee' && heads.length === 0) continue;
+    // Điều hành kiêm Trưởng phòng chỉ tính ở phòng mình làm trưởng.
+    const depts = u.role === 'employee' ? parseDepartments(u.departments) : heads;
+    const shared = scope ? depts.filter((d) => scope.includes(d)) : depts;
+    if (scope && shared.length === 0) continue;
     // Phòng hiển thị: ưu tiên phòng chung với người xem.
     const dept = shared[0] ?? depts[0];
 
@@ -67,7 +69,7 @@ router.get('/', (req, res) => {
       id: `mem-${u.id}`,
       username: u.username,
       name: u.fullname,
-      role: `${u.role === 'manager' ? 'TP' : 'NV'}.${dept ?? ''}`,
+      role: `${heads.includes(dept) ? 'TP' : 'NV'}.${dept ?? ''}`,
       avatar: '',
       activeTasks: open.length,
       overdueTasks: overdue,

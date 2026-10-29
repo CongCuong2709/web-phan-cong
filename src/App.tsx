@@ -10,7 +10,7 @@ import {
   DailyLog,
 } from './types';
 import { AuthProvider, useAuth } from './auth/AuthContext';
-import { canAcceptTierItem, canAddDailyLog, visibleTabsFor, writesWeeklyReport } from './auth/permissions';
+import { canAcceptTierItem, canAddDailyLog, isDeptScoped, isHead, visibleTabsFor, writesWeeklyReport } from './auth/permissions';
 import { api, describeApiError, type ApiResponse } from './lib/apiClient';
 import {
   apiToTierItem,
@@ -122,6 +122,8 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
           email: u.email ?? undefined,
           role: u.role,
           departments: (u.departments ?? '').split(',').map((s) => s.trim()).filter(Boolean) as User['departments'],
+          headOf: (u.head_of ?? '').split(',').filter(Boolean) as User['headOf'],
+          jobTitle: u.job_title ?? undefined,
           initial: u.initial ?? u.fullname.charAt(0),
           avatar: u.avatar_url ?? undefined,
         })),
@@ -138,7 +140,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   // ai cũng nhận được. HĐQT, Điều hành, Trưởng phòng xem cả cây.
   // Nhân viên: chỉ T4 của chính mình + chuỗi cha (T3 → T2 → T1) làm ngữ cảnh chỉ đọc.
   const visibleTierItems = useMemo<TierItem[]>(() => {
-    if (user.role !== 'employee') return tierItems;
+    if (user.role !== 'employee' || isHead(user)) return tierItems;
     const byId = new Map(tierItems.map((t) => [t.id, t]));
     const roots = tierItems.filter((t) => t.tier === 4 && t.ownerUserId === user.id);
     const seen = new Set<string>();
@@ -155,18 +157,19 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   }, [tierItems, user]);
 
   const visibleTeamMembers = useMemo<TeamMember[]>(() => {
-    if (user.role === 'admin' || user.role === 'board' || user.role === 'director') return teamMembers;
-    if (user.role === 'manager') {
-      return teamMembers.filter((m) => !m.department || user.departments.includes(m.department));
+    if (user.role === 'admin') return teamMembers;
+    // Trưởng phòng (kể cả Điều hành kiêm nhiệm): thành viên các phòng mình làm trưởng.
+    if (isHead(user)) {
+      return teamMembers.filter((m) => !m.department || user.headOf.includes(m.department));
     }
+    if (user.role === 'board' || user.role === 'director') return teamMembers;
     return [];
   }, [teamMembers, user]);
 
   // "Giao việc nhóm": đầu việc trong các hạng mục mình phụ trách (cả việc mình tự làm).
   const visibleTeamTasks = useMemo<TeamLeadTask[]>(() => {
     if (user.role === 'admin') return teamTasks;
-    if (user.role === 'manager') return teamTasks.filter((t) => t.bundleOwnerUserId === user.id);
-    return [];
+    return teamTasks.filter((t) => t.bundleOwnerUserId === user.id);
   }, [teamTasks, user]);
 
   // "Việc của tôi" luôn là việc mà chính user là owner — kể cả Trưởng phòng / admin.
@@ -226,12 +229,12 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
     };
   }, [drawerItem, tierItems, user]);
   // Tab con của Báo cáo: Tổng quan, Báo cáo tuần (tổng hợp), Báo cáo tuần của tôi (người viết báo cáo).
-  // URL không chỉ rõ → HĐQT / Điều hành mở "Tổng quan", Trưởng phòng mở "Báo cáo tuần".
+  // URL không chỉ rõ → HĐQT / Điều hành mở "Tổng quan", Trưởng phòng cấp nhân viên mở "Báo cáo tuần".
   type BaoCaoSub = 'tong-quan' | 'tuan' | 'cua-toi';
   const baoCaoSubs: BaoCaoSub[] = writesWeeklyReport(user) ? ['tong-quan', 'tuan', 'cua-toi'] : ['tong-quan', 'tuan'];
   const baoCaoSubTab: BaoCaoSub = baoCaoSubs.includes(route.sub as BaoCaoSub)
     ? (route.sub as BaoCaoSub)
-    : user.role === 'manager' ? 'tuan' : 'tong-quan';
+    : isDeptScoped(user) ? 'tuan' : 'tong-quan';
   const BAO_CAO_LABEL: Record<BaoCaoSub, string> = {
     'tong-quan': 'Tổng quan',
     tuan: 'Báo cáo tuần',

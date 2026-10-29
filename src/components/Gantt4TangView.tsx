@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Avatar } from './ui/Brand';
 import { isTierItemOverdue, PRIORITY_VI } from '../lib/transforms';
 import { TierItem, User } from '../types';
-import { creatableTiers } from '../auth/permissions';
+import { creatableTiers, isHead } from '../auth/permissions';
 
 interface Gantt4TangViewProps {
   tierItems: TierItem[];
@@ -193,19 +193,10 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
   const t4Count = tierItems.filter((i) => i.tier === 4).length;
 
   // Read-only context: T1 project mà currentUser không thể edit.
-  // - Admin, HĐQT, Điều hành: không bao giờ read-only
-  // - Manager: T1 ngoài dept của mình → read-only
-  // - Employee: TẤT CẢ T1 đều read-only (chỉ xem để biết project context)
-  const userDepts = currentUser?.departments ?? [];
-  const isReadOnlyContext = (item: TierItem): boolean => {
-    if (item.tier !== 1) return false;
-    const role = currentUser?.role;
-    if (role === 'admin' || role === 'board' || role === 'director') return false;
-    if (role === 'employee') return true; // mọi T1 đều read-only
-    // manager
-    if (!item.department) return false;
-    return !userDepts.includes(item.department as never);
-  };
+  // - Admin, HĐQT, Điều hành, Trưởng phòng: không bao giờ read-only
+  // - Nhân viên: TẤT CẢ T1 đều read-only (chỉ xem để biết project context)
+  const isReadOnlyContext = (item: TierItem): boolean =>
+    item.tier === 1 && currentUser?.role === 'employee' && !isHead(currentUser);
   // True nếu có ít nhất 1 T1 read-only trong data → hiện chú thích ở legend
   const hasReadOnlyContext = tierItems.some(isReadOnlyContext);
 
@@ -313,7 +304,7 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
               </button>
             )}
 
-            {currentUser && creatableTiers(currentUser.role).length > 0 && (
+            {currentUser && creatableTiers(currentUser).length > 0 && (
             <button
               onClick={onOpenNewModal}
               className="h-8 px-3.5 bg-primary hover:bg-primary-container text-white text-xs font-semibold rounded flex items-center gap-1.5 shadow-sm transition-all active:scale-[0.98]"

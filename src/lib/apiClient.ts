@@ -12,8 +12,8 @@
 const API_BASE = (import.meta.env.VITE_API_URL as string) || 'http://localhost:3001';
 const TOKEN_KEY = 'mvp_token';
 
-/** board = HĐQT, director = Điều hành, manager = Trưởng phòng, employee = Nhân viên. */
-export type UserRole = 'admin' | 'board' | 'director' | 'manager' | 'employee';
+/** Cấp bậc: board = HĐQT, director = Điều hành, employee = Nhân viên. Trưởng phòng = `head_of`. */
+export type UserRole = 'admin' | 'board' | 'director' | 'employee';
 
 /** User object trả về từ /api/auth/me (subset đủ dùng để restore session). */
 export interface MeUser {
@@ -23,6 +23,8 @@ export interface MeUser {
   email?: string;
   role: UserRole;
   departments: string[];
+  head_of: string[];
+  job_title?: string | null;
   avatar_url?: string;
 }
 
@@ -149,6 +151,8 @@ export interface LoginResponse {
     email?: string | null;
     role: UserRole;
     departments?: string[] | string | null;
+    head_of?: string[] | null;
+    job_title?: string | null;
     initial?: string | null;
     avatar_url?: string | null;
   };
@@ -547,6 +551,9 @@ export const api = {
         email?: string | null;
         role: UserRole;
         departments?: string | null;
+        /** CSV các phòng làm Trưởng phòng. */
+        head_of?: string | null;
+        job_title?: string | null;
         initial?: string | null;
         avatar_url?: string | null;
       }>;
@@ -619,7 +626,8 @@ export interface WeeklyTeamMemberDto {
   user_id: number;
   username: string;
   fullname: string;
-  role: 'manager' | 'employee';
+  /** Trưởng phòng của ít nhất một phòng trong `departments`. */
+  is_head: boolean;
   departments: string[];
   row_count: number;
   blocked_count: number;

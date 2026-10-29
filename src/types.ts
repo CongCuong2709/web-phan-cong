@@ -11,17 +11,14 @@ export type TierLevel = 1 | 2 | 3 | 4;
 /**
  * === MVP Identity & Access ===
  */
-/** board = HĐQT, director = Điều hành, manager = Trưởng phòng, employee = Nhân viên. */
-export type Role = 'admin' | 'board' | 'director' | 'manager' | 'employee';
-
 /**
- * 4 organizational departments (phòng ban) used by 4-Tier Enterprise MVP.
- *  - ĐH   : Ban Điều hành (Board of Directors)
- *  - QLDA : Phòng Quản lý Dự án
- *  - KTTC : Phòng Kế toán – Tài chính
- *  - TC   : Phòng Tổ chức – Hành chính
+ * Cấp bậc: board = HĐQT, director = Điều hành, employee = Nhân viên.
+ * "Trưởng phòng" là chức vụ trong phòng (`User.headOf`), không phải cấp bậc.
  */
-export type Department = 'ĐH' | 'QLDA' | 'KTTC' | 'TC';
+export type Role = 'admin' | 'board' | 'director' | 'employee';
+
+/** Mã phòng — khớp bảng `departments` (seed). */
+export type Department = 'HDQT' | 'DH' | 'QLDA' | 'KTTM' | 'NS' | 'BCT';
 
 export interface User {
   id: string;
@@ -30,24 +27,36 @@ export interface User {
   email?: string;
   role: Role;
   departments: Department[];
+  /** Các phòng user làm Trưởng phòng (user_departments.is_head). */
+  headOf: Department[];
+  /** Chức danh hiển thị (Kế toán, Thủ kho…). */
+  jobTitle?: string;
   initial?: string;
   avatar?: string;
 }
 
 export const DEPARTMENT_LABEL: Record<Department, string> = {
-  'ĐH': 'Ban Điều hành',
-  QLDA: 'Phòng Quản lý Dự án',
-  KTTC: 'Phòng Kế toán – Tài chính',
-  TC: 'Phòng Tổ chức – Hành chính',
+  HDQT: 'Hội đồng quản trị',
+  DH: 'Ban Điều hành',
+  QLDA: 'Ban Quản lý dự án',
+  KTTM: 'Kế toán - Thu mua',
+  NS: 'Nhân sự',
+  BCT: 'Ban công trường',
 };
 
 export const ROLE_LABEL: Record<Role, string> = {
   admin: 'Quản trị hệ thống',
   board: 'Hội đồng quản trị',
   director: 'Điều hành',
-  manager: 'Trưởng phòng',
   employee: 'Nhân viên',
 };
+
+/** Nhãn vai trò hiển thị: cấp bậc + chức vụ Trưởng phòng, vd "Điều hành · Trưởng phòng QLDA". */
+export function userRoleLabel(user: Pick<User, 'role' | 'headOf'>): string {
+  if (!user.headOf.length) return ROLE_LABEL[user.role];
+  const head = `Trưởng phòng ${user.headOf.join(', ')}`;
+  return user.role === 'employee' ? head : `${ROLE_LABEL[user.role]} · ${head}`;
+}
 
 // ============================================================================
 // `Task` — single source of truth cho mọi loại "đầu việc".

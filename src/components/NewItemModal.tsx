@@ -46,11 +46,11 @@ function viDate(iso: string): string {
 
 /**
  * Người được chọn làm phụ trách theo tầng — khớp policy `task:assign` ở backend/lib/policies.js.
- *   T1: Điều hành. T3: Trưởng phòng. T4: Trưởng phòng phụ trách hạng mục hoặc nhân viên phòng của hạng mục.
+ *   T1: Điều hành. T3: Trưởng phòng (mọi cấp bậc). T4: Trưởng phòng phụ trách hạng mục hoặc nhân viên phòng của hạng mục.
  */
 function ownerCandidates(tier: TierLevel, parent: TierItem | undefined, users: User[]): User[] {
   if (tier === 1) return users.filter((u) => u.role === 'director');
-  if (tier === 3) return users.filter((u) => u.role === 'manager');
+  if (tier === 3) return users.filter((u) => u.headOf.length > 0);
   if (tier === 4 && parent) {
     return users.filter(
       (u) =>
@@ -78,7 +78,7 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
   mode = 'plan',
 }) => {
   const assign = mode === 'assign';
-  const allowedTiers: TierLevel[] = assign ? [4] : creatableTiers(currentUser.role);
+  const allowedTiers: TierLevel[] = assign ? [4] : creatableTiers(currentUser);
   const defaultTier = allowedTiers[allowedTiers.length - 1] ?? 4;
 
   const [tier, setTier] = useState<TierLevel>(defaultTier);
@@ -118,7 +118,7 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
   const candidates = useMemo(() => ownerCandidates(tier, parent, users), [tier, parent, users]);
   const owner = candidates.find((u) => u.id === ownerUserId);
   // Trưởng phòng nhiều phòng → chọn phòng của hạng mục.
-  const ownerDepartments = tier === 3 && owner ? owner.departments : [];
+  const ownerDepartments = tier === 3 && owner ? owner.headOf : [];
 
   // Chọn mục cha → ngày mặc định nằm trong khoảng của mục cha; đầu việc mặc định giao cho chính mình nếu được.
   const pickParent = (id: string) => {
@@ -134,7 +134,7 @@ export const NewItemModal: React.FC<NewItemModalProps> = ({
   };
   const pickOwner = (id: string) => {
     setOwnerUserId(id);
-    setDepartment(candidates.find((u) => u.id === id)?.departments[0] ?? '');
+    setDepartment(candidates.find((u) => u.id === id)?.headOf[0] ?? '');
   };
 
   const needsParent = tier > 1;

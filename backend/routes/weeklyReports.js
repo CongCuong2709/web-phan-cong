@@ -9,13 +9,13 @@
  *
  * Tuần tính theo ISO week (thứ 2 → CN). Không có bước duyệt hay phản hồi:
  * công ty vận hành bằng niềm tin. Quyền: `weekly_report:write` / `weekly_report:read`
- * ở lib/policies.js (HĐQT, Điều hành xem tất cả; Trưởng phòng xem người cùng phòng).
+ * ở lib/policies.js (HĐQT, Điều hành xem tất cả; Trưởng phòng xem người trong phòng mình).
  */
 
 import { Router } from 'express';
 import { db, stmt } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
-import { authorize, parseDepartments } from '../lib/policies.js';
+import { authorize, headOf, isHead } from '../lib/policies.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -178,7 +178,7 @@ router.get('/history', (req, res) => {
  * GET /api/weekly-reports/team?week=YYYY-MM-DD — Tổng hợp những người viết báo cáo tuần
  * (Nhân viên + Trưởng phòng) trong phạm vi được xem.
  *
- * Phạm vi: Trưởng phòng = các phòng của mình; HĐQT, Điều hành, admin = toàn công ty.
+ * Phạm vi: Trưởng phòng = các phòng mình làm trưởng; HĐQT, Điều hành, admin = toàn công ty.
  * Trả số liệu theo người, KHÔNG trả rows_json. Người chưa lưu tuần này vẫn có mặt
  * với submitted = false → biết ai chưa viết.
  */
@@ -187,25 +187,25 @@ router.get('/team', (req, res) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(week)) {
     return res.status(400).json({ error: 'invalid_week', message: 'week phải YYYY-MM-DD.' });
   }
-  if (req.user.role === 'employee') {
+  if (req.user.role === 'employee' && !isHead(req.user)) {
     return res.status(403).json({ error: 'forbidden', message: 'Chỉ Trưởng phòng, Điều hành, HĐQT xem tổng hợp.' });
   }
 
-  const myDepts = req.user.role === 'manager' ? parseDepartments(req.user.departments) : [];
+  const myDepts = req.user.role === 'employee' ? headOf(req.user) : [];
   const deptFilter = myDepts.length
     ? `AND ud.department_code IN (${myDepts.map(() => '?').join(',')})`
     : '';
 
   const rows = db.prepare(`
-    SELECT u.id AS user_id, u.username, u.fullname, u.role,
-           ud.department_code,
+    SELECT u.id AS user_id, u.username, u.fullname,
+           ud.department_code, ud.is_head,
            w.rows_json, w.updated_at
       FROM users u
       JOIN user_departments ud ON ud.user_id = u.id
       LEFT JOIN weekly_reports w
              ON w.user_id = u.id AND w.week_start = ?
-     WHERE u.is_active = 1 AND u.role IN ('employee', 'manager') ${deptFilter}
-     ORDER BY CASE u.role WHEN 'manager' THEN 0 ELSE 1 END, u.fullname
+     WHERE u.is_active = 1 AND u.role = 'employee' ${deptFilter}
+     ORDER BY ud.is_head DESC, u.fullname
   `).all(week, ...myDepts);
 
   // Gộp theo user (1 người có thể ở nhiều phòng → 1 dòng, departments là mảng).
@@ -218,7 +218,7 @@ router.get('/team', (req, res) => {
         user_id: r.user_id,
         username: r.username,
         fullname: r.fullname,
-        role: r.role,
+        is_head: false,
         departments: [],
         row_count: parsed.length,
         blocked_count: parsed.filter((x) => x.status === 'Vướng mắc').length,
@@ -230,6 +230,7 @@ router.get('/team', (req, res) => {
     if (r.department_code && !entry.departments.includes(r.department_code)) {
       entry.departments.push(r.department_code);
     }
+    if (r.is_head) entry.is_head = true;
   }
   return res.json({ items: [...byUser.values()], week });
 });

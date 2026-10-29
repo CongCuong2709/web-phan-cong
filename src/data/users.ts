@@ -3,7 +3,7 @@
  * "đã load /api/users nhưng response chưa về".
  *
  * Thực tế danh sách user thật được fetch từ backend:
- *   - `/api/users` cho admin / manager (xem routes/users.js).
+ *   - `/api/users` cho admin, HĐQT, Điều hành, Trưởng phòng (xem routes/users.js).
  *   - `user` payload trong login response cho employee (xem AuthContext.tsx).
  *
  * Không lưu danh sách nhân sự thật trong bundle frontend — tránh leak cấu trúc
@@ -19,6 +19,7 @@ export const PLACEHOLDER_USERS: User[] = [
     fullname: 'Đang tải…',
     role: 'employee',
     departments: [],
+    headOf: [],
   },
 ];
 

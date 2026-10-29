@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { EmployeeTask, DailyLog, ROLE_LABEL, TaskPriority, User } from '../types';
+import { EmployeeTask, DailyLog, TaskPriority, User, userRoleLabel } from '../types';
 import { formatDateTime, PRIORITY_OPTIONS, PRIORITY_RANK, PRIORITY_VI, todayIso } from '../lib/transforms';
 import { canApproveTask } from '../auth/permissions';
 import { useSessionState, useUnsavedChangesWarning } from '../lib/useSessionState';
@@ -150,7 +150,7 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
   const awaitingCount = count('awaiting');
   const doneCount = count('done');
 
-  const isManager = currentUser.role === 'manager';
+  const isManager = currentUser.headOf.length > 0;
 
   /** Nháp của 1 task; chưa gõ gì thì lấy nhật ký đã lưu hôm nay (không phải chỉ thị của người giao). */
   const getDraft = (task: EmployeeTask): LogDraft =>
@@ -260,7 +260,7 @@ export const ViecCuaToiView: React.FC<ViecCuaToiViewProps> = ({
             <div className="flex items-center gap-2 flex-wrap">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-secondary-container text-on-secondary-fixed text-xs font-semibold">
                 <span className="w-2 h-2 rounded-full bg-tertiary"></span>
-                {ROLE_LABEL[currentUser.role]}
+                {userRoleLabel(currentUser)}
               </span>
               <span className="font-mono text-xs text-secondary font-semibold">
                 @{currentUser.username}

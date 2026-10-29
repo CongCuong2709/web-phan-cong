@@ -42,7 +42,7 @@
 import { Router } from 'express';
 import { db, stmt, tx } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
-import { authorize, uid } from '../lib/policies.js';
+import { authorize, uid, userDepartments } from '../lib/policies.js';
 import { canTransition } from '../lib/stateMachine.js';
 import { today } from '../lib/dates.js';
 import { recomputeRollup, rollupFrom } from '../lib/rollup.js';
@@ -162,7 +162,7 @@ function loadAssignee(body) {
     return undefined;
   }
   if (!row) return null;
-  return { ...row, departments: stmt.getUserDepartments.all(row.id).map((d) => d.department_code) };
+  return { ...row, ...userDepartments(stmt.getUserDepartments.all(row.id)) };
 }
 
 /** dd/mm/yyyy cho thông báo lỗi. */
@@ -328,10 +328,10 @@ router.post('/', (req, res) => {
     }
   }
   if (tierNum === 4 && !assignee) {
-    assignee = { id: req.user.id, role: req.user.role, departments: req.user.departments };
+    assignee = req.user;
   }
   const department = tierNum === 3
-    ? (body.department_code || assignee.departments[0] || null)
+    ? (body.department_code || assignee.head_of[0] || null)
     : tierNum === 4 ? parent.department_code : null;
   const ownerId = tierNum === 2 ? parent.owner_user_id : assignee.id;
   if (tierNum !== 2) {
@@ -725,7 +725,7 @@ router.post('/:tier(\\d+)/:id(\\d+)/approve', (req, res) => {
 
   // Explicit guard: done là terminal — KHÔNG cho phép no-op approve trên task đã done.
   // Trước đây canTransition('done','done',...) trả {ok:true} do from===to no-op,
-  // cho phép manager "approve" 1 task đã done — gây audit log nhiễu.
+  // cho phép Trưởng phòng "approve" 1 task đã done — gây audit log nhiễu.
   if (item.status === 'done') {
     return res.status(403).json({ error: 'invalid_transition', message: 'Task đã done, không thể duyệt lại.' });
   }
@@ -755,7 +755,7 @@ router.post('/:tier(\\d+)/:id(\\d+)/approve', (req, res) => {
 
   let messageId = null;
   tx(() => {
-    // Khi manager approve T4 task → done, đảm bảo progress = 100.
+    // Khi Trưởng phòng duyệt T4 task → done, đảm bảo progress = 100.
     // Logic trước dùng `item.deliverable_completed` (field không tồn tại trong schema)
     // → luôn falsy → giữ progress cũ (0). Fix: force progress=100 khi approve T4.
     // Cho T1/T2/T3 progress rollup sẽ tự cập nhật qua recomputeRollup.
@@ -873,7 +873,7 @@ router.post('/:tier(\\d+)/:id(\\d+)/unblock', (req, res) => {
 
 /** POST /api/tasks/:tier/:id/blocker — NV ghi 1 dòng `blocker_note` cho task.
  *  Đồng thời INSERT 1 row vào task_help_messages để giữ lịch sử.
- *  Quyền: owner task hoặc admin/manager trong phòng ban.
+ *  Quyền: owner task hoặc admin, Trưởng phòng phụ trách.
  */
 router.post('/:tier(\\d+)/:id(\\d+)/blocker', (req, res) => {
   const tier = Number(req.params.tier);
@@ -940,15 +940,15 @@ router.post('/:tier(\\d+)/:id(\\d+)/toggle', (req, res) => {
   /**
    * Toggle semantics — nhất quán với state machine (lib/stateMachine.js):
    *   pending          → doing            (bắt đầu)
-   *   doing            → pending_approval (owner tick xong, chờ manager duyệt)
+   *   doing            → pending_approval (owner tick xong, chờ Trưởng phòng duyệt)
    *                      → done              nếu chính owner có quyền duyệt (TP phụ trách hạng mục / admin)
-   *   pending_approval → doing            (manager/admin trả về)
+   *   pending_approval → doing            (Trưởng phòng/admin trả về)
    *   blocked          → doing            (gỡ nghẽn)
    *   done             → KHÔNG toggle (terminal)
    *
    * TRƯỚC ĐÂY toggle tính next = (status === 'done' ? 'doing' : 'done') — nhảy thẳng
    * sang 'done', nhưng state machine KHÔNG cho phép doing→done (done phải qua
-   * manager approve) → toggle luôn trả 403 invalid_transition. Fix: map sang
+   * Trưởng phòng duyệt) → toggle luôn trả 403 invalid_transition. Fix: map sang
    * transition hợp lệ kế tiếp trong state machine.
    */
   const TOGGLE_NEXT = {

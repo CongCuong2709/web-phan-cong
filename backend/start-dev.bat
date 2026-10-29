@@ -5,6 +5,7 @@ REM
 REM Su dung:
 REM   start-dev.bat                : Cleanup + dev server (mac dinh)
 REM   start-dev.bat /seed          : Cleanup + install + seed + dev (lan dau)
+REM   start-dev.bat /accounts      : Cleanup + chi tao phong ban + tai khoan (khong du an) + dev
 REM   start-dev.bat /reset         : NUCLEAR reset - xoa het + reinstall + seed
 REM   start-dev.bat /no-clean      : Giu nguyen DB cu, chi chay dev
 REM   start-dev.bat /prod          : Production mode (khong watch)
@@ -27,6 +28,9 @@ for %%A in (%*) do (
     if /i "%%A"=="/seed"      set MODE=seed
     if /i "%%A"=="-seed"      set MODE=seed
     if /i "%%A"=="--seed"     set MODE=seed
+    if /i "%%A"=="/accounts"  set MODE=accounts
+    if /i "%%A"=="-accounts"  set MODE=accounts
+    if /i "%%A"=="--accounts" set MODE=accounts
     if /i "%%A"=="/reset"     set MODE=reset
     if /i "%%A"=="-reset"     set MODE=reset
     if /i "%%A"=="/no-clean"  set CLEAN=0
@@ -163,6 +167,16 @@ if "%MODE%"=="seed" (
     call npx tsx scripts/seed.ts
     if errorlevel 1 (
         echo  [X] Seed that bai!
+        pause
+        exit /b 1
+    )
+    echo.
+)
+if "%MODE%"=="accounts" (
+    echo [5/5] Tao phong ban + tai khoan ^(khong du an^)...
+    call npx tsx scripts/seed.ts --accounts
+    if errorlevel 1 (
+        echo  [X] Seed tai khoan that bai!
         pause
         exit /b 1
     )

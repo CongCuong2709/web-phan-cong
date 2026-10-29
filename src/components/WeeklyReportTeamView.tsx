@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ROLE_LABEL, User } from '../types';
+import { User } from '../types';
+import { isDeptScoped } from '../auth/permissions';
 import { api, WeeklyTeamMemberDto } from '../lib/apiClient';
 import { WeeklyReportView, fmtStamp } from './WeeklyReportView';
 
@@ -73,7 +74,7 @@ export const WeeklyReportTeamView: React.FC<Props> = ({ currentUser, onToast }) 
   const submitted = items.filter((i) => i.submitted).length;
   const pending = items.length - submitted;
   const totalBlocked = items.reduce((s, i) => s + i.blocked_count, 0);
-  const scope = currentUser.role === 'manager' ? 'phòng ban' : 'toàn công ty';
+  const scope = isDeptScoped(currentUser) ? 'phòng ban' : 'toàn công ty';
 
   // ── Drill-down: tái dùng WeeklyReportView ở chế độ review (chỉ đọc) ──
 if (openUser) {
@@ -195,8 +196,8 @@ if (openUser) {
                           {initialOf(m.fullname)}
                         </div>
                         <span className={m.submitted ? 'font-medium' : 'text-secondary'}>{m.fullname}</span>
-                        {m.role === 'manager' && (
-                          <span className="text-xs text-primary bg-surface-container-low rounded px-1.5">{ROLE_LABEL.manager}</span>
+                        {m.is_head && (
+                          <span className="text-xs text-primary bg-surface-container-low rounded px-1.5">Trưởng phòng</span>
                         )}
                       </div>
                     </td>

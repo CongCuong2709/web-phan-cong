@@ -50,9 +50,12 @@ Xoá T4 sẽ snapshot `daily_logs` + `task_help_messages` vào audit trước kh
 |---|---|
 | `admin` | Toàn quyền |
 | `board` (HĐQT) | Xem tất cả; tạo dự án và chọn 1 Điều hành phụ trách |
-| `director` (Điều hành) | Xem tất cả; trong dự án mình phụ trách: tạo giai đoạn, tạo hạng mục giao Trưởng phòng, nghiệm thu giai đoạn / dự án |
-| `manager` (Trưởng phòng) | Trong hạng mục mình phụ trách: tạo đầu việc cho mình hoặc NV cùng phòng, duyệt, nghiệm thu hạng mục; viết báo cáo tuần |
+| `director` (Điều hành) | Xem tất cả; trong dự án mình phụ trách: tạo giai đoạn, tạo hạng mục giao Trưởng phòng của phòng, nghiệm thu giai đoạn / dự án |
 | `employee` | Làm đầu việc của mình; viết báo cáo tuần |
+
+**Trưởng phòng** là chức vụ trong phòng (`user_departments.is_head`), kiêm được ở mọi cấp bậc:
+nhận hạng mục của phòng; trong hạng mục mình phụ trách tạo đầu việc cho mình hoặc NV cùng phòng,
+duyệt, nghiệm thu hạng mục. Trưởng phòng cấp nhân viên viết báo cáo tuần; Điều hành kiêm nhiệm thì không.
 
 Báo cáo tuần không có bước duyệt. Cả 4 tầng đính kèm được tệp / ảnh.
 
@@ -68,11 +71,13 @@ Mở browser: http://localhost:5173
 
 ## 🔐 Tài khoản demo (sau khi seed)
 
-| Username | Password | Role | Phòng ban |
-|---|---|---|---|
-| `admin` | `admin123` | admin | Tất cả |
-| `hung` / `cuong` / `thanh` | `123456` | manager | QLDA / KTTC / TC |
-| `hong` / `nguyet` / ... | `123456` | employee | (phòng ban tương ứng) |
+| Username | Password | Vai trò |
+|---|---|---|
+| `admin` | `admin123` | admin |
+| `DungDN` / `DungDA` | `123456` / `123457` | HĐQT |
+| `KhanhNH` | `123456` | Điều hành (kiêm trưởng Ban QLDA) |
+| `CuongNC` / `NamNH` / `ThanhNX` | `123456` | Trưởng phòng Kế toán - Thu mua / Nhân sự / Ban công trường |
+| `HaLT`, `HangNT`, `LongDN`… | `123456` | Nhân viên |
 
 Xem chi tiết trong `backend/README.md`.
 
@@ -98,8 +103,8 @@ Xem chi tiết trong `backend/README.md`.
 | `/api/tasks/4/:id/help-messages/:msgId/resolve` | POST | Manager đánh dấu đã xử lý |
 | `/api/tasks/:taskId/logs` | GET/POST | Nhật ký công việc của 1 task |
 | `/api/daily-logs` | GET | Toàn bộ nhật ký (cho Báo cáo) |
-| `/api/daily-logs/:id` | DELETE | Xoá log (admin/manager) |
-| `/api/users` | GET | Danh bạ user (admin/manager) |
+| `/api/daily-logs/:id` | DELETE | Xoá log (admin, Trưởng phòng) |
+| `/api/users` | GET | Danh bạ user (trừ nhân viên thường) |
 | `/api/users/:username` | GET | Chi tiết user |
 | `/api/team-members` | GET | Derived team workload |
 | `/api/history` | GET | Audit log |

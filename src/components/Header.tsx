@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ActiveAppTab, DEPARTMENT_LABEL, ROLE_LABEL, User } from '../types';
+import { ActiveAppTab, DEPARTMENT_LABEL, User, userRoleLabel } from '../types';
 import { useAuth } from '../auth/AuthContext';
 import { visibleTabsFor } from '../auth/permissions';
 import { Avatar, BrandMark } from './ui/Brand';
@@ -15,9 +15,10 @@ const ROLE_BADGE_COLOR: Record<User['role'], string> = {
   admin: 'bg-error-container text-on-error-container',
   board: 'bg-primary text-on-primary',
   director: 'bg-on-surface text-white',
-  manager: 'bg-surface-container-high text-primary',
   employee: 'bg-tertiary-fixed/40 text-tertiary',
 };
+/** Nhân viên kiêm Trưởng phòng. */
+const HEAD_BADGE_COLOR = 'bg-surface-container-high text-primary';
 
 const TAB_LABEL: Record<ActiveAppTab, string> = {
   'cay-gantt-4-tang': 'Cây công việc',
@@ -130,7 +131,7 @@ export const Header: React.FC<HeaderProps> = ({
                       {user.fullname}
                     </span>
                     <span className="text-xs text-on-surface-variant mt-0.5">
-                      {ROLE_LABEL[user.role]}
+                      {userRoleLabel(user)}
                     </span>
                   </div>
                   <span aria-hidden="true" className="material-symbols-outlined [--icon-size:16px] text-outline hidden sm:block">
@@ -150,13 +151,15 @@ export const Header: React.FC<HeaderProps> = ({
                           {user.fullname}
                         </span>
                         <span className="text-xs text-secondary font-mono truncate">
-                          @{user.username}
+                          @{user.username}{user.jobTitle ? ` · ${user.jobTitle}` : ''}
                         </span>
                       </div>
                       <span
-                        className={`ml-auto text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded ${ROLE_BADGE_COLOR[user.role]}`}
+                        className={`ml-auto text-xs font-bold tracking-wider px-2 py-0.5 rounded text-right ${
+                          user.role === 'employee' && user.headOf.length ? HEAD_BADGE_COLOR : ROLE_BADGE_COLOR[user.role]
+                        }`}
                       >
-                        {ROLE_LABEL[user.role]}
+                        {userRoleLabel(user)}
                       </span>
                     </div>
 

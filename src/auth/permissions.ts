@@ -15,11 +15,12 @@
  *
  *   board (HĐQT)       : xem tất cả, tạo dự án và chọn 1 Điều hành phụ trách.
  *   director (Điều hành): xem tất cả; trong dự án mình phụ trách — tạo / sửa giai đoạn,
- *                         tạo hạng mục giao Trưởng phòng, nghiệm thu giai đoạn / dự án.
- *   manager (Trưởng phòng): trong hạng mục mình phụ trách — tạo đầu việc cho mình hoặc
- *                         nhân viên cùng phòng, duyệt, nghiệm thu hạng mục.
- *   employee (Nhân viên): làm đầu việc của mình.
+ *                         tạo hạng mục giao Trưởng phòng của phòng, nghiệm thu giai đoạn / dự án.
+ *   employee (Nhân viên): làm đầu việc của mình; viết báo cáo tuần.
  *   admin              : toàn quyền.
+ *
+ * Trưởng phòng (`user.headOf`) là chức vụ, kiêm được ở mọi cấp bậc: trong hạng mục mình
+ * phụ trách — tạo đầu việc cho mình hoặc nhân viên cùng phòng, duyệt, nghiệm thu hạng mục.
  */
 
 import type {
@@ -51,9 +52,18 @@ export function isProjectLead(user: User, item: Pick<TierItem, 'projectOwnerUser
   return user.role === 'director' && item.projectOwnerUserId === user.id;
 }
 
-/** Trưởng phòng phụ trách hạng mục (T3) hoặc hạng mục chứa đầu việc (T4). Mirror: `isBundleLead`. */
+/** User là Trưởng phòng của ít nhất một phòng. Mirror: policies.js `isHead`. */
+export function isHead(user: User | null | undefined): boolean {
+  return !!user && user.headOf.length > 0;
+}
+
+/** Trưởng phòng cấp nhân viên: chỉ xem phạm vi phòng mình (HĐQT / Điều hành kiêm nhiệm xem toàn công ty). */
+export function isDeptScoped(user: User | null | undefined): boolean {
+  return user?.role === 'employee' && isHead(user);
+}
+
+/** Người phụ trách hạng mục (T3) hoặc hạng mục chứa đầu việc (T4). Mirror: `isBundleLead`. */
 export function isBundleLead(user: User, item: Pick<TierItem, 'tier' | 'ownerUserId' | 'bundleOwnerUserId'>): boolean {
-  if (user.role !== 'manager') return false;
   if (item.tier === 3) return item.ownerUserId === user.id;
   if (item.tier === 4) return item.bundleOwnerUserId === user.id;
   return false;
@@ -63,14 +73,14 @@ export function isBundleLead(user: User, item: Pick<TierItem, 'tier' | 'ownerUse
 // TierItem (cây 4 tầng)
 // ---------------------------------------------------------------------------
 
-/** Tầng user có thể tạo (khi đã chọn đúng mục cha mình phụ trách). */
-export function creatableTiers(role: User['role']): TierLevel[] {
-  switch (role) {
+/** Tầng user có thể tạo (khi đã chọn đúng mục cha mình phụ trách). Trưởng phòng thêm tầng 4. */
+export function creatableTiers(user: User): TierLevel[] {
+  const head: TierLevel[] = isHead(user) ? [4] : [];
+  switch (user.role) {
     case 'admin': return [1, 2, 3, 4];
     case 'board': return [1];
-    case 'director': return [2, 3];
-    case 'manager': return [4];
-    default: return [];
+    case 'director': return [2, 3, ...head];
+    default: return head;
   }
 }
 
@@ -189,7 +199,7 @@ export function canApproveTask(
 ): boolean {
   if (!user) return false;
   if (user.role === 'admin') return true;
-  return user.role === 'manager' && !!task.bundleOwnerUserId && task.bundleOwnerUserId === user.id;
+  return !!task.bundleOwnerUserId && task.bundleOwnerUserId === user.id;
 }
 
 /** Quyền xử lý yêu cầu trợ giúp — alias của canApproveTask (cùng quy tắc). */
@@ -199,18 +209,19 @@ export const canResolveHelp = canApproveTask;
 // Báo cáo tuần + trang
 // ---------------------------------------------------------------------------
 
-/** Nhân viên và Trưởng phòng viết báo cáo tuần. Mirror: policies.js `weekly_report:write`. */
+/** Nhân viên (kể cả Trưởng phòng cấp nhân viên) viết báo cáo tuần. Mirror: policies.js `weekly_report:write`. */
 export function writesWeeklyReport(user: User | null | undefined): boolean {
-  return user?.role === 'employee' || user?.role === 'manager';
+  return user?.role === 'employee';
 }
 
 /** Các trang chính mỗi vai trò được xem — App dùng để chặn URL không hợp lệ, Header để hiện tab. */
 export function visibleTabsFor(user: User | null): ActiveAppTab[] {
   if (!user) return [];
+  // Trưởng phòng (mọi cấp bậc): giao việc trong hạng mục mình + việc tự nhận.
+  if (user.role === 'admin' || isHead(user)) {
+    return ['cay-gantt-4-tang', 'giao-viec-nhom', 'viec-cua-toi', 'bao-cao'];
+  }
   switch (user.role) {
-    case 'admin':
-    case 'manager':
-      return ['cay-gantt-4-tang', 'giao-viec-nhom', 'viec-cua-toi', 'bao-cao'];
     case 'board':
     case 'director':
       // HĐQT, Điều hành: cây công việc toàn hệ thống + báo cáo. Không làm đầu việc.

@@ -11,6 +11,7 @@
     "dev": "node --watch server.js",
     "start": "node server.js",
     "seed": "tsx scripts/seed.ts",
+    "seed:accounts": "tsx scripts/seed.ts --accounts",
     "seed:test": "tsx scripts/seed-test-fixtures.ts",
     "migrate": "node scripts/run-migration.mjs",
     "reset:db": "node ../wipe-db.mjs",

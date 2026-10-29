@@ -10,14 +10,14 @@
  * Endpoints:
  *   GET    /api/tasks/:taskId/logs                — List logs của 1 task
  *   POST   /api/tasks/:taskId/logs                — UPSERT daily log (1 task/ngày)
- *   DELETE /api/daily-logs/:id                    — Xoá log (manager+)
+ *   DELETE /api/daily-logs/:id                    — Xoá log (admin, Trưởng phòng)
  *   GET    /api/daily-logs                        — List tất cả (bulk)
  */
 
 import { Router } from 'express';
 import { db, stmt, tx } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
-import { authorize } from '../lib/policies.js';
+import { authorize, isHead } from '../lib/policies.js';
 import { today } from '../lib/dates.js';
 import { recomputeRollup } from '../lib/rollup.js';
 
@@ -29,7 +29,7 @@ router.get('/tasks/:taskId/logs', (req, res) => {
   const taskId = Number(req.params.taskId);
   const task = stmt.getTask.get(taskId);
   if (!task) return res.status(404).json({ error: 'not_found' });
-  // canSee reuse qua task policy (admin/director thấy hết, manager cùng dept, employee chỉ own)
+  // canSee reuse qua task policy (HĐQT/Điều hành/admin thấy hết, Trưởng phòng theo phòng mình, nhân viên chỉ việc mình)
   const authz = authorize('task:read', req.user, { task: { ...task, tier: 4 } });
   if (!authz.ok) return res.status(authz.status).json(authz);
   const items = stmt.listDailyLogsByTask.all(taskId);
@@ -128,10 +128,10 @@ router.get('/daily-logs', (_req, res) => {
   return res.json({ items });
 });
 
-/** DELETE /api/daily-logs/:id — Xoá log (manager+). */
+/** DELETE /api/daily-logs/:id — Xoá log (admin, Trưởng phòng). */
 router.delete('/daily-logs/:id(\\d+)', (req, res) => {
-  if (!['admin', 'manager'].includes(req.user.role)) {
-    return res.status(403).json({ error: 'forbidden', message: 'Chỉ admin/manager mới xoá daily_log.' });
+  if (req.user.role !== 'admin' && !isHead(req.user)) {
+    return res.status(403).json({ error: 'forbidden', message: 'Chỉ admin / Trưởng phòng mới xoá nhật ký.' });
   }
   const id = Number(req.params.id);
   const log = db.prepare('SELECT * FROM daily_logs WHERE id = ?').get(id);

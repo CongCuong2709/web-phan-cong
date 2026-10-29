@@ -356,7 +356,7 @@ export function apiToEmployeeTask(api: TaskApiRowDto): EmployeeTask {
     openBlockerAt: api.open_blocker_at ?? undefined,
     messageCount: api.message_count ?? 0,
     attachmentCount: api.attachment_count ?? 0,
-    // Manager = assigned_by (người giao task).
+    // Người giao việc (assigned_by).
     manager: {
       name: api.assigned_by_fullname ?? api.owner_fullname ?? '—',
       role: 'Trưởng phòng phụ trách',

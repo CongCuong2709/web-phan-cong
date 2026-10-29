@@ -79,12 +79,12 @@ Một endpoint duy nhất `/api/tasks`, dispatch theo `tier`:
 | `/api/tasks` | POST | `task:create` (role-based tier guard) |
 | `/api/tasks/:tier/:id` | PATCH | `task:edit` + state machine |
 | `/api/tasks/:tier/:id` | DELETE | `task:delete` (admin only) |
-| `/api/tasks/:tier/:id/approve` | POST | `task:approve` (manager/admin) |
+| `/api/tasks/:tier/:id/approve` | POST | `task:approve` (TP phụ trách / admin) |
 | `/api/tasks/:tier/:id/toggle` | POST | `task:toggle` (owner/admin) |
 | `/api/tasks/:tier/:id/toggle-today` | POST | `task:edit` (chỉ T4) |
 | `/api/tasks/:tier/:id/blocker` | POST | `task:edit` (chỉ T4) |
 | `/api/tasks/:tier/:id/help-messages` | GET | `task:read` (chỉ T4) |
-| `/api/tasks/:tier/:id/help-messages/:msgId/resolve` | POST | `task:edit` + admin/manager (chỉ T4) |
+| `/api/tasks/:tier/:id/help-messages/:msgId/resolve` | POST | `task:approve` (chỉ T4) |
 
 > Khi POST/PATCH, cha được truyền bằng `parent_id` (numeric id của bảng cha theo tier).
 > T2→project, T3→phase, T4→bundle (T4 có thể `null` = task độc lập).
@@ -96,7 +96,7 @@ Một endpoint duy nhất `/api/tasks`, dispatch theo `tier`:
 | `/api/tasks/:taskId/logs` | GET | All authed |
 | `/api/tasks/:taskId/logs` | POST | `daily_log:create` |
 | `/api/daily-logs` | GET | All authed (cho Báo cáo) |
-| `/api/daily-logs/:id` | DELETE | admin/manager |
+| `/api/daily-logs/:id` | DELETE | admin, Trưởng phòng |
 | `/api/users` | GET | `user:list` (mọi vai trò trừ employee) |
 | `/api/users/:username` | GET | `user:read` |
 | `/api/team-members` | GET | All authed (derived workload) |
@@ -108,12 +108,14 @@ Một endpoint duy nhất `/api/tasks`, dispatch theo `tier`:
 Route handler gọi `authorize(action, user, ctx)` — không viết check role rải rác.
 
 Phân quyền theo **người phụ trách** (`owner_user_id`) của từng tầng, không theo phòng ban.
+"Trưởng phòng" là chức vụ trong phòng (`user_departments.is_head` → `user.head_of`), không phải
+cấp bậc: một Điều hành có thể kiêm Trưởng phòng (KhanhNH kiêm trưởng Ban QLDA).
 Mỗi row trả về mang sẵn `project_owner_user_id` (mọi tầng) và `bundle_owner_user_id` (T4).
 
 | Action | Quy tắc |
 |---|---|
 | `task:create` | T1: board (HĐQT) · T2, T3: Điều hành phụ trách dự án · T4: Trưởng phòng phụ trách hạng mục |
-| `task:assign` | T1 → 1 director · T3 → 1 manager thuộc phòng của hạng mục · T4 → chính TP phụ trách hoặc employee cùng phòng |
+| `task:assign` | T1 → 1 director · T3 → Trưởng phòng của phòng hạng mục (`head_of`, mọi cấp bậc) · T4 → chính TP phụ trách hoặc employee cùng phòng |
 | `task:reassign` | T1: board · T3: Điều hành phụ trách · T4: TP phụ trách · T2 đi theo dự án |
 | `task:edit` | T1: board, Điều hành phụ trách · T2, T3: Điều hành phụ trách · T4: TP phụ trách, người làm |
 | `task:close` | T3: TP phụ trách · T2, T1: Điều hành phụ trách |
@@ -122,12 +124,12 @@ Mỗi row trả về mang sẵn `project_owner_user_id` (mọi tầng) và `bund
 | `task:attach` | T1–T3: như `task:edit` · T4: người giao, TP phụ trách |
 | `task:delete` | admin only |
 | `task:toggle` | người làm hoặc admin |
-| `task:read` | board/director: tất cả · manager: T1–T3 tất cả, T4 trong hạng mục / phòng mình / của mình · employee: T4 của mình |
+| `task:read` | board/director: tất cả · Trưởng phòng: T1–T3 tất cả, T4 trong hạng mục / phòng mình làm trưởng / của mình · employee: T4 của mình |
 | `daily_log:create` | người làm, TP phụ trách |
-| `user:list` / `user:read` | board/director tất cả · manager trong phòng · employee: không |
+| `user:list` / `user:read` | board/director tất cả · Trưởng phòng trong phòng mình · employee thường: không |
 | `history:read_all` | admin/board/director |
-| `weekly_report:write` | employee, manager |
-| `weekly_report:read` | board/director tất cả · manager cùng phòng · chính mình |
+| `weekly_report:write` | employee (kể cả Trưởng phòng cấp nhân viên); director kiêm Trưởng phòng không viết |
+| `weekly_report:read` | board/director tất cả · Trưởng phòng trong phòng mình · chính mình |
 
 admin luôn được phép. State machine (`lib/stateMachine.js`) là ranh giới riêng cho **status**:
 `done` là terminal; admin, Điều hành phụ trách (T1–T3), TP phụ trách (T3, T4) đổi tự do;
@@ -135,17 +137,24 @@ người làm chỉ được `pending→doing`, `doing→pending_approval`, `doi
 
 ## 🔐 Tài khoản demo (sau khi seed)
 
-| Username | Password | Role | Phòng ban |
+| Username | Password | Cấp bậc | Phòng (★ = Trưởng phòng) |
 |---|---|---|---|
 | `admin` | `admin123` | admin | Tất cả |
-| `son` / `lan` | `123456` | board (HĐQT) | ĐH |
-| `khanh` / `nam` | `123456` | director (Điều hành; phụ trách DA-68 / DA-69) | ĐH |
-| `hung` | `123456` | manager | QLDA |
-| `cuong` | `123456` | manager | KTTC |
-| `thanh` | `123456` | manager | TC |
-| `hong` | `123456` | employee | QLDA |
-| `nguyet` / `hang` / `tu` | `123456` | employee | KTTC |
-| `ngoc` | `123456` | employee | TC |
+| `DungDN` | `123456` | board (HĐQT) | HDQT |
+| `DungDA` | `123457` | board (HĐQT) | HDQT |
+| `KhanhNH` | `123456` | director (phụ trách DA-68, DA-69) | DH, QLDA ★ |
+| `HaLT` / `HongNN` / `HungNV` | `123456` | employee | QLDA |
+| `CuongNC` | `123456` | employee (Thu mua) | KTTM ★ |
+| `HangNT` / `TuBQ` | `123456` | employee | KTTM |
+| `NamNH` | `123456` | employee (Nhân sự) | NS ★ |
+| `NguyetDTA` / `NhiNT` | `123456` | employee | NS |
+| `ThanhNX` | `123456` | employee (Ban chỉ huy) | BCT ★ |
+| `HaiNS` / `LongDN` / `ThaoNV` / `NgocVT` | `123456` | employee | BCT |
+
+Đăng nhập không phân biệt hoa thường (`khanhnh` cũng được).
+
+`npm run seed` tạo tài khoản + dữ liệu mẫu; `npm run seed:accounts` (hoặc `start-dev.bat /accounts`)
+chỉ tạo phòng ban + tài khoản, không có dự án.
 
 > ⚠️ Production: đổi tất cả passwords + set `JWT_SECRET` mới trong `.env`.
 

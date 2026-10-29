@@ -3,6 +3,7 @@ import { Avatar } from './ui/Brand';
 import { expectedProgress, isTierItemOverdue } from '../lib/transforms';
 import { api, type WeeklyTeamMemberDto } from '../lib/apiClient';
 import { weekStartOf } from './WeeklyReportView';
+import { isDeptScoped } from '../auth/permissions';
 import {
   TierItem,
   TeamMember,
@@ -168,7 +169,7 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
   const [showAllAttention, setShowAllAttention] = useState(false);
 
   // ── Theo phòng ban (admin / HĐQT / Điều hành) ──
-  const isManagerView = currentUser?.role === 'manager';
+  const isManagerView = isDeptScoped(currentUser);
   const [weekly, setWeekly] = useState<WeeklyTeamMemberDto[]>([]);
   const [weeklyStatus, setWeeklyStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [expandedDept, setExpandedDept] = useState<string | null>(null);
@@ -261,15 +262,12 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
     return `${yyyy}-${mm}-${dd}`;
   })();
 
-  // Manager: chỉ thấy log của phòng mình quản lý (departments của user).
-  // Admin / director: thấy tất cả.
-  const scopeDepts: Department[] | null = useMemo(() => {
-    if (!currentUser) return null;
-    if (currentUser.role === 'manager') {
-      return currentUser.departments ?? [];
-    }
-    return null; // admin/director xem toàn công ty
-  }, [currentUser]);
+  // Trưởng phòng cấp nhân viên: chỉ thấy log của phòng mình làm trưởng.
+  // Admin / HĐQT / Điều hành: thấy tất cả.
+  const scopeDepts: Department[] | null = useMemo(
+    () => (currentUser && isDeptScoped(currentUser) ? currentUser.headOf : null),
+    [currentUser],
+  );
 
   const logsToday = useMemo(
     () => dailyLogs.filter((l) => l.logDate === today),
@@ -302,7 +300,7 @@ export const BaoCaoTongQuanView: React.FC<BaoCaoTongQuanViewProps> = ({
       const key = log.username.toLowerCase();
       const tm = memberByUsername.get(key);
       const dept: Department | 'Chưa rõ' = tm?.department ?? 'Chưa rõ';
-      // Filter theo phòng ban nếu là manager: bỏ log không thuộc dept quản lý.
+      // Lọc theo phòng nếu là Trưởng phòng: bỏ log không thuộc phòng mình.
       if (scopeDepts && dept !== 'Chưa rõ' && !scopeDepts.includes(dept)) {
         continue;
       }

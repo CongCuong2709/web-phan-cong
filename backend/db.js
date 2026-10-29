@@ -60,7 +60,8 @@ if (isFreshDb) {
 function hasColumn(table, column) {
   return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
 }
-if (!hasColumn('bundles', 'department_code') || !hasColumn('task_attachments', 'project_id')) {
+if (!hasColumn('bundles', 'department_code') || !hasColumn('task_attachments', 'project_id')
+  || !hasColumn('user_departments', 'is_head')) {
   throw new Error(
     `[db] ${DB_PATH} dùng schema cũ. Xoá database.db* (reset-db.ps1) rồi chạy lại "npm run seed".`,
   );
@@ -91,15 +92,16 @@ export const stmt = {
     'SELECT * FROM users WHERE username = ? COLLATE NOCASE AND is_active = 1'
   ),
   getUserById: db.prepare(
-    'SELECT id, username, fullname, email, role, initial, avatar_url FROM users WHERE id = ? AND is_active = 1'
+    'SELECT id, username, fullname, email, role, job_title, initial, avatar_url FROM users WHERE id = ? AND is_active = 1'
   ),
   listUsers: db.prepare(`
-    SELECT u.id, u.username, u.fullname, u.email, u.role, u.initial, u.avatar_url,
-      (SELECT GROUP_CONCAT(department_code, ',') FROM user_departments WHERE user_id = u.id) AS departments
+    SELECT u.id, u.username, u.fullname, u.email, u.role, u.job_title, u.initial, u.avatar_url,
+      (SELECT GROUP_CONCAT(department_code, ',') FROM user_departments WHERE user_id = u.id) AS departments,
+      (SELECT GROUP_CONCAT(department_code, ',') FROM user_departments WHERE user_id = u.id AND is_head = 1) AS head_of
     FROM users u WHERE u.is_active = 1 ORDER BY u.role, u.fullname
   `),
   getUserDepartments: db.prepare(
-    'SELECT department_code FROM user_departments WHERE user_id = ?'
+    'SELECT department_code, is_head FROM user_departments WHERE user_id = ?'
   ),
   updateUserPasswordHash: db.prepare(
     'UPDATE users SET password_hash = ? WHERE id = ?'

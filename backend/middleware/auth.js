@@ -6,7 +6,8 @@
  */
 
 import jwt from 'jsonwebtoken';
-import { db, stmt } from '../db.js';
+import { stmt } from '../db.js';
+import { userDepartments } from '../lib/policies.js';
 
 // Bắt buộc JWT_SECRET phải được set qua env — không có default để tránh
 // secret predictable ở production (deploy quên set NODE_ENV=production).
@@ -57,10 +58,8 @@ export function requireAuth(req, res, next) {
     if (!user) {
       return res.status(401).json({ error: 'user_inactive', message: 'Tài khoản đã bị vô hiệu hoá.' });
     }
-    // Attach departments as ARRAY for RBAC checks (đồng nhất với /api/auth/login
-    // route trả về array, không phải CSV string).
-    const deptRows = stmt.getUserDepartments.all(user.id);
-    user.departments = deptRows.map((d) => d.department_code);
+    // departments + head_of dạng ARRAY cho RBAC (đồng nhất với /api/auth/login).
+    Object.assign(user, userDepartments(stmt.getUserDepartments.all(user.id)));
     req.user = user;
     req.sessionId = payload.jti;
     next();

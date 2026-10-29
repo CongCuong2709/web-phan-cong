@@ -5,14 +5,17 @@
  * phải resolve về module này. Không được viết `if (req.user.role === 'admin')`
  * rải rác trong route handler — gọi `authorize(action, user, ctx)`.
  *
- * Mô hình phụ trách theo tầng:
+ * Cấp bậc (users.role):
  *   board (HĐQT)       — xem tất cả, tạo dự án và chọn 1 Điều hành phụ trách.
  *   director (Điều hành)— xem tất cả; trong dự án mình phụ trách: tạo / sửa giai đoạn,
- *                         tạo hạng mục và giao cho 1 Trưởng phòng, nghiệm thu giai đoạn / dự án.
- *   manager (Trưởng phòng) — trong hạng mục mình phụ trách: tạo đầu việc cho chính mình
- *                         hoặc nhân viên cùng phòng, duyệt / trả về / gỡ vướng, nghiệm thu hạng mục.
- *   employee (Nhân viên)— làm đầu việc của mình.
+ *                         tạo hạng mục và giao cho Trưởng phòng của phòng đó, nghiệm thu giai đoạn / dự án.
+ *   employee (Nhân viên)— làm đầu việc của mình; viết báo cáo tuần.
  *   admin              — toàn quyền.
+ *
+ * Chức vụ Trưởng phòng (user_departments.is_head → user.head_of) độc lập với cấp bậc:
+ * một Điều hành có thể kiêm Trưởng phòng. Trưởng phòng nhận hạng mục của phòng mình;
+ * trong hạng mục mình phụ trách: tạo đầu việc cho chính mình hoặc nhân viên cùng phòng,
+ * duyệt / trả về / gỡ vướng, nghiệm thu hạng mục.
  *
  * Mỗi row do db.js trả về mang sẵn người phụ trách của chuỗi cha:
  *   project_owner_user_id (mọi tầng), bundle_owner_user_id (T4),
@@ -37,14 +40,15 @@
  * @typedef {Object} User
  * @property {number} id
  * @property {string} username
- * @property {string} role        - 'admin' | 'board' | 'director' | 'manager' | 'employee'
+ * @property {string} role        - 'admin' | 'board' | 'director' | 'employee'
  * @property {string|string[]} departments - CSV string hoặc array
+ * @property {string|string[]} head_of     - các phòng user làm Trưởng phòng (CSV hoặc array)
  */
 
 /**
  * Normalize departments → array. Accept cả 2 format:
- *   - Array: ['QLDA', 'KTTC']
- *   - CSV string: "QLDA,KTTC" (SQL GROUP_CONCAT)
+ *   - Array: ['QLDA', 'KTTM']
+ *   - CSV string: "QLDA,KTTM" (SQL GROUP_CONCAT)
  *   - null/undefined → []
  */
 export function parseDepartments(depts) {
@@ -65,6 +69,24 @@ export function inDepartment(user, department) {
   return depts.includes(department);
 }
 
+/** Rows `{ department_code, is_head }` của user_departments → `{ departments, head_of }`. */
+export function userDepartments(rows) {
+  return {
+    departments: rows.map((r) => r.department_code),
+    head_of: rows.filter((r) => r.is_head).map((r) => r.department_code),
+  };
+}
+
+/** Các phòng user làm Trưởng phòng. */
+export function headOf(user) {
+  return parseDepartments(user.head_of);
+}
+
+/** User là Trưởng phòng của ít nhất một phòng. */
+export function isHead(user) {
+  return headOf(user).length > 0;
+}
+
 /** Tạo ID unique. Không phải RBAC nhưng nằm cùng nhóm tiện ích backend. */
 export function uid(prefix = 'id') {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -78,9 +100,11 @@ export function isProjectLead(user, item) {
   return user.role === 'director' && item.project_owner_user_id === user.id;
 }
 
-/** Trưởng phòng phụ trách hạng mục: chính hạng mục (T3) hoặc hạng mục chứa đầu việc (T4). */
+/**
+ * Người phụ trách hạng mục: chính hạng mục (T3) hoặc hạng mục chứa đầu việc (T4).
+ * Chỉ dựa vào owner — `task:assign` đã bắt owner hạng mục là Trưởng phòng của phòng đó.
+ */
 export function isBundleLead(user, item) {
-  if (user.role !== 'manager') return false;
   if (item.tier === 3) return item.owner_user_id === user.id;
   if (item.tier === 4) return item.bundle_owner_user_id === user.id;
   return false;
@@ -130,7 +154,7 @@ const POLICIES = {
 
   /**
    * Người được chọn làm phụ trách có hợp lệ với tầng đó không.
-   *   T1: một Điều hành. T3: một Trưởng phòng thuộc `department`.
+   *   T1: một Điều hành. T3: Trưởng phòng của `department` (bất kể cấp bậc).
    *   T4: chính Trưởng phòng phụ trách hạng mục, hoặc nhân viên thuộc phòng của hạng mục.
    * `assignee` = { id, role, departments }; `bundle` = row hạng mục (chỉ T4).
    */
@@ -142,12 +166,9 @@ const POLICIES = {
         : deny(400, 'invalid_owner', 'Người phụ trách dự án phải là một Điều hành.');
     }
     if (tier === 3) {
-      if (assignee.role !== 'manager') {
-        return deny(400, 'invalid_owner', 'Người phụ trách hạng mục phải là một Trưởng phòng.');
-      }
-      return parseDepartments(assignee.departments).includes(department)
+      return headOf(assignee).includes(department)
         ? allow()
-        : deny(400, 'invalid_owner', 'Trưởng phòng được chọn không thuộc phòng của hạng mục.');
+        : deny(400, 'invalid_owner', 'Người phụ trách hạng mục phải là Trưởng phòng của phòng đó.');
     }
     if (tier === 4) {
       if (assignee.id === bundle.owner_user_id) return allow();
@@ -252,16 +273,13 @@ const POLICIES = {
    * Xem mục.
    *   HĐQT, Điều hành, admin: tất cả.
    *   Trưởng phòng: mọi dự án / giai đoạn / hạng mục; đầu việc trong hạng mục mình, của mình,
-   *     hoặc thuộc phòng mình.
+   *     hoặc thuộc phòng mình làm trưởng.
    *   Nhân viên: đầu việc của mình; tầng trên là ngữ cảnh chỉ đọc.
    */
   'task:read': (user, { task }) => {
     if (SEES_ALL.has(user.role) || task.tier < 4) return allow();
     if (task.owner_user_id === user.id) return allow();
-    if (user.role === 'manager'
-      && (isBundleLead(user, task) || parseDepartments(user.departments).includes(task.department_code))) {
-      return allow();
-    }
+    if (isBundleLead(user, task) || headOf(user).includes(task.department_code)) return allow();
     return deny(403, 'forbidden', 'Không có quyền xem đầu việc này.');
   },
 
@@ -274,12 +292,13 @@ const POLICIES = {
   },
 
   // ── User directory ──────────────────────────────────────────────────
-  /** Danh bạ để chọn người phụ trách. Trưởng phòng chỉ lọc được phòng mình. */
+  /** Danh bạ để chọn người phụ trách. Nhân viên là Trưởng phòng chỉ lọc được phòng mình. */
   'user:list': (user, { department }) => {
-    if (user.role === 'employee') {
+    if (user.role !== 'employee') return allow();
+    if (!isHead(user)) {
       return deny(403, 'forbidden', 'Nhân viên không xem danh bạ.');
     }
-    if (user.role === 'manager' && department && !inDepartment(user, department)) {
+    if (department && !inDepartment(user, department)) {
       return deny(403, 'forbidden', `Bạn không thuộc phòng ban '${department}'.`);
     }
     return allow();
@@ -287,8 +306,8 @@ const POLICIES = {
 
   'user:read': (user, { targetDepts }) => {
     if (SEES_ALL.has(user.role)) return allow();
-    if (user.role === 'manager') {
-      const overlap = (targetDepts || []).some((d) => inDepartment(user, d));
+    if (isHead(user)) {
+      const overlap = (targetDepts || []).some((d) => headOf(user).includes(d));
       return overlap ? allow() : deny(403, 'forbidden', 'Trưởng phòng chỉ xem người cùng phòng.');
     }
     return deny(403, 'forbidden', 'Nhân viên không xem người khác.');
@@ -303,19 +322,19 @@ const POLICIES = {
   },
 
   // ── Báo cáo tuần (không có bước duyệt) ─────────────────────────────
-  /** Nhân viên và Trưởng phòng viết báo cáo tuần; HĐQT, Điều hành không viết. */
+  /** Nhân viên (kể cả Trưởng phòng) viết báo cáo tuần; HĐQT, Điều hành không viết dù kiêm Trưởng phòng. */
   'weekly_report:write': (user) => {
-    if (user.role === 'employee' || user.role === 'manager') return allow();
+    if (user.role === 'employee') return allow();
     return deny(403, 'forbidden', 'Chỉ Nhân viên và Trưởng phòng viết báo cáo tuần.');
   },
 
   /**
    * Xem báo cáo tuần của người khác: HĐQT, Điều hành, admin xem tất cả;
-   * Trưởng phòng xem người cùng phòng; ai cũng xem được của chính mình.
+   * Trưởng phòng xem người trong phòng mình làm trưởng; ai cũng xem được của chính mình.
    */
   'weekly_report:read': (user, { targetUserId, targetDepts = [] }) => {
     if (SEES_ALL.has(user.role) || user.id === Number(targetUserId)) return allow();
-    if (user.role === 'manager' && targetDepts.some((d) => inDepartment(user, d))) return allow();
+    if (targetDepts.some((d) => headOf(user).includes(d))) return allow();
     return deny(403, 'forbidden', 'Không có quyền xem báo cáo này.');
   },
 };

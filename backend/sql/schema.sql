@@ -44,9 +44,11 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL CHECK (length(password_hash) >= 20),
   fullname TEXT NOT NULL,
   email TEXT,
-  -- board = HĐQT (tạo dự án, xem tất cả), director = Điều hành (phụ trách dự án),
-  -- manager = Trưởng phòng (phụ trách hạng mục), employee = Nhân viên.
-  role TEXT NOT NULL CHECK (role IN ('admin','board','director','manager','employee')),
+  -- Cấp bậc: board = HĐQT (tạo dự án, xem tất cả), director = Điều hành (phụ trách dự án),
+  -- employee = Nhân viên. "Trưởng phòng" là chức vụ trong phòng: user_departments.is_head.
+  role TEXT NOT NULL CHECK (role IN ('admin','board','director','employee')),
+  -- Chức danh hiển thị (Kế toán, Thu mua, Thủ kho…), không dùng để phân quyền.
+  job_title TEXT,
   initial TEXT,
   avatar_url TEXT,
   is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0,1)),
@@ -63,6 +65,9 @@ CREATE TABLE IF NOT EXISTS departments (
 CREATE TABLE IF NOT EXISTS user_departments (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   department_code TEXT NOT NULL REFERENCES departments(code) ON DELETE CASCADE,
+  -- 1 = Trưởng phòng của phòng này (phụ trách hạng mục của phòng). Một người có thể
+  -- là trưởng phòng này và thành viên thường phòng khác, ở bất kỳ cấp bậc nào.
+  is_head INTEGER NOT NULL DEFAULT 0 CHECK (is_head IN (0,1)),
   PRIMARY KEY (user_id, department_code)
 );
 
@@ -79,7 +84,7 @@ CREATE INDEX IF NOT EXISTS idx_user_dept_dept ON user_departments(department_cod
 -- owner_user_id = người phụ trách, là gốc của phân quyền (lib/policies.js):
 --   projects → 1 Điều hành (director), do HĐQT chọn khi tạo dự án
 --   phases   → Điều hành phụ trách dự án (tạo giai đoạn)
---   bundles  → 1 Trưởng phòng (manager); bundles.department_code = phòng của hạng mục
+--   bundles  → 1 Trưởng phòng (user_departments.is_head của phòng); bundles.department_code = phòng của hạng mục
 --   tasks    → người làm: chính Trưởng phòng đó hoặc nhân viên cùng phòng
 -- created_by_user_id = người tạo. tasks còn có assigned_by_user_id (người giao).
 -- Mọi đầu việc thuộc 1 hạng mục (tasks.bundle_id NOT NULL).

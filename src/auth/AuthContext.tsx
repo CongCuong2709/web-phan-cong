@@ -98,6 +98,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         email: u.email ?? '',
         role: u.role,
         departments: Array.isArray(u.departments) ? (u.departments as Department[]) : [],
+        headOf: (u.head_of ?? []) as Department[],
+        jobTitle: u.job_title ?? undefined,
         initial: u.fullname?.charAt(0) ?? '',
         avatar: u.avatar_url ?? '',
       };
@@ -164,6 +166,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           email: backendUser.email ?? existing?.email,
           role: backendUser.role,
           departments: backendDepts,
+          headOf: (backendUser.head_of ?? []) as Department[],
+          jobTitle: backendUser.job_title ?? undefined,
           avatar: backendUser.avatar_url ?? existing?.avatar,
           initial: backendUser.initial ?? existing?.initial ?? backendUser.fullname.charAt(0),
         };
@@ -207,13 +211,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     (ownerUsername?: string) => {
       if (!user) return false;
       if (user.role === 'admin' || user.role === 'board' || user.role === 'director') return true;
-      if (user.role === 'manager') {
+      if (user.headOf.length) {
         if (!ownerUsername) return true;
         const owner = users.find((u) => u.username.toLowerCase() === ownerUsername.toLowerCase());
         if (!owner) return true;
-        const userDepts = user.departments ?? [];
-        const ownerDepts = owner.departments ?? [];
-        return ownerDepts.some((d) => userDepts.includes(d));
+        return (owner.departments ?? []).some((d) => user.headOf.includes(d));
       }
       return ownerUsername?.toLowerCase() === user.username.toLowerCase();
     },
