@@ -102,11 +102,11 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
   const teamMembers = useMemo<TeamMember[]>(() => data.members.map(apiToTeamMember), [data.members]);
 
   // Danh bạ từ backend để chọn người phụ trách: HĐQT chọn Điều hành, Điều hành chọn
-  // Trưởng phòng, Trưởng phòng chọn nhân viên cùng phòng. Nhân viên không cần (403).
+  // Trưởng phòng, Trưởng phòng chọn nhân viên cùng phòng. Nhân viên thường không cần (403).
   const [directoryUsers, setDirectoryUsers] = useState<User[]>(SEED_USERS);
 
   useEffect(() => {
-    if (user.role === 'employee') {
+    if (user.role === 'employee' && !isHead(user)) {
       setDirectoryUsers([]);
       return;
     }
@@ -619,7 +619,7 @@ function AuthenticatedApp({ user }: AuthenticatedAppProps) {
           />
         );
       case 'bao-cao':
-        if (user.role === 'employee') {
+        if (user.role === 'employee' && !isHead(user)) {
           return <WeeklyReportView currentUser={user} mode="edit" onToast={showToast} />;
         }
         return (

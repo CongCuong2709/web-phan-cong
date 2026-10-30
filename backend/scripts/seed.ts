@@ -12,8 +12,8 @@
  *       QLDA → Điều hành Nguyễn Huy Khánh kiêm trưởng ban
  *       KTTM → Nguyễn Cao Cường, NS → Nguyễn Hoài Nam, BCT → Nguyễn Xuân Thành
  *   - Dữ liệu mẫu: "DA-68" do HĐQT Dũng tạo, Điều hành Khánh phụ trách:
- *       7 giai đoạn (Khánh tạo) → hạng mục theo phòng (Khánh tạo, giao Trưởng phòng của phòng)
- *       → 50 đầu việc (Trưởng phòng tạo, cho chính mình hoặc nhân viên cùng phòng);
+ *       3 giai đoạn (Khánh tạo) → 8 hạng mục theo phòng (Khánh tạo, giao Trưởng phòng của phòng)
+ *       → 15 đầu việc (Trưởng phòng tạo, cho chính mình hoặc nhân viên cùng phòng);
  *     "DA-69" (Khánh phụ trách): 1 giai đoạn, 1 hạng mục QLDA.
  *   - Trạng thái / tiến độ tầng cha được tính từ đầu việc (như lib/rollup.js), không gán tay.
  */
@@ -203,7 +203,7 @@ const deptHead: Partial<Record<Dept, string>> = {};
 for (const u of users) for (const h of u.head ?? []) deptHead[h] = u.username;
 
 // ============================================================================
-// 3. 7 giai đoạn + 50 đầu việc của DA-68
+// 3. 3 giai đoạn + 15 đầu việc của DA-68 (dữ liệu mẫu, cố ý gọn)
 // ============================================================================
 // Mỗi đầu việc gom vào hạng mục (giai đoạn, phòng). owner = Trưởng phòng của phòng
 // hoặc nhân viên cùng phòng (kiểm tra ở bước insert).
@@ -232,174 +232,61 @@ type Phase = {
 };
 
 const phases: Phase[] = [
-  // ============== GIAI ĐOẠN 1 ==============
   {
     code: 'GD-01',
-    title: 'Giai đoạn 1: Thiết kế và hoàn thiện pháp lý xây dựng',
-    description: 'Khảo sát, lập nhiệm vụ thiết kế, thiết kế kỹ thuật, thẩm tra và phê duyệt dự toán.',
+    title: 'Giai đoạn 1: Thiết kế và dự toán',
+    description: 'Khảo sát, thiết kế kỹ thuật, lập và phê duyệt dự toán.',
     start: '2026-10-10', end: '2026-10-13',
-    management_notes: 'Phối hợp chặt với đơn vị tư vấn thiết kế; cần Điều hành phê duyệt dự toán trước khi chốt GĐ1.',
+    management_notes: 'Cần Điều hành phê duyệt dự toán trước khi chốt GĐ1.',
     tasks: [
-      { code: 'T1-01', title: 'Khảo sát địa chất, địa hình bổ sung (nếu cần)', dept: 'QLDA', owner: 'HaLT',
+      { code: 'T1-01', title: 'Khảo sát địa chất, địa hình bổ sung', dept: 'QLDA', owner: 'HaLT',
         start: '2026-10-10', end: '2026-10-11', deliverable: 'Báo cáo khảo sát đã nghiệm thu', priority: 'high' },
-      { code: 'T1-02', title: 'Lập nhiệm vụ thiết kế, yêu cầu kỹ thuật, tiêu chuẩn vật liệu và hoàn thiện theo định vị sản phẩm', dept: 'QLDA', owner: 'HongNN',
-        start: '2026-10-10', end: '2026-10-11', deliverable: 'Nhiệm vụ thiết kế được duyệt', priority: 'high' },
-      { code: 'T1-03', title: 'Thiết kế kỹ thuật / bản vẽ thi công (kiến trúc, kết cấu, MEP, PCCC, hạ tầng)', dept: 'QLDA', owner: 'HungNV',
+      { code: 'T1-02', title: 'Thiết kế kỹ thuật / bản vẽ thi công', dept: 'QLDA', owner: 'HungNV',
         start: '2026-10-11', end: '2026-10-12', deliverable: 'Bộ hồ sơ thiết kế', priority: 'critical' },
-      { code: 'T1-04', title: 'Thẩm tra thiết kế, dự toán', dept: 'QLDA', owner: 'HaLT',
-        start: '2026-10-12', end: '2026-10-13', deliverable: 'Báo cáo thẩm tra', priority: 'high' },
-      { code: 'T1-05', title: 'Lập và phê duyệt dự toán, tổng mức đầu tư điều chỉnh (nếu có)', dept: 'QLDA', owner: 'KhanhNH',
+      { code: 'T1-03', title: 'Lập và phê duyệt dự toán', dept: 'QLDA', owner: 'KhanhNH',
         start: '2026-10-12', end: '2026-10-13', deliverable: 'Dự toán được duyệt, làm giá gói thầu', priority: 'critical' },
     ],
   },
-  // ============== GIAI ĐOẠN 2 ==============
   {
     code: 'GD-02',
-    title: 'Giai đoạn 2: Lựa chọn nhà thầu và ký hợp đồng',
-    description: 'Phân chia gói thầu, lập HSMT, tổ chức đấu thầu, nhận bảo lãnh và ký hợp đồng.',
-    start: '2026-10-12', end: '2026-10-15',
-    management_notes: 'HSMT phải đồng bộ với dự toán đã duyệt ở GĐ1.',
+    title: 'Giai đoạn 2: Chọn nhà thầu và chuẩn bị khởi công',
+    description: 'Hồ sơ mời thầu, bảo lãnh, kế hoạch mua sắm và bảo hiểm công trình.',
+    start: '2026-10-12', end: '2026-10-17',
+    management_notes: 'Hồ sơ mời thầu phải đồng bộ với dự toán đã duyệt ở GĐ1.',
     tasks: [
-      { code: 'T2-01', title: 'Lập kế hoạch phân chia gói thầu: phần ngầm, phần thân, hoàn thiện, MEP, thang máy, hạ tầng, cảnh quan, vật tư CĐT cấp', dept: 'QLDA', owner: 'KhanhNH',
-        start: '2026-10-12', end: '2026-10-13', deliverable: 'Kế hoạch lựa chọn nhà thầu', priority: 'high' },
-      { code: 'T2-02', title: 'Lập hồ sơ mời thầu / yêu cầu báo giá', dept: 'QLDA', owner: 'HongNN',
+      { code: 'T2-01', title: 'Lập hồ sơ mời thầu / yêu cầu báo giá', dept: 'QLDA', owner: 'HongNN',
         start: '2026-10-13', end: '2026-10-14', deliverable: 'HSMT được duyệt', priority: 'high' },
-      { code: 'T2-03', title: 'Tổ chức mời thầu, đánh giá hồ sơ dự thầu (kỹ thuật và tài chính)', dept: 'QLDA', owner: 'HungNV',
-        start: '2026-10-13', end: '2026-10-14', deliverable: 'Báo cáo đánh giá', priority: 'high' },
-      { code: 'T2-04', title: 'Nhận bảo lãnh thực hiện hợp đồng, bảo lãnh tạm ứng', dept: 'KTTM', owner: 'HangNT',
-        start: '2026-10-14', end: '2026-10-15', deliverable: 'Bảo lãnh hợp lệ', priority: 'normal' },
-      { code: 'T2-05', title: 'Lập kế hoạch mua sắm vật tư, thiết bị do chủ đầu tư cấp', dept: 'KTTM', owner: 'CuongNC',
+      { code: 'T2-02', title: 'Lập kế hoạch mua sắm vật tư, thiết bị', dept: 'KTTM', owner: 'CuongNC',
         start: '2026-10-14', end: '2026-10-15', deliverable: 'Kế hoạch mua sắm và dòng tiền', priority: 'normal' },
+      { code: 'T2-03', title: 'Nhận bảo lãnh thực hiện hợp đồng, bảo lãnh tạm ứng', dept: 'KTTM', owner: 'HangNT',
+        start: '2026-10-14', end: '2026-10-15', deliverable: 'Bảo lãnh hợp lệ', priority: 'normal' },
+      { code: 'T2-04', title: 'Mua bảo hiểm công trình, bảo hiểm con người', dept: 'NS', owner: 'NguyetDTA',
+        start: '2026-10-15', end: '2026-10-16', deliverable: 'Hợp đồng bảo hiểm', priority: 'normal' },
     ],
   },
-  // ============== GIAI ĐOẠN 3 ==============
   {
     code: 'GD-03',
-    title: 'Giai đoạn 3: Chuẩn bị khởi công',
-    description: 'Bàn giao mặt bằng, lập ban chỉ huy, phê duyệt biện pháp thi công, an toàn – PCCC, tạm ứng hợp đồng.',
-    start: '2026-10-14', end: '2026-10-17',
-    management_notes: 'Công trường phải đủ điều kiện khởi công trước khi vào thi công; chú ý bảo hiểm & tạm ứng.',
+    title: 'Giai đoạn 3: Thi công xây dựng',
+    description: 'Kiểm soát vật liệu, nghiệm thu, tiến độ, an toàn và thanh toán trong quá trình thi công.',
+    start: '2026-10-16', end: '2026-10-29',
+    management_notes: 'Giao ban công trường hằng ngày.',
     tasks: [
-      { code: 'T3-01', title: 'Bàn giao mặt bằng, mốc định vị, cao độ cho nhà thầu', dept: 'BCT', owner: 'ThanhNX',
-        start: '2026-10-14', end: '2026-10-15', deliverable: 'Biên bản bàn giao mặt bằng', priority: 'critical' },
-      { code: 'T3-02', title: 'Thành lập Ban Chỉ huy công trường, quy chế phối hợp CĐT – TVGS – nhà thầu', dept: 'BCT', owner: 'LongDN',
-        start: '2026-10-14', end: '2026-10-15', deliverable: 'Sơ đồ tổ chức công trường, quy chế', priority: 'high' },
-      { code: 'T3-03', title: 'Phê duyệt biện pháp thi công, tiến độ tổng thể và chi tiết', dept: 'BCT', owner: 'ThanhNX',
-        start: '2026-10-15', end: '2026-10-16', deliverable: 'Biện pháp và tiến độ được duyệt', priority: 'critical' },
-      { code: 'T3-04', title: 'Kế hoạch an toàn lao động, vệ sinh môi trường, PCCC công trường', dept: 'BCT', owner: 'ThaoNV',
-        start: '2026-10-15', end: '2026-10-16', deliverable: 'Kế hoạch ATLĐ – VSMT', priority: 'high' },
-      { code: 'T3-05', title: 'Mua bảo hiểm công trình, bảo hiểm con người', dept: 'NS', owner: 'NguyetDTA',
-        start: '2026-10-15', end: '2026-10-16', deliverable: 'Hợp đồng bảo hiểm', priority: 'normal' },
-      { code: 'T3-06', title: 'Chuẩn bị lán trại, điện nước thi công, hàng rào, biển báo', dept: 'BCT', owner: 'HaiNS',
-        start: '2026-10-15', end: '2026-10-16', deliverable: 'Công trường đủ điều kiện', priority: 'normal' },
-      { code: 'T3-07', title: 'Lập quy trình quản lý hồ sơ chất lượng, biểu mẫu nghiệm thu', dept: 'QLDA', owner: 'HaLT',
-        start: '2026-10-16', end: '2026-10-17', deliverable: 'Bộ biểu mẫu thống nhất', priority: 'normal' },
-      { code: 'T3-08', title: 'Tạm ứng hợp đồng', dept: 'KTTM', owner: 'HangNT',
-        start: '2026-10-16', end: '2026-10-17', deliverable: 'Chứng từ tạm ứng', priority: 'normal' },
-    ],
-  },
-  // ============== GIAI ĐOẠN 4 ==============
-  {
-    code: 'GD-04',
-    title: 'Giai đoạn 4: Thi công xây dựng',
-    description: 'Kiểm soát vật liệu, nghiệm thu, quản lý tiến độ – an toàn – chất lượng – tài chính trong suốt quá trình thi công.',
-    start: '2026-10-16', end: '2026-10-21',
-    management_notes: 'Giai đoạn dài nhất, nhiều đầu việc song song — cần giao ban công trường hằng ngày.',
-    tasks: [
-      { code: 'T4-01', title: 'Kiểm soát vật liệu đầu vào: phê duyệt mẫu, chứng chỉ, thí nghiệm', dept: 'BCT', owner: 'HaiNS',
-        start: '2026-10-16', end: '2026-10-17', deliverable: 'Biên bản duyệt mẫu, kết quả thí nghiệm', priority: 'high' },
-      { code: 'T4-02', title: 'Nghiệm thu công việc, bộ phận, giai đoạn (cốt thép, cốp pha, bê tông, xây tô...)', dept: 'BCT', owner: 'ThanhNX',
+      { code: 'T3-01', title: 'Nghiệm thu công việc, bộ phận (cốt thép, cốp pha, bê tông…)', dept: 'BCT', owner: 'ThanhNX',
         start: '2026-10-17', end: '2026-10-19', deliverable: 'Biên bản nghiệm thu', priority: 'critical' },
-      { code: 'T4-03', title: 'Quản lý tiến độ: báo cáo ngày, tuần, tháng; cảnh báo chậm trễ', dept: 'BCT', owner: 'LongDN',
-        start: '2026-10-17', end: '2026-10-21', deliverable: 'Báo cáo tiến độ', priority: 'high' },
-      { code: 'T4-04', title: 'Giao ban công trường định kỳ', dept: 'BCT', owner: 'ThanhNX',
-        start: '2026-10-17', end: '2026-10-21', deliverable: 'Biên bản giao ban', priority: 'normal' },
-      { code: 'T4-05', title: 'Quản lý thay đổi thiết kế, phát sinh khối lượng', dept: 'QLDA', owner: 'HungNV',
-        start: '2026-10-18', end: '2026-10-19', deliverable: 'Phụ lục hợp đồng, phê duyệt phát sinh', priority: 'high' },
-      { code: 'T4-06', title: 'Giám sát an toàn lao động, môi trường, PCCC', dept: 'BCT', owner: 'ThaoNV',
-        start: '2026-10-17', end: '2026-10-21', deliverable: 'Nhật ký an toàn, biên bản xử lý vi phạm', priority: 'high' },
-      { code: 'T4-07', title: 'Quản lý giao nhận vật tư CĐT cấp, đối chiếu tồn kho', dept: 'BCT', owner: 'HaiNS',
-        start: '2026-10-18', end: '2026-10-19', deliverable: 'Phiếu nhập xuất, biên bản đối chiếu', priority: 'normal' },
-      { code: 'T4-08', title: 'Quản lý nhân công khoán (nếu có): chấm công, xác nhận khối lượng', dept: 'BCT', owner: 'NgocVT',
-        start: '2026-10-18', end: '2026-10-19', deliverable: 'Bảng khối lượng, chấm công', priority: 'normal' },
-      { code: 'T4-09', title: 'Cập nhật nhật ký thi công, bản vẽ hoàn công từng phần', dept: 'BCT', owner: 'LongDN',
-        start: '2026-10-18', end: '2026-10-20', deliverable: 'Nhật ký, bản vẽ hoàn công từng phần', priority: 'high' },
-      { code: 'T4-10', title: 'Nghiệm thu khối lượng hoàn thành theo đợt', dept: 'BCT', owner: 'ThaoNV',
-        start: '2026-10-19', end: '2026-10-20', deliverable: 'Bảng xác nhận khối lượng', priority: 'high' },
-      { code: 'T4-11', title: 'Thanh toán theo đợt, thu hồi tạm ứng, giữ lại tiền bảo hành', dept: 'KTTM', owner: 'HangNT',
-        start: '2026-10-20', end: '2026-10-21', deliverable: 'Hồ sơ thanh toán đợt', priority: 'high' },
-      { code: 'T4-12', title: 'Báo cáo tài chính dự án: kế hoạch và thực tế dòng tiền', dept: 'KTTM', owner: 'CuongNC',
-        start: '2026-10-20', end: '2026-10-21', deliverable: 'Báo cáo dòng tiền', priority: 'normal' },
-    ],
-  },
-  // ============== GIAI ĐOẠN 5 ==============
-  {
-    code: 'GD-05',
-    title: 'Giai đoạn 5: Nghiệm thu hoàn thành và hoàn công',
-    description: 'Chạy thử hệ thống, kiểm định thiết bị, lập bản vẽ hoàn công, đấu nối hạ tầng, nghiệm thu đưa vào sử dụng.',
-    start: '2026-10-21', end: '2026-10-24',
-    management_notes: 'Đảm bảo bộ hồ sơ hoàn công đầy đủ trước khi đưa công trình vào sử dụng.',
-    tasks: [
-      { code: 'T5-01', title: 'Chạy thử đơn động, liên động hệ thống MEP, thang máy, PCCC', dept: 'BCT', owner: 'ThanhNX',
-        start: '2026-10-21', end: '2026-10-22', deliverable: 'Biên bản chạy thử', priority: 'critical' },
-      { code: 'T5-02', title: 'Kiểm định thiết bị có yêu cầu nghiêm ngặt về an toàn (thang máy, bình áp lực...)', dept: 'BCT', owner: 'ThaoNV',
-        start: '2026-10-21', end: '2026-10-22', deliverable: 'Giấy chứng nhận kiểm định', priority: 'critical' },
-      { code: 'T5-03', title: 'Lập bản vẽ hoàn công tổng thể', dept: 'BCT', owner: 'LongDN',
-        start: '2026-10-22', end: '2026-10-23', deliverable: 'Bộ bản vẽ hoàn công', priority: 'high' },
-      { code: 'T5-04', title: 'Tập hợp hồ sơ chất lượng công trình', dept: 'QLDA', owner: 'HongNN',
-        start: '2026-10-22', end: '2026-10-23', deliverable: 'Hồ sơ hoàn thành công trình', priority: 'high' },
-      { code: 'T5-05', title: 'Đấu nối hạ tầng: điện, nước, thoát nước, viễn thông', dept: 'BCT', owner: 'HaiNS',
-        start: '2026-10-23', end: '2026-10-24', deliverable: 'Hợp đồng và biên bản đấu nối', priority: 'high' },
-      { code: 'T5-06', title: 'Nghiệm thu hoàn thành hạng mục hoặc công trình đưa vào sử dụng', dept: 'QLDA', owner: 'KhanhNH',
-        start: '2026-10-23', end: '2026-10-24', deliverable: 'Biên bản nghiệm thu hoàn thành', priority: 'critical' },
-    ],
-  },
-  // ============== GIAI ĐOẠN 6 ==============
-  {
-    code: 'GD-06',
-    title: 'Giai đoạn 6: Bàn giao',
-    description: 'Kiểm tra hoàn thiện từng sản phẩm, lập quy trình bảo trì, bàn giao hồ sơ và công trình cho đơn vị vận hành.',
-    start: '2026-10-24', end: '2026-10-27',
-    management_notes: 'Phối hợp chặt với đơn vị quản lý vận hành để đào tạo và bàn giao đúng hạn.',
-    tasks: [
-      { code: 'T6-01', title: 'Kiểm tra hoàn thiện từng căn/sản phẩm, lập danh sách lỗi và khắc phục', dept: 'BCT', owner: 'ThaoNV',
-        start: '2026-10-24', end: '2026-10-25', deliverable: 'Checklist bàn giao từng căn', priority: 'high' },
-      { code: 'T6-02', title: 'Lập quy trình bảo trì công trình', dept: 'QLDA', owner: 'HungNV',
-        start: '2026-10-24', end: '2026-10-25', deliverable: 'Quy trình bảo trì được duyệt', priority: 'normal' },
-      { code: 'T6-03', title: 'Bàn giao hồ sơ, tài liệu kỹ thuật cho đơn vị quản lý vận hành', dept: 'QLDA', owner: 'HongNN',
-        start: '2026-10-25', end: '2026-10-26', deliverable: 'Biên bản bàn giao hồ sơ', priority: 'high' },
-      { code: 'T6-04', title: 'Bàn giao công trình, thiết bị cho đơn vị quản lý vận hành, đào tạo vận hành', dept: 'BCT', owner: 'ThanhNX',
-        start: '2026-10-25', end: '2026-10-26', deliverable: 'Biên bản bàn giao', priority: 'critical' },
-      { code: 'T6-05', title: 'Thu tiền đợt cuối, kinh phí bảo trì (nếu có) theo hợp đồng mua bán', dept: 'KTTM', owner: 'HangNT',
-        start: '2026-10-26', end: '2026-10-27', deliverable: 'Chứng từ thu', priority: 'normal' },
-      { code: 'T6-06', title: 'Theo dõi, xử lý bảo hành trong thời gian bảo hành', dept: 'BCT', owner: 'LongDN',
-        start: '2026-10-26', end: '2026-10-27', deliverable: 'Sổ theo dõi bảo hành', priority: 'normal' },
-    ],
-  },
-  // ============== GIAI ĐOẠN 7 ==============
-  {
-    code: 'GD-07',
-    title: 'Giai đoạn 7: Thanh quyết toán',
-    description: 'Tổng hợp khối lượng, đối chiếu phát sinh, thẩm tra quyết toán, thanh toán phần còn lại, hoàn trả bảo hành, quyết toán thuế và lưu trữ hồ sơ.',
-    start: '2026-10-26', end: '2026-10-29',
-    management_notes: 'Đóng dự án đúng hạn; đối chiếu chặt với kế toán để tránh sai sót thuế.',
-    tasks: [
-      { code: 'T7-01', title: 'Tổng hợp khối lượng hoàn thành theo hoàn công từng gói thầu', dept: 'QLDA', owner: 'HaLT',
-        start: '2026-10-26', end: '2026-10-27', deliverable: 'Bảng khối lượng quyết toán', priority: 'high' },
-      { code: 'T7-02', title: 'Đối chiếu phát sinh, phụ lục, khấu trừ (vật tư CĐT cấp, điện nước, phạt vi phạm)', dept: 'KTTM', owner: 'CuongNC',
-        start: '2026-10-27', end: '2026-10-28', deliverable: 'Biên bản đối chiếu', priority: 'high' },
-      { code: 'T7-03', title: 'Thẩm tra quyết toán hợp đồng (nội bộ hoặc thuê kiểm toán)', dept: 'KTTM', owner: 'HangNT',
-        start: '2026-10-27', end: '2026-10-28', deliverable: 'Báo cáo thẩm tra', priority: 'high' },
-      { code: 'T7-04', title: 'Thanh toán phần còn lại cho nhà cung cấp, giữ bảo hành hoặc nhận bảo lãnh bảo hành', dept: 'KTTM', owner: 'TuBQ',
-        start: '2026-10-28', end: '2026-10-29', deliverable: 'Chứng từ thanh toán', priority: 'normal' },
-      { code: 'T7-05', title: 'Hoàn trả tiền bảo hành, giải tỏa bảo lãnh khi hết hạn', dept: 'KTTM', owner: 'HangNT',
-        start: '2026-10-28', end: '2026-10-29', deliverable: 'Chứng từ hoàn trả', priority: 'normal' },
-      { code: 'T7-06', title: 'Quyết toán tổng chi phí đầu tư dự án', dept: 'KTTM', owner: 'CuongNC',
-        start: '2026-10-28', end: '2026-10-29', deliverable: 'Báo cáo quyết toán dự án', priority: 'critical' },
-      { code: 'T7-07', title: 'Lưu trữ hồ sơ nhân sự, hợp đồng lao động liên quan dự án', dept: 'NS', owner: 'NhiNT',
-        start: '2026-10-28', end: '2026-10-29', deliverable: 'Hồ sơ nhân sự dự án', priority: 'normal' },
-      { code: 'T7-08', title: 'Lưu trữ hồ sơ dự án', dept: 'QLDA', owner: 'HongNN',
-        start: '2026-10-28', end: '2026-10-29', deliverable: 'Kho hồ sơ số hóa', priority: 'normal' },
+      { code: 'T3-02', title: 'Kiểm soát vật liệu đầu vào, đối chiếu tồn kho', dept: 'BCT', owner: 'HaiNS',
+        start: '2026-10-16', end: '2026-10-18', deliverable: 'Biên bản duyệt mẫu, phiếu nhập xuất', priority: 'high' },
+      { code: 'T3-03', title: 'Quản lý tiến độ: báo cáo ngày, tuần; cảnh báo chậm trễ', dept: 'BCT', owner: 'LongDN',
+        start: '2026-10-17', end: '2026-10-25', deliverable: 'Báo cáo tiến độ', priority: 'high' },
+      { code: 'T3-04', title: 'Giám sát an toàn lao động, PCCC công trường', dept: 'BCT', owner: 'ThaoNV',
+        start: '2026-10-17', end: '2026-10-25', deliverable: 'Nhật ký an toàn', priority: 'high' },
+      { code: 'T3-05', title: 'Chấm công, xác nhận khối lượng nhân công khoán', dept: 'BCT', owner: 'NgocVT',
+        start: '2026-10-18', end: '2026-10-22', deliverable: 'Bảng chấm công, khối lượng', priority: 'normal' },
+      { code: 'T3-06', title: 'Quản lý thay đổi thiết kế, phát sinh khối lượng', dept: 'QLDA', owner: 'HungNV',
+        start: '2026-10-18', end: '2026-10-22', deliverable: 'Phụ lục hợp đồng, phê duyệt phát sinh', priority: 'high' },
+      { code: 'T3-07', title: 'Thanh toán nhà cung cấp theo đợt', dept: 'KTTM', owner: 'TuBQ',
+        start: '2026-10-20', end: '2026-10-24', deliverable: 'Hồ sơ thanh toán đợt', priority: 'normal' },
+      { code: 'T3-08', title: 'Hồ sơ lao động công trường', dept: 'NS', owner: 'NhiNT',
+        start: '2026-10-20', end: '2026-10-29', deliverable: 'Hồ sơ nhân sự công trường', priority: 'normal' },
     ],
   },
 ];
@@ -456,78 +343,14 @@ const projectId = Number(insertProject.run(
 
 // Tên hạng mục theo (giai đoạn, phòng).
 const bundleNames: Record<string, { title: string; description: string }> = {
-  'GD-01|QLDA': {
-    title: 'Hồ sơ thiết kế & dự toán',
-    description: 'Khảo sát địa chất/địa hình, lập nhiệm vụ thiết kế, bản vẽ thi công (kiến trúc, kết cấu, MEP, PCCC, hạ tầng), thẩm tra và phê duyệt dự toán/tổng mức đầu tư.',
-  },
-  'GD-02|QLDA': {
-    title: 'Hồ sơ mời thầu & lựa chọn nhà thầu',
-    description: 'Phân chia gói thầu, lập HSMT/yêu cầu báo giá, đánh giá HSDT (kỹ thuật + tài chính).',
-  },
-  'GD-02|KTTM': {
-    title: 'Bảo lãnh & kế hoạch mua sắm',
-    description: 'Tiếp nhận bảo lãnh thực hiện hợp đồng, bảo lãnh tạm ứng; lập kế hoạch mua sắm vật tư, thiết bị CĐT cấp.',
-  },
-  'GD-03|BCT': {
-    title: 'Mặt bằng & tổ chức công trường',
-    description: 'Bàn giao mặt bằng/mốc định vị, lập Ban Chỉ huy công trường, phê duyệt biện pháp thi công, kế hoạch ATLĐ–VSMT–PCCC và chuẩn bị lán trại/hàng rào/biển báo.',
-  },
-  'GD-03|KTTM': {
-    title: 'Tạm ứng hợp đồng',
-    description: 'Thực hiện tạm ứng hợp đồng cho nhà thầu theo bảo lãnh đã nhận.',
-  },
-  'GD-03|NS': {
-    title: 'Bảo hiểm công trình & con người',
-    description: 'Mua bảo hiểm công trình và bảo hiểm cho người lao động trên công trường.',
-  },
-  'GD-03|QLDA': {
-    title: 'Quy trình quản lý chất lượng',
-    description: 'Lập quy trình quản lý hồ sơ chất lượng và bộ biểu mẫu nghiệm thu thống nhất toàn dự án.',
-  },
-  'GD-04|BCT': {
-    title: 'Giám sát thi công tại công trường',
-    description: 'Kiểm soát vật liệu đầu vào, nghiệm thu công việc/bộ phận/giai đoạn, quản lý tiến độ, an toàn PCCC, giao ban, nhật ký thi công và quản lý nhân công khoán.',
-  },
-  'GD-04|QLDA': {
-    title: 'Quản lý thay đổi thiết kế',
-    description: 'Xử lý thay đổi thiết kế, phát sinh khối lượng và phê duyệt phụ lục hợp đồng trong quá trình thi công.',
-  },
-  'GD-04|KTTM': {
-    title: 'Thanh toán & báo cáo tài chính',
-    description: 'Thanh toán theo đợt, thu hồi tạm ứng, giữ lại tiền bảo hành và báo cáo dòng tiền dự án (kế hoạch vs thực tế).',
-  },
-  'GD-05|BCT': {
-    title: 'Chạy thử, hoàn công & đấu nối hạ tầng',
-    description: 'Chạy thử đơn động/liên động MEP–thang máy–PCCC, kiểm định thiết bị an toàn, lập bản vẽ hoàn công tổng thể và đấu nối hạ tầng điện–nước–thoát nước–viễn thông.',
-  },
-  'GD-05|QLDA': {
-    title: 'Hồ sơ chất lượng & nghiệm thu',
-    description: 'Tập hợp hồ sơ chất lượng và biên bản nghiệm thu hoàn thành đưa vào sử dụng.',
-  },
-  'GD-06|BCT': {
-    title: 'Bàn giao & bảo hành công trình',
-    description: 'Kiểm tra hoàn thiện từng căn/sản phẩm, bàn giao công trình + thiết bị cho đơn vị vận hành, đào tạo vận hành và theo dõi bảo hành.',
-  },
-  'GD-06|QLDA': {
-    title: 'Hồ sơ kỹ thuật & quy trình bảo trì',
-    description: 'Bàn giao hồ sơ/tài liệu kỹ thuật cho đơn vị quản lý vận hành và lập quy trình bảo trì công trình.',
-  },
-  'GD-06|KTTM': {
-    title: 'Thu tiền & kinh phí bảo trì',
-    description: 'Thu tiền đợt cuối và kinh phí bảo trì (nếu có) theo hợp đồng mua bán.',
-  },
-  'GD-07|QLDA': {
-    title: 'Tổng hợp khối lượng & lưu trữ hồ sơ',
-    description: 'Tổng hợp khối lượng hoàn thành theo hoàn công từng gói thầu và số hóa/lưu trữ toàn bộ hồ sơ dự án.',
-  },
-  'GD-07|KTTM': {
-    title: 'Quyết toán & thanh toán còn lại',
-    description: 'Đối chiếu phát sinh/phụ lục/khấu trừ, thẩm tra quyết toán, thanh toán phần còn lại, hoàn trả bảo hành và quyết toán tổng chi phí đầu tư.',
-  },
-  'GD-07|NS': {
-    title: 'Hồ sơ nhân sự dự án',
-    description: 'Lưu trữ hồ sơ nhân sự, hợp đồng lao động liên quan dự án.',
-  },
+  'GD-01|QLDA': { title: 'Hồ sơ thiết kế & dự toán', description: 'Khảo sát, bản vẽ thi công, phê duyệt dự toán.' },
+  'GD-02|QLDA': { title: 'Hồ sơ mời thầu', description: 'Lập HSMT / yêu cầu báo giá và đánh giá nhà thầu.' },
+  'GD-02|KTTM': { title: 'Bảo lãnh & kế hoạch mua sắm', description: 'Nhận bảo lãnh của nhà thầu; kế hoạch mua sắm vật tư, thiết bị.' },
+  'GD-02|NS': { title: 'Bảo hiểm công trình & con người', description: 'Mua bảo hiểm công trình và bảo hiểm người lao động.' },
+  'GD-03|BCT': { title: 'Giám sát thi công tại công trường', description: 'Vật liệu, nghiệm thu, tiến độ, an toàn và nhân công khoán.' },
+  'GD-03|QLDA': { title: 'Quản lý thay đổi thiết kế', description: 'Xử lý thay đổi thiết kế, phát sinh khối lượng trong thi công.' },
+  'GD-03|KTTM': { title: 'Thanh toán theo đợt', description: 'Thanh toán nhà cung cấp, nhà thầu theo khối lượng được xác nhận.' },
+  'GD-03|NS': { title: 'Nhân sự công trường', description: 'Hồ sơ, hợp đồng lao động của người làm tại công trường.' },
 };
 
 for (const p of phases) {
@@ -666,21 +489,21 @@ const insertLog = db.prepare(`
   VALUES (?, ?, ?, ?, ?, ?, ?)
 `);
 insertLog.run(
-  findTaskByCode('T1-03'), dPast('2026-10-11'),
+  findTaskByCode('T1-02'), dPast('2026-10-11'),
   'Triển khai bản vẽ kiến trúc tầng 1-3, phối hợp MEP',
   'Hoàn tất 60% bản vẽ kiến trúc, MEP còn chờ phản hồi tư vấn PCCC',
   'Đơn vị tư vấn PCCC phản hồi chậm 1 ngày',
   60, userIds['HungNV'],
 );
 insertLog.run(
-  findTaskByCode('T1-05'), dPast('2026-10-12'),
+  findTaskByCode('T1-03'), dPast('2026-10-12'),
   'Tổng hợp dự toán các gói thầu',
   'Đã tổng hợp 7 gói thầu, đang rà soát đơn giá',
   '',
   40, userIds['KhanhNH'],
 );
 insertLog.run(
-  findTaskByCode('T4-02'), dPast('2026-10-17'),
+  findTaskByCode('T3-01'), dPast('2026-10-17'),
   'Nghiệm thu cốt thép móng đơn, cốp pha cột tầng 1',
   'Đạt yêu cầu, đã lập biên bản',
   '',
@@ -711,16 +534,16 @@ db.exec(`
                   THEN 'doing' ELSE 'pending' END;
 `);
 
-// Vướng mắc trên T2-04 (bảo lãnh): Hằng báo, trưởng phòng Cường trao đổi lại.
-console.log('💬 Inserting demo blocker on T2-04…');
-const t2_04 = findTaskByCode('T2-04');
+// Vướng mắc trên T2-03 (bảo lãnh): Hằng báo, trưởng phòng Cường trao đổi lại.
+console.log('💬 Inserting demo blocker on T2-03…');
+const t2_03 = findTaskByCode('T2-03');
 const blocker = 'Cần Điều hành xác nhận ngân hàng bảo lãnh trước khi phát hành thư bảo lãnh.';
-db.prepare('UPDATE tasks SET blocker_note = ? WHERE id = ?').run(blocker, t2_04);
+db.prepare('UPDATE tasks SET blocker_note = ? WHERE id = ?').run(blocker, t2_03);
 const insertMessage = db.prepare(`
   INSERT INTO task_help_messages (task_id, body, author_user_id, kind) VALUES (?, ?, ?, ?)
 `);
-insertMessage.run(t2_04, blocker, userIds['HangNT'], 'blocker');
-insertMessage.run(t2_04, 'Đã gửi anh Khánh, chờ xác nhận trong hôm nay.', userIds['CuongNC'], 'note');
+insertMessage.run(t2_03, blocker, userIds['HangNT'], 'blocker');
+insertMessage.run(t2_03, 'Đã gửi anh Khánh, chờ xác nhận trong hôm nay.', userIds['CuongNC'], 'note');
 
 console.log('📜 Inserting audit log demo…');
 const insertAudit = db.prepare(`
@@ -730,7 +553,7 @@ const insertAudit = db.prepare(`
 insertAudit.run('project', projectId, JSON.stringify({ code: 'DA-68', title: 'Hồ sơ hoàn công dự án 68' }), userIds['DungDN'], 'DungDN');
 const firstPhase = db.prepare('SELECT id FROM phases WHERE project_id = ? AND code = ?').get(projectId, 'GD-01') as { id: number };
 insertAudit.run('phase', firstPhase.id, JSON.stringify({ code: 'GD-01', title: phases[0].title }), userIds['KhanhNH'], 'KhanhNH');
-insertAudit.run('task', findTaskByCode('T1-03'), JSON.stringify({ code: 'T1-03', title: 'Thiết kế kỹ thuật / bản vẽ thi công' }), userIds['KhanhNH'], 'KhanhNH');
+insertAudit.run('task', findTaskByCode('T1-02'), JSON.stringify({ code: 'T1-02', title: 'Thiết kế kỹ thuật / bản vẽ thi công' }), userIds['KhanhNH'], 'KhanhNH');
 
 // ============================================================================
 // 6. Báo cáo tuần demo (tuần hiện tại)
@@ -755,8 +578,7 @@ const weeklyDemo: Array<{ who: string; rows: unknown[] }> = [
   {
     who: 'HongNN',
     rows: [
-      { id: 'w1', name: 'Lập nhiệm vụ thiết kế', result: 'Dự thảo nhiệm vụ thiết kế đã xong 80%, chờ rà soát nội bộ.', status: 'Đang làm', blocker: '' },
-      { id: 'w2', name: 'Lập hồ sơ mời thầu', result: 'Chưa bắt đầu — chờ dự toán được duyệt.', status: 'Chưa bắt đầu', blocker: 'Cần dự toán được duyệt trước khi lập HSMT.' },
+      { id: 'w1', name: 'Lập hồ sơ mời thầu', result: 'Chưa bắt đầu — chờ dự toán được duyệt.', status: 'Chưa bắt đầu', blocker: 'Cần dự toán được duyệt trước khi lập HSMT.' },
     ],
   },
   {
@@ -768,14 +590,14 @@ const weeklyDemo: Array<{ who: string; rows: unknown[] }> = [
   {
     who: 'CuongNC',
     rows: [
-      { id: 'w1', name: 'Kế hoạch mua sắm vật tư CĐT cấp', result: 'Đã lấy báo giá 3 nhà cung cấp thép, xi măng.', status: 'Đang làm', blocker: '' },
+      { id: 'w1', name: 'Kế hoạch mua sắm vật tư, thiết bị', result: 'Đã lấy báo giá 3 nhà cung cấp thép, xi măng.', status: 'Đang làm', blocker: '' },
       { id: 'w2', name: 'Theo dõi bảo lãnh nhà thầu', result: 'Chờ Điều hành xác nhận ngân hàng bảo lãnh.', status: 'Vướng mắc', blocker: 'Cần xác nhận ngân hàng bảo lãnh.' },
     ],
   },
   {
     who: 'LongDN',
     rows: [
-      { id: 'w1', name: 'Thành lập Ban Chỉ huy công trường', result: 'Đã dự thảo sơ đồ tổ chức, chờ anh Thành duyệt.', status: 'Đang làm', blocker: '' },
+      { id: 'w1', name: 'Quản lý tiến độ thi công', result: 'Đã lập mẫu báo cáo ngày, chờ anh Thành duyệt.', status: 'Đang làm', blocker: '' },
     ],
   },
 ];
@@ -794,7 +616,7 @@ db.close();
 console.log('\n✅ Seed complete!');
 console.log(`   - Timeline: ${toISO(DESIRED_START)} → ${d('2026-10-29')} (dự án mới bắt đầu ${PROJECT_STARTED_DAYS_AGO} ngày)`);
 console.log(`   - ${departments.length} phòng, ${users.length} users`);
-console.log(`   - "DA-68" (Điều hành KhanhNH) → 7 giai đoạn → hạng mục theo phòng (QLDA/KTTM/NS/BCT)`);
+console.log(`   - "DA-68" (Điều hành KhanhNH) → 3 giai đoạn → hạng mục theo phòng (QLDA/KTTM/NS/BCT)`);
 console.log('   - "DA-69" (Điều hành KhanhNH) → 1 giai đoạn → 1 hạng mục QLDA');
 console.log(`   - ${weeklyDemo.length} báo cáo tuần (tuần ${thisWeek})`);
 console.log('\n   Mật khẩu: admin / admin123; DungDA / 123457; mọi tài khoản khác / 123456');

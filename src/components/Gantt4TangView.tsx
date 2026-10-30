@@ -539,15 +539,15 @@ export const Gantt4TangView: React.FC<Gantt4TangViewProps> = ({
                 {filteredItems.length === 0 && (
                   <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
                     <span aria-hidden="true" className="material-symbols-outlined text-outline-variant [--icon-size:48px] mb-2">
-                      {currentUser?.role === 'employee' ? 'task_alt' : 'inbox'}
+                      {currentUser?.role === 'employee' && !isHead(currentUser) ? 'task_alt' : 'inbox'}
                     </span>
                     <h3 className="text-base font-semibold text-on-surface mb-1">
-                      {currentUser?.role === 'employee'
+                      {currentUser?.role === 'employee' && !isHead(currentUser)
                         ? 'Bạn chưa có task nào được giao'
                         : 'Chưa có dữ liệu để hiển thị'}
                     </h3>
                     <p className="text-xs text-outline max-w-md">
-                      {currentUser?.role === 'employee'
+                      {currentUser?.role === 'employee' && !isHead(currentUser)
                         ? 'Liên hệ Trưởng phòng để được phân công đầu việc. Khi có task, bạn sẽ thấy task đó cùng với cây dự án (T1) → giai đoạn (T2) → hạng mục (T3) ở chế độ chỉ đọc.'
                         : 'Hãy thêm dự án, giai đoạn, hạng mục hoặc đầu việc mới để bắt đầu.'}
                     </p>
